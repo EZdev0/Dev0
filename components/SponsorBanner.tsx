@@ -16,10 +16,10 @@ export default function SponsorBanner({ style }: { style?: any }) {
     <View style={[{ marginVertical: 12, padding: 12, backgroundColor: IDE.surface, borderRadius: 8, borderWidth: 1, borderColor: IDE.border }, style]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
         <Heart size={16} color={IDE.primary} style={{ marginRight: 8 }} />
-        <Text style={{ color: IDE.text, fontWeight: '600', fontSize: 14 }}>Unterstütze EZdev!</Text>
+        <Text style={{ color: IDE.text, fontWeight: '600', fontSize: 14 }}>Support EZdev!</Text>
       </View>
       <Text style={{ color: IDE.muted, fontSize: 13, marginBottom: 8, lineHeight: 18 }}>
-        Eine kleine Unterstützung würde sehr gut tun! Schau doch mal bei unserem Sponsor-Programm vorbei oder kontaktiere uns unter EZdev-info@proton.me für Feedback und Ideen.
+        A little support would be great! Schau doch mal bei unserem Sponsor-Programm vorbei oder kontaktiere uns unter EZdev-info@proton.me für Feedback und Ideen.
         You can hide this message in the settings, but we would be happy if you wrote to us or followed us at least once!
       </Text>
       <View style={{ height: 32, width: 114, overflow: 'hidden', borderRadius: 6 }}>
@@ -73,7 +73,7 @@ export function SponsorOverlay() {
           </TouchableOpacity>
           <View style={styles.header}>
             <Heart size={28} color={IDE.primary} style={{ marginRight: 12 }} />
-            <Text style={styles.title}>Unterstütze EZdev!</Text>
+            <Text style={styles.title}>Support EZdev!</Text>
           </View>
           <Text style={styles.bodyText}>
             We put a lot of time and love into the development of Studio IDE. In order to continue offering the project free of charge and open-source, we rely on your support!

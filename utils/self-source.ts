@@ -35,16 +35,16 @@ studio-mobile-ide/
 │   └── (tabs)/                   # Tab-Navigation
 │       ├── _layout.tsx           # Tab-Konfiguration (4 Tabs)
 │       ├── (home)/               # Projects Tab
-│       │   ├── _layout.tsx       # Stack-Navigation für Home
+│       │   ├── _layout.tsx       # Stack Navigation for Home
 │       │   └── index.tsx         # Project list, file tree, create/delete
 │       ├── chat/                 # AI Chat Tab
-│       │   ├── _layout.tsx       # Stack-Navigation für Chat
+│       │   ├── _layout.tsx       # Stack Navigation for Chat
 │       │   └── index.tsx         # Chat-Interface, Agent-Modus, Anhänge
 │       ├── tools/                # Tools Tab
-│       │   ├── _layout.tsx       # Stack-Navigation für Tools
+│       │   ├── _layout.tsx       # Stack Navigation for Tools
 │       │   └── index.tsx         # Tool-Registry, Pläne, Memos, Search
 │       └── settings/             # Settings Tab
-│           ├── _layout.tsx       # Stack-Navigation für Settings
+│           ├── _layout.tsx       # Stack Navigation for Settings
 │           └── index.tsx         # API-Keys, Modelle, Persona, Beta-Features
 │
 ├── components/                   # Wiederverwendbare Komponenten
@@ -70,10 +70,10 @@ studio-mobile-ide/
 ├── utils/
 │   ├── ai-service.ts             # KI-API Integration (Multi-Provider, Streaming, Tools)
 │   ├── download.ts               # Projekt-Export/Download System
-│   ├── file-icons.ts             # Datei-Icons, Farben, Sprach-Erkennung
-│   ├── sample-project.ts         # Beispiel-Projekte (Android, Web, Python, IDE)
-│   ├── self-source.ts            # App Source Code als Projekt (diese Datei)
-│   └── syntax.ts                 # Syntax-Highlighting Engine
+│   ├── file-icons.ts             # File Icons, Colors, Language Recognition
+│   ├── sample-project.ts         # Sample Projects (Android, Web, Python, IDE)
+│   ├── self-source.ts            # App Source Code as Project (diese Datei)
+│   └── syntax.ts                 # Syntax Highlighting Engine
 │
 ├── app.json                      # Expo-Konfiguration
 ├── babel.config.js               # Babel-Konfiguration
@@ -245,7 +245,7 @@ Chat-Nachricht Komponente:
 - Kopieren/Bearbeiten Aktionen
 
 ### types/index.ts
-Zentrale Typ-Definitionen:
+Central Type Definitions:
 - FileNode, Project (File system)
 - ChatMessage, ToolCall (Chat)
 - AgentPlan, AgentTask (Agent)
@@ -687,7 +687,7 @@ export default function HomeLayout() {
           file('index.tsx', `// Projekte-Screen: Hauptseite der App
 // Features: Projekt-Tabs, Dateibaum, Erstellen/Löschen, Search, Export
 // Siehe README.md für Details.
-// Vollständiger Quellcode: ~760 Zeilen`),
+// Full Source Code: ~760 Zeilen`),
         ]),
 
         dir('chat', [
@@ -709,7 +709,7 @@ export default function ChatLayout() {
           file('index.tsx', `// KI-Chat Screen: Chat with AI assistant
 // Features: Nachrichten, Agent-Modus, Datei-Anhänge, Tool-Calls, Streaming
 // Breathing-Animation, Vorschläge, Plan-Erstellung
-// Vollständiger Quellcode: ~900 Zeilen`),
+// Full Source Code: ~900 Zeilen`),
         ]),
 
         dir('tools', [
@@ -730,7 +730,7 @@ export default function ToolsLayout() {
 }`),
           file('index.tsx', `// Werkzeuge-Screen: Tool-Registry, Pläne, Memos, Search, Chat-Verwaltung
 // Features: Tool-Berechtigungen, YOLO-Modus, Agent-Plan Übersicht
-// Vollständiger Quellcode: ~1167 Zeilen`),
+// Full Source Code: ~1167 Zeilen`),
         ]),
 
         dir('settings', [
@@ -751,78 +751,78 @@ export default function SettingsLayout() {
 }`),
           file('index.tsx', `// Einstellungen-Screen: API-Keys, Modelle, Persona, Beta-Features
 // Features: 7 KI-Anbieter, Editor-Einstellungen, Verhalten
-// Vollständiger Quellcode: ~1098 Zeilen`),
+// Full Source Code: ~1098 Zeilen`),
         ]),
       ]),
 
       file('editor.tsx', `// Code-Editor Screen
 // Features: Syntax-Highlighting, Bearbeitungsmodus, Symbol-Leiste, Speichern
 // Breadcrumb, Zeilennummern, Status-Leiste
-// Vollständiger Quellcode: ~247 Zeilen`),
+// Full Source Code: ~247 Zeilen`),
     ]),
 
     dir('components', [
       file('AgentPlanView.tsx', `// Agent-Plan Visualisierung (To-Do Grafik)
 // Features: Fortschritt, Drag&Drop, Task-Status, Tool-Usage, Brainstorm-Stream
-// Vollständiger Quellcode: ~1044 Zeilen`),
+// Full Source Code: ~1044 Zeilen`),
       file('AgentTaskCard.tsx', `// Agent Task Karte
 // Features: Status-Anzeige, Dateien-Liste, Fehler-Handling, Ergebnisse
-// Vollständiger Quellcode: ~673 Zeilen`),
+// Full Source Code: ~673 Zeilen`),
       file('ChatBubble.tsx', `// Chat-Nachricht Komponente
 // Features: Markdown, Code-Blöcke, Tool-Calls, Thinking, Web-Ergebnisse
-// Vollständiger Quellcode: ~459 Zeilen`),
+// Full Source Code: ~459 Zeilen`),
       file('FileTreeItem.tsx', `// Dateibaum-Eintrag
 // Features: Ordner/Datei Anzeige, Expand/Collapse, Active-State, Long-Press
-// Vollständiger Quellcode: ~142 Zeilen`),
+// Full Source Code: ~142 Zeilen`),
       file('ThinkingBlock.tsx', `// KI-Denkprozess Anzeige
 // Features: Live-Stream, Puls-Animation, Markdown-Stripping, Auto-Scroll
-// Vollständiger Quellcode: ~198 Zeilen`),
+// Full Source Code: ~198 Zeilen`),
       file('ToolCallView.tsx', `// Tool-Aufruf Anzeige
 // Features: Status-Dot, Parameter, Ergebnis, Einklappbar
-// Vollständiger Quellcode: ~168 Zeilen`),
+// Full Source Code: ~168 Zeilen`),
     ]),
 
     dir('providers', [
       file('AppProvider.tsx', `// App settings Provider
 // Features: Settings, Todos, Memos, Tool-Berechtigungen, API-Keys
 // Verwendet: @nkzw/create-context-hook, AsyncStorage
-// Vollständiger Quellcode: ~163 Zeilen`),
+// Full Source Code: ~163 Zeilen`),
       file('ProjectProvider.tsx', `// Project management Provider
 // Features: Projekte, File system, Search, Export
 // Verwendet: @nkzw/create-context-hook, AsyncStorage
-// Vollständiger Quellcode: ~338 Zeilen`),
+// Full Source Code: ~338 Zeilen`),
       file('ChatProvider.tsx', `// Chat history Provider
 // Features: Nachrichten, KI-API, Tool-Calls, Komprimierung
 // Verwendet: @nkzw/create-context-hook, AsyncStorage
-// Vollständiger Quellcode: ~941 Zeilen`),
+// Full Source Code: ~941 Zeilen`),
       file('AgentProvider.tsx', `// Agent-Modus Provider
 // Features: Plan-Erstellung, Task-Ausführung, Tool-Genehmigung
 // Verwendet: @nkzw/create-context-hook
-// Vollständiger Quellcode: ~1097 Zeilen`),
+// Full Source Code: ~1097 Zeilen`),
     ]),
 
     dir('utils', [
       file('ai-service.ts', `// KI-API Integration
 // Features: Multi-Provider, Streaming, Tool-Calls, Rate-Limiting, Fallback
 // Unterstützt: OpenAI, Anthropic, Gemini, Groq, OpenRouter, Custom
-// Vollständiger Quellcode: ~1018 Zeilen`),
+// Full Source Code: ~1018 Zeilen`),
       file('download.ts', `// Projekt-Export/Download System
 // Features: Flatten, Text-Bundle, JSON-Export, Web-Download, Native-Share
-// Vollständiger Quellcode: ~150 Zeilen`),
-      file('file-icons.ts', `// Datei-Icons und Sprach-Erkennung
-// Features: Farben, Labels, Sprach-Mapping, Binary-Detection
-// Vollständiger Quellcode: ~62 Zeilen`),
-      file('sample-project.ts', `// Beispiel-Projekte
+// Full Source Code: ~150 Zeilen`),
+      file('file-icons.ts', `// File Icons und Language Recognition
+// Features: Colors, Labels, Sprach-Mapping, Binary-Detection
+// Full Source Code: ~62 Zeilen`),
+      file('sample-project.ts', `// Sample Projects
 // Features: Android (Kotlin), Web (TypeScript), Python, Studio IDE
-// Vollständiger Quellcode: ~100 Zeilen`),
-      file('self-source.ts', `// App Source Code als Projekt (diese Datei)
+// Full Source Code: ~100 Zeilen`),
+      file('self-source.ts', `// App Source Code as Project (diese Datei)
 // Generiert die Project Structure der Studio IDE App
 // Inkl. README-Dokumentation
-// Vollständiger Quellcode: dynamisch generiert`),
-      file('syntax.ts', `// Syntax-Highlighting Engine
+// Full Source Code: dynamisch generiert`),
+      file('syntax.ts', `// Syntax Highlighting Engine
 // Features: Multi-Language, XML/HTML, JSON, Markdown-Parsing
 // Sprachen: Kotlin, Java, TypeScript, JavaScript, Python, Go, Rust, Swift, Dart, CSS, SQL, Shell
-// Vollständiger Quellcode: ~142 Zeilen`),
+// Full Source Code: ~142 Zeilen`),
     ]),
   ];
 }

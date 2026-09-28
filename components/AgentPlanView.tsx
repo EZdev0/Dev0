@@ -382,7 +382,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   style={styles.addInput}
                   value={newTitle}
                   onChangeText={setNewTitle}
-                  placeholder={addType === 'thinking' ? 'What to analyze...' : addType === 'brainstorm' ? 'Worüber brainstormen...' : 'Aufgabe Titel...'}
+                  placeholder={addType === 'thinking' ? 'What to analyze...' : addType === 'brainstorm' ? 'What to brainstorm...' : 'Task Title...'}
                   placeholderTextColor={IDE.muted}
                   autoFocus
                 />
