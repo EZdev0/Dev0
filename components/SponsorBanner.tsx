@@ -76,7 +76,7 @@ export function SponsorOverlay() {
             <Text style={styles.title}>Support EZdev!</Text>
           </View>
           <Text style={styles.bodyText}>
-            We put a lot of time and love into the development of Studio IDE. In order to continue offering the project free of charge and open-source, we rely on your support!
+            We put a lot of time and love into the development of Dev0. In order to continue offering the project free of charge and open-source, we rely on your support!
           </Text>
           <Text style={styles.bodyText}>
             Every contribution, no matter how small, helps us to cover server costs and integrate new AI models. Take a look at our sponsor program or write to us for feedback at EZdev-info@proton.me.

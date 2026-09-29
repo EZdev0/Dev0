@@ -24,7 +24,7 @@ interface ProviderMeta {
 
 const PROVIDER_INFO: Record<string, ProviderMeta> = {
   rork: {
-    desc: 'Free AI directly in Studio IDE. No API key required.',
+    desc: 'Free AI directly in Dev0. No API key required.',
     pricing: 'Completely free',
   },
   groq: {
@@ -876,7 +876,7 @@ export default function SettingsScreen() {
       )}
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Studio IDE v1.4</Text>
+        <Text style={styles.footerText}>Dev0 v1.4</Text>
         <Text style={styles.footerSubtext}>Mobile Code Editor with AI Assistant</Text>
       </View>
     </ScrollView>

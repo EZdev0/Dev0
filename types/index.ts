@@ -329,6 +329,6 @@ export const PROJECT_TYPES = [
   { id: 'android', name: 'Android (Kotlin)', icon: '📱' },
   { id: 'web', name: 'Web (TypeScript)', icon: '🌐' },
   { id: 'python', name: 'Python', icon: '🐍' },
-  { id: 'studio-ide', name: 'Studio IDE (Source)', icon: '🛠️' },
+  { id: 'studio-ide', name: 'Dev0 (Source)', icon: '🛠️' },
   { id: 'empty', name: 'Leeres Projekt', icon: '📁' },
 ];

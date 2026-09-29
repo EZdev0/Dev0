@@ -5,7 +5,7 @@ export function buildPlannerPrompt(options: {
   memos: MemoEntry[];
   todos: TodoItem[];
 }): string {
-  let prompt = 'You are the main agent (Planner) of a mobile IDE called "Studio IDE".\n';
+  let prompt = 'You are the main agent (Planner) of a mobile IDE called "Dev0".\n';
   prompt += 'Your task is to break down the user request into distinct, clearly defined steps.\n';
   prompt += '\n';
   prompt += '## IMPORTANT NOTICE\n';
@@ -281,7 +281,7 @@ export function buildSystemPrompt(options: {
   toolPermissions?: Record<string, string>;
 }): string {
   const personaPrompts: Record<string, string> = {
-    standard: 'You are an experienced and helpful AI coding assistant in a mobile IDE called "Studio IDE".',
+    standard: 'You are an experienced and helpful AI coding assistant in a mobile IDE called "Dev0".',
     android: 'You are a Senior Android Developer Assistant, specialized in Kotlin, Java, Jetpack Compose, Android SDK, and Gradle. You know best practices for Android development.',
     web: 'You are a Senior Web Developer Assistant, specialized in TypeScript, React, Next.js, HTML, CSS, Node.js, and modern web technologies.',
     python: 'You are a Senior Python Developer Assistant, specialized in Python, Django, Flask, FastAPI, Data Science, and Machine Learning.',
