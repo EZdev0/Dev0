@@ -813,10 +813,10 @@ export default function SettingsLayout() {
 // Features: Colors, Labels, Sprach-Mapping, Binary-Detection
 // Full Source Code: ~62 Zeilen`),
       file('sample-project.ts', `// Sample Projects
-// Features: Android (Kotlin), Web (TypeScript), Python, Studio IDE
+// Features: Android (Kotlin), Web (TypeScript), Python, Dev0
 // Full Source Code: ~100 Zeilen`),
       file('self-source.ts', `// App Source Code as Project (diese Datei)
-// Generiert die Project Structure der Studio IDE App
+// Generiert die Project Structure der Dev0 App
 // Inkl. README-Dokumentation
 // Full Source Code: dynamisch generiert`),
       file('syntax.ts', `// Syntax Highlighting Engine

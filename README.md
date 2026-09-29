@@ -1,8 +1,8 @@
-# Studio IDE
+# Dev0
 
 🇬🇧 [English](README.md) | 🇩🇪 [Deutsch](README.de.md)
 
-Welcome to **Studio IDE**, a powerful, cross-platform native mobile IDE application built with React Native and Expo. Studio IDE provides an integrated AI-driven development environment, natively supporting a wide array of AI providers.
+Welcome to **Dev0**, a powerful, cross-platform native mobile IDE application built with React Native and Expo. Dev0 provides an integrated AI-driven development environment, natively supporting a wide array of AI providers.
 
 ## Project Information
 
@@ -96,4 +96,4 @@ eas build --platform android
 ```
 
 ---
-*Maintained with ❤️ by the Studio IDE Team. Always update these documentations when changing the structure!*
+*Maintained with ❤️ by the Dev0 Team. Always update these documentations when changing the structure!*

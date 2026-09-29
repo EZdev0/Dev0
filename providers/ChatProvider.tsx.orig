@@ -651,7 +651,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
 
       let fullMsg = '';
       if (!rorkContextSentRef.current || (rorkAgent.messages ?? []).length === 0) {
-        fullMsg += 'You are an AI coding assistant in "Studio IDE". ALWAYS reply in English.\n';
+        fullMsg += 'You are an AI coding assistant in "Dev0". ALWAYS reply in English.\n';
         fullMsg += 'Use your tools ACTIVELY and IMMEDIATELY. DO NOT ask if you should do something - JUST DO IT.\n';
         fullMsg += 'ALWAYS read files with read_file BEFORE editing them.\n';
         fullMsg += 'Format responses with Markdown: **bold**, `code`, lists.\n';
