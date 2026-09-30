@@ -1174,7 +1174,7 @@ Investigate all options thoroughly.`;
         };
       });
 
-      // FIX 3B: User-Info Extraction nach Job-Abschluss (wenn Lernmodus aktiv)
+      // User-Info Extraction nach Job-Abschluss (wenn Lernmodus aktiv)
       if (settings.betaAgentLearning) {
         const allMessages = pTasks.flatMap(t => t.subAgentMessages || []);
         await extractUserInfoIfEnabled(allMessages);
@@ -1236,7 +1236,7 @@ Investigate all options thoroughly.`;
     }
   }, [updatePlan, updateTaskInPlan, executeSubAgent]);
 
-  // FIX 3: User-Info Auto-Extraction im Lernmodus (mit Null Safety)
+  // User-Info Auto-Extraction im Lernmodus (mit Null Safety)
   const extractUserInfoIfEnabled = useCallback(async (messages: ChatMessage[]) => {
     if (!settings.betaAgentLearning) return;
     
