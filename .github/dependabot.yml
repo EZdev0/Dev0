@@ -15,3 +15,4 @@ updates:
       - dependency-name: "react-dom"
       - dependency-name: "react-native"
       - dependency-name: "react-native-*"
+      - dependency-name: "node-forge"
