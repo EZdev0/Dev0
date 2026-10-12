@@ -57,15 +57,15 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.2",
+    "@babel/core": "^8.0.7",
     "@expo/ngrok": "^4.1.0",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.1.10",
-    "eslint": "^8.57.1",
-    "eslint-config-expo": "~10.0.0",
+    "eslint": "^10.12.0",
+    "eslint-config-expo": "~57.0.2",
     "jest": "^30.5.2",
     "ts-jest": "^29.4.13",
-    "typescript": "~5.9.2"
+    "typescript": "~7.0.2"
   },
   "private": true,
   "overrides": {
