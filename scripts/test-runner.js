@@ -3,7 +3,7 @@ const path = require('path');
 const ts = require('typescript');
 const Module = require('module');
 
-// Mock react-native for node testing
+// Mock react-native and handle @/ alias for node testing
 const origRequire = Module.prototype.require;
 Module.prototype.require = function (id) {
   if (id === 'react-native') {
@@ -12,6 +12,10 @@ Module.prototype.require = function (id) {
       Alert: { alert: console.log },
       StyleSheet: { create: (s) => s },
     };
+  }
+  if (id.startsWith('@/')) {
+    const resolvedPath = path.resolve(__dirname, '..', id.slice(2));
+    return origRequire.call(this, resolvedPath);
   }
   return origRequire.apply(this, arguments);
 };
@@ -57,47 +61,65 @@ global.it = (name, fn) => {
 
 global.test = global.it;
 
-global.expect = (actual) => ({
+const createMatchers = (actual, isNot = false) => ({
   toBe: (expected) => {
-    if (actual !== expected) throw new Error(`Expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}`);
+    const pass = actual === expected;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${JSON.stringify(actual)} ${isNot ? 'not to be' : 'to be'} ${JSON.stringify(expected)}`);
   },
   toEqual: (expected) => {
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected ${JSON.stringify(expected)} but got ${JSON.stringify(actual)}`);
+    const pass = JSON.stringify(actual) === JSON.stringify(expected);
+    if (isNot ? pass : !pass) throw new Error(`Expected ${JSON.stringify(actual)} ${isNot ? 'not to equal' : 'to equal'} ${JSON.stringify(expected)}`);
   },
   toBeDefined: () => {
-    if (actual === undefined) throw new Error('Expected value to be defined');
+    const pass = actual !== undefined;
+    if (isNot ? pass : !pass) throw new Error(`Expected value ${isNot ? 'not ' : ''}to be defined`);
   },
   toBeUndefined: () => {
-    if (actual !== undefined) throw new Error('Expected value to be undefined');
+    const pass = actual === undefined;
+    if (isNot ? pass : !pass) throw new Error(`Expected value ${isNot ? 'not ' : ''}to be undefined`);
   },
   toBeTruthy: () => {
-    if (!actual) throw new Error(`Expected truthy but got ${actual}`);
+    const pass = !!actual;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${isNot ? 'falsy' : 'truthy'} but got ${actual}`);
   },
   toBeFalsy: () => {
-    if (actual) throw new Error(`Expected falsy but got ${actual}`);
+    const pass = !actual;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${isNot ? 'truthy' : 'falsy'} but got ${actual}`);
   },
   toBeGreaterThan: (expected) => {
-    if (!(actual > expected)) throw new Error(`Expected ${actual} > ${expected}`);
+    const pass = actual > expected;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${actual} ${isNot ? 'not >' : '>'} ${expected}`);
   },
   toBeGreaterThanOrEqual: (expected) => {
-    if (!(actual >= expected)) throw new Error(`Expected ${actual} >= ${expected}`);
+    const pass = actual >= expected;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${actual} ${isNot ? 'not >=' : '>='} ${expected}`);
   },
   toBeLessThan: (expected) => {
-    if (!(actual < expected)) throw new Error(`Expected ${actual} < ${expected}`);
+    const pass = actual < expected;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${actual} ${isNot ? 'not <' : '<'} ${expected}`);
   },
   toBeLessThanOrEqual: (expected) => {
-    if (!(actual <= expected)) throw new Error(`Expected ${actual} <= ${expected}`);
+    const pass = actual <= expected;
+    if (isNot ? pass : !pass) throw new Error(`Expected ${actual} ${isNot ? 'not <=' : '<='} ${expected}`);
   },
   toContain: (item) => {
+    let pass = false;
     if (typeof actual === 'string') {
-      if (!actual.includes(item)) throw new Error(`Expected "${actual}" to contain "${item}"`);
+      pass = actual.includes(item);
     } else if (Array.isArray(actual)) {
-      if (!actual.includes(item)) throw new Error(`Expected array to contain ${item}`);
+      pass = actual.includes(item);
     }
+    if (isNot ? pass : !pass) throw new Error(`Expected ${JSON.stringify(actual)} ${isNot ? 'not to contain' : 'to contain'} ${JSON.stringify(item)}`);
   },
   toHaveLength: (len) => {
-    if (actual?.length !== len) throw new Error(`Expected length ${len} but got ${actual?.length}`);
+    const pass = actual?.length === len;
+    if (isNot ? pass : !pass) throw new Error(`Expected length ${len} but got ${actual?.length}`);
   },
+});
+
+global.expect = (actual) => ({
+  ...createMatchers(actual, false),
+  not: createMatchers(actual, true),
 });
 
 require.extensions['.ts'] = function (module, filename) {
@@ -119,6 +141,9 @@ require('../__tests__/utils/web-tools.test.ts');
 
 // 2. Run chat-compression test
 require('../__tests__/utils/chat-compression.test.ts');
+
+// 3. Run multi-agent test
+require('../__tests__/utils/multi-agent.test.ts');
 
 setTimeout(() => {
   console.log(`\n========================================`);

@@ -8,7 +8,7 @@ import {
   Minus, Plus, Zap, Globe, Shield, RefreshCw, FlaskConical,
   Info, Check, Sparkles, Star, Copy, CircleCheck, Circle,
   Brain, FileText,
- Heart } from 'lucide-react-native';
+  Heart, LayoutDashboard } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 import { IDE } from '@/constants/colors';
@@ -659,6 +659,25 @@ export default function SettingsScreen() {
               <Text style={styles.betaWarningText}>
                 Beta features can be unstable and may change at any time.
               </Text>
+            </View>
+
+            <View style={styles.dashboardSectionCard}>
+              <View style={styles.dashboardSectionLeft}>
+                <View style={styles.dashboardSectionIcon}>
+                  <LayoutDashboard size={18} color={IDE.primary} />
+                </View>
+                <View style={styles.dashboardSectionText}>
+                  <Text style={styles.dashboardSectionTitle}>Agent Dashboard</Text>
+                  <Text style={styles.dashboardSectionSubtitle}>Super-Agent Mode • Multi-Agent Swarm Manager</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.openDashboardButton}
+                onPress={() => router.push({ pathname: '/(tabs)/tools', params: { tab: 'dashboard' } } as any)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.openDashboardButtonText}>Open</Text>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.settingRow}>
@@ -1635,5 +1654,54 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#fff',
     fontWeight: '600' as const,
+  },
+  dashboardSectionCard: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    backgroundColor: IDE.surface,
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: IDE.primary + '40',
+  },
+  dashboardSectionLeft: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 12,
+    flex: 1,
+  },
+  dashboardSectionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: IDE.primary + '20',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  dashboardSectionText: {
+    flex: 1,
+  },
+  dashboardSectionTitle: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    color: IDE.text,
+  },
+  dashboardSectionSubtitle: {
+    fontSize: 11,
+    color: IDE.muted,
+    marginTop: 2,
+  },
+  openDashboardButton: {
+    backgroundColor: IDE.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  openDashboardButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700' as const,
   },
 });

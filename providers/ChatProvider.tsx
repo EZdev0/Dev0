@@ -198,7 +198,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       },
     }),
     web_search: createRorkTool({
-      description: 'Performs a DuckDuckGo Instant Answer search (usually only returns short abstracts for Wikipedia-known terms, not a full web search).',
+      description: 'Performs a free web search across Wikipedia and DuckDuckGo search engines, returning relevant web results and URLs.',
       zodSchema: z.object({ query: z.string().describe('Search term') }),
       execute: async (input: { query: string }) => {
         console.log('[Rork] web_search:', input.query);
@@ -216,7 +216,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     }),
 
       sub_agent: createRorkTool({
-        description: 'Delegates task to a specialized sub-agent (Analyst, Developer, Tester, Researcher).',
+        description: 'Delegates task to a specialized sub-agent (Analyst, Developer, Tester, Researcher, Critic).',
         zodSchema: z.object({ role: z.string().describe('Role of the sub-agent'), task: z.string().describe('Task description') }),
         execute: async (input: { role: string, task: string }) => {
           return 'ERROR: Sub-agents cannot be started in direct chat. Please use the planner.';

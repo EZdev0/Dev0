@@ -163,6 +163,7 @@ export default function ToolsScreen() {
   );
 
   const tabs = [
+    { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard, badge: subAgents.length || undefined },
     { id: 'tools' as const, label: 'Tools', icon: Wrench, badge: activeToolCount },
     { id: 'plans' as const, label: 'Plans', icon: Brain, badge: activePlans.length || undefined },
     { id: 'memos' as const, label: 'Memos', icon: BookOpen, badge: undefined },
@@ -237,19 +238,33 @@ export default function ToolsScreen() {
           <>
             <View style={styles.toolsHeader}>
               <Text style={styles.toolsTitle}>Active Agents</Text>
+              <TouchableOpacity
+                style={styles.openDashboardHeaderBtn}
+                onPress={() => setActiveTab('dashboard')}
+                activeOpacity={0.7}
+              >
+                <LayoutDashboard size={13} color={IDE.primary} />
+                <Text style={styles.openDashboardHeaderText}>Open Dashboard</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.toolsSubtitle}>Available specialized AI sub-agents in the system.</Text>
+            <Text style={styles.toolsSubtitle}>Available specialized AI sub-agents in the system. Tap any agent to configure.</Text>
             <View style={styles.categorySection}>
               {['analyst', 'developer', 'tester', 'researcher', 'critic'].map(agentName => (
-                <View key={agentName} style={styles.toolCard}>
+                <TouchableOpacity
+                  key={agentName}
+                  style={styles.toolCard}
+                  onPress={() => setActiveTab('dashboard')}
+                  activeOpacity={0.7}
+                >
                   <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
                     <Brain size={12} color={IDE.primary} />
                   </View>
                   <View style={styles.toolCardContent}>
                     <Text style={styles.toolCardName}>{agentName.toUpperCase()} Agent</Text>
-                    <Text style={styles.toolCardDesc} numberOfLines={1}>Executes specific tasks with its own tools.</Text>
+                    <Text style={styles.toolCardDesc} numberOfLines={1}>Tap to manage in Agent Dashboard.</Text>
                   </View>
-                </View>
+                  <ChevronRight size={14} color={IDE.muted} />
+                </TouchableOpacity>
               ))}
             </View>
 
@@ -1029,6 +1044,22 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   toolsTitle: { fontSize: 18, fontWeight: '700' as const, color: IDE.text },
+  openDashboardHeaderBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    backgroundColor: IDE.primary + '18',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: IDE.primary + '30',
+  },
+  openDashboardHeaderText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: IDE.primary,
+  },
   toolsCountBadge: {
     backgroundColor: IDE.primary + '18',
     paddingHorizontal: 10,

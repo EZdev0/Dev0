@@ -69,6 +69,6 @@
   },
   "private": true,
   "overrides": {
-    "undici": "7.24.1"
+    "undici": "^7.29.1"
   }
 }
