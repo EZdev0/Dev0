@@ -261,7 +261,7 @@ export const MemoSection: React.FC<MemoSectionProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const GlobalMemos = memos.filter(m => m.type === 'Global');
+  const globalMemos = memos.filter(m => m.type === 'global');
   const localMemos = memos.filter(m => m.type === 'local');
 
   return (
@@ -293,13 +293,13 @@ export const MemoSection: React.FC<MemoSectionProps> = ({
       </View>
 
       {/* Global Memos */}
-      {GlobalMemos.length > 0 && (
+      {globalMemos.length > 0 && (
         <View style={styles.memoGroup}>
           <View style={styles.memoGroupHeader}>
             <Ionicons name="globe" size={16} color={IDE.primary} />
-            <Text style={styles.memoGroupTitle}>Global ({GlobalMemos.length})</Text>
+            <Text style={styles.memoGroupTitle}>Global ({globalMemos.length})</Text>
           </View>
-          {GlobalMemos.slice(0, 5).map(memo => (
+          {globalMemos.slice(0, 5).map(memo => (
             <TouchableOpacity
               key={memo.id}
               style={styles.memoItem}
