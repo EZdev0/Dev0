@@ -70,3 +70,42 @@ if (fs.existsSync(dtsPath)) {
   }
 }
 
+// Patch image-size to maintain compatibility with Metro string file paths
+const imageSizeCjsPath = path.join(__dirname, '..', 'node_modules', 'image-size', 'dist', 'cjs', 'lookup.js');
+if (fs.existsSync(imageSizeCjsPath)) {
+  let content = fs.readFileSync(imageSizeCjsPath, 'utf8');
+  if (!content.includes('typeof input === \'string\'')) {
+    content = content.replace(
+      'function imageSize(input) {',
+      'function imageSize(input) {\n    if (typeof input === \'string\') {\n        input = require(\'fs\').readFileSync(input);\n    }'
+    );
+    fs.writeFileSync(imageSizeCjsPath, content, 'utf8');
+    console.log('Patched', imageSizeCjsPath);
+  }
+}
+
+// Patch metro Assets.js to safely read file before imageSize
+const metroAssetsPath = path.join(__dirname, '..', 'node_modules', 'metro', 'src', 'Assets.js');
+if (fs.existsSync(metroAssetsPath)) {
+  let content = fs.readFileSync(metroAssetsPath, 'utf8');
+  if (content.includes(': assetInfo.files[0];')) {
+    content = content.replace(
+      ': assetInfo.files[0];',
+      ': _fs.default.readFileSync(assetInfo.files[0]);'
+    );
+    fs.writeFileSync(metroAssetsPath, content, 'utf8');
+    console.log('Patched', metroAssetsPath);
+  }
+}
+
+// Patch image-size index.js to maintain CommonJS default function compatibility
+const imageSizeIndexPath = path.join(__dirname, '..', 'node_modules', 'image-size', 'dist', 'cjs', 'index.js');
+if (fs.existsSync(imageSizeIndexPath)) {
+  let content = fs.readFileSync(imageSizeIndexPath, 'utf8');
+  if (!content.includes('module.exports = lookup_1.imageSize;')) {
+    content += '\nmodule.exports = lookup_1.imageSize;\nmodule.exports.default = lookup_1.imageSize;\nmodule.exports.imageSize = lookup_1.imageSize;\nmodule.exports.disableTypes = lookup_1.disableTypes;\nmodule.exports.types = types_1.types;\nmodule.exports.__esModule = true;\n';
+    fs.writeFileSync(imageSizeIndexPath, content, 'utf8');
+    console.log('Patched', imageSizeIndexPath);
+  }
+}
+
