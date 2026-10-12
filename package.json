@@ -61,7 +61,7 @@
     "@expo/ngrok": "^4.1.0",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.1.10",
-    "babel-preset-expo": "~54.0.12",
+    "babel-preset-expo": "~58.0.12",
     "eslint": "^8.57.1",
     "eslint-config-expo": "~10.0.0",
     "jest": "^30.5.2",
