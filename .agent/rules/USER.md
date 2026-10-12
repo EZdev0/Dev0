@@ -14,6 +14,12 @@
 - **NEVER push directly to the \main\ branch.**
 - **ALWAYS create a new branch** for your changes.
 - **ALWAYS push the branch** and provide the user with a Pull Request link.
+- **ALWAYS provide a complete, copy-pasteable Pull Request message** in the chat response whenever a branch is pushed:
+  - **PR Title:** Semantic title (e.g., `feat(...)`, `fix(...)`).
+  - **Summary:** Concise explanation of what the PR achieves and why.
+  - **Key Changes:** Bullet points detailing modified components, files, and logic.
+  - **Verification:** Concrete proof of test runs (`npm test`, `tsc`, `lint`, builds).
+  - **PR Link:** Direct clickable GitHub creation/comparison link.
 - The user will handle reviewing, merging, and deploying the PR.
 
 ## 🚀 DEVELOPMENT SERVER WORKFLOW

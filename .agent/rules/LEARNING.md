@@ -47,6 +47,11 @@
 - **[PREVENTION]** The AI MUST always append the clickable URL (e.g., http://localhost:8081) to its response whenever it starts a server.
 
 ### [2026-09-12] Branching Discipline Violation
-- **[ERROR]** The AI pushed a massive new feature (Critic Agent & Architecture) into an existing PR branch (\ix-studio-ki-web-deployment\) instead of isolating it.
+- **[ERROR]** The AI pushed a massive new feature (Critic Agent & Architecture) into an existing PR branch (\fix-studio-ki-web-deployment\) instead of isolating it.
 - **[CAUSE]** The AI assumed it could reuse the current branch because it wasn't \main\.
 - **[PREVENTION]** The AI MUST ALWAYS create a explicitly NEW branch (and provide the new PR link) for every new task, ensuring separation of concerns.
+
+### [2026-10-12] Missing Complete PR Message with Pull Request Link
+- **[ERROR]** Providing only a PR link or high-level summary without a structured, copy-pasteable PR description and title.
+- **[CAUSE]** Missing rule requiring a complete GitHub PR template/message in the final response.
+- **[PREVENTION]** Whenever creating or updating a PR, the AI MUST ALWAYS include a ready-to-use PR message (Title, Description, Detailed Changes, Test Verification) alongside the PR link.
