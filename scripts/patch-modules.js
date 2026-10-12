@@ -70,3 +70,31 @@ if (fs.existsSync(dtsPath)) {
   }
 }
 
+// Patch image-size to maintain compatibility with Metro string file paths
+const imageSizeCjsPath = path.join(__dirname, '..', 'node_modules', 'image-size', 'dist', 'cjs', 'lookup.js');
+if (fs.existsSync(imageSizeCjsPath)) {
+  let content = fs.readFileSync(imageSizeCjsPath, 'utf8');
+  if (!content.includes('typeof input === \'string\'')) {
+    content = content.replace(
+      'function imageSize(input) {',
+      'function imageSize(input) {\n    if (typeof input === \'string\') {\n        input = require(\'fs\').readFileSync(input);\n    }'
+    );
+    fs.writeFileSync(imageSizeCjsPath, content, 'utf8');
+    console.log('Patched', imageSizeCjsPath);
+  }
+}
+
+// Patch metro Assets.js to safely read file before imageSize
+const metroAssetsPath = path.join(__dirname, '..', 'node_modules', 'metro', 'src', 'Assets.js');
+if (fs.existsSync(metroAssetsPath)) {
+  let content = fs.readFileSync(metroAssetsPath, 'utf8');
+  if (content.includes(': assetInfo.files[0];')) {
+    content = content.replace(
+      ': assetInfo.files[0];',
+      ': _fs.default.readFileSync(assetInfo.files[0]);'
+    );
+    fs.writeFileSync(metroAssetsPath, content, 'utf8');
+    console.log('Patched', metroAssetsPath);
+  }
+}
+
