@@ -23,7 +23,7 @@ Gebaut mit **React Native (Expo)**, **TypeScript** und **Expo Router**.
 
 ---
 
-## Projektstruktur
+## Project Structure
 
 \`\`\`
 studio-mobile-ide/
@@ -34,17 +34,17 @@ studio-mobile-ide/
 │   ├── +native-intent.tsx        # Native Intent Handler
 │   └── (tabs)/                   # Tab-Navigation
 │       ├── _layout.tsx           # Tab-Konfiguration (4 Tabs)
-│       ├── (home)/               # Projekte-Tab
-│       │   ├── _layout.tsx       # Stack-Navigation für Home
-│       │   └── index.tsx         # Projektliste, Dateibaum, Erstellen/Löschen
-│       ├── chat/                 # KI-Chat-Tab
-│       │   ├── _layout.tsx       # Stack-Navigation für Chat
+│       ├── (home)/               # Projects Tab
+│       │   ├── _layout.tsx       # Stack Navigation for Home
+│       │   └── index.tsx         # Project list, file tree, create/delete
+│       ├── chat/                 # AI Chat Tab
+│       │   ├── _layout.tsx       # Stack Navigation for Chat
 │       │   └── index.tsx         # Chat-Interface, Agent-Modus, Anhänge
-│       ├── tools/                # Werkzeuge-Tab
-│       │   ├── _layout.tsx       # Stack-Navigation für Tools
-│       │   └── index.tsx         # Tool-Registry, Pläne, Memos, Suche
-│       └── settings/             # Einstellungen-Tab
-│           ├── _layout.tsx       # Stack-Navigation für Settings
+│       ├── tools/                # Tools Tab
+│       │   ├── _layout.tsx       # Stack Navigation for Tools
+│       │   └── index.tsx         # Tool-Registry, Pläne, Memos, Search
+│       └── settings/             # Settings Tab
+│           ├── _layout.tsx       # Stack Navigation for Settings
 │           └── index.tsx         # API-Keys, Modelle, Persona, Beta-Features
 │
 ├── components/                   # Wiederverwendbare Komponenten
@@ -60,9 +60,9 @@ studio-mobile-ide/
 │
 ├── providers/                    # React Context Provider
 │   ├── AgentProvider.tsx         # Agent-Modus: Planung, Task-Ausführung, Tool-Calls
-│   ├── AppProvider.tsx           # App-Einstellungen, Todos, Memos, Tool-Berechtigungen
-│   ├── ChatProvider.tsx          # Chat-Verlauf, KI-Kommunikation, Komprimierung
-│   └── ProjectProvider.tsx       # Projekt-Verwaltung, Dateisystem, Suche
+│   ├── AppProvider.tsx           # App settings, Todos, Memos, Tool-Berechtigungen
+│   ├── ChatProvider.tsx          # Chat history, KI-Kommunikation, Komprimierung
+│   └── ProjectProvider.tsx       # Project management, File system, Search
 │
 ├── types/
 │   └── index.ts                  # TypeScript Typen, Interfaces, Konstanten
@@ -70,10 +70,10 @@ studio-mobile-ide/
 ├── utils/
 │   ├── ai-service.ts             # KI-API Integration (Multi-Provider, Streaming, Tools)
 │   ├── download.ts               # Projekt-Export/Download System
-│   ├── file-icons.ts             # Datei-Icons, Farben, Sprach-Erkennung
-│   ├── sample-project.ts         # Beispiel-Projekte (Android, Web, Python, IDE)
-│   ├── self-source.ts            # App-Quellcode als Projekt (diese Datei)
-│   └── syntax.ts                 # Syntax-Highlighting Engine
+│   ├── file-icons.ts             # File Icons, Colors, Language Recognition
+│   ├── sample-project.ts         # Sample Projects (Android, Web, Python, IDE)
+│   ├── self-source.ts            # App Source Code as Project (diese Datei)
+│   └── syntax.ts                 # Syntax Highlighting Engine
 │
 ├── app.json                      # Expo-Konfiguration
 ├── babel.config.js               # Babel-Konfiguration
@@ -92,7 +92,7 @@ QueryClientProvider (React Query)
   └── GestureHandlerRootView
       └── AppProvider (Einstellungen, Todos, Memos)
           └── ProjectProvider (Projekte, Dateien)
-              └── ChatProvider (Chat-Verlauf, KI)
+              └── ChatProvider (Chat history, KI)
                   └── AgentProvider (Agent-Modus, Pläne)
                       └── RootLayoutNav (Expo Router Stack)
 \`\`\`
@@ -105,7 +105,7 @@ QueryClientProvider (React Query)
 
 ### Daten-Persistenz
 
-- **AsyncStorage**: Projekte, Einstellungen, Chat-Verlauf, Todos, Memos
+- **AsyncStorage**: Projekte, Einstellungen, Chat history, Todos, Memos
 - **React Query**: Server-State Management
 - **@nkzw/create-context-hook**: Context-Provider Erstellung
 
@@ -125,16 +125,16 @@ Vollständiger Code-Editor mit:
 - Syntax-Highlighting (multi-language)
 - Zeilennummern (schaltbar)
 - Bearbeitungsmodus mit Symbol-Leiste
-- Speichern/Verwerfen von Änderungen
+- Save/discard changes
 - Breadcrumb-Navigation
 - Status-Leiste (Zeilen, Zeichen, Sprache)
 
 ### app/(tabs)/(home)/index.tsx
-Projekt-Verwaltungsseite:
-- Projekt-Tabs zum Wechseln zwischen Projekten
+Project managementsseite:
+- Project tabs to switch between projects
 - Dateibaum mit Ordner-Navigation
-- Suche in Dateien
-- Datei/Ordner erstellen, löschen, umbenennen
+- Search in Dateien
+- Create, delete, rename file/folder
 - Long-Press Kontextmenü
 - Projekt-Export/Download
 
@@ -153,7 +153,7 @@ Werkzeuge-Verwaltung:
 - Berechtigungen (Immer/Fragen/Blockiert/Entfernt)
 - Agent-Plan Übersicht
 - Memos (Projekt-Notizen)
-- Datei-Suche (grep)
+- Datei-Search (grep)
 - Chat-Komprimierung
 
 ### app/(tabs)/settings/index.tsx
@@ -163,10 +163,10 @@ Einstellungen:
 - Persona-Auswahl
 - Editor-Einstellungen (Schriftgröße, Zeilennummern)
 - Verhalten (YOLO, Auto-Retry, Auto-Fallback)
-- Beta-Features (Web-Suche, Web-Fetch, Agent-Lernen)
+- Beta-Features (Web-Search, Web-Fetch, Agent-Lernen)
 
 ### providers/AppProvider.tsx
-Zentrale App-Einstellungen:
+Central app settings:
 - Settings mit AsyncStorage Persistenz
 - Todo-Liste (CRUD)
 - Memos (CRUD)
@@ -176,11 +176,11 @@ Zentrale App-Einstellungen:
 
 ### providers/ProjectProvider.tsx
 Projekt- und Dateiverwaltung:
-- Mehrere Projekte gleichzeitig
+- Multiple projects at once
 - Dateibaum (FileNode) Manipulation
-- Lesen, Schreiben, Erstellen, Löschen von Dateien
+- Read, write, create, delete files
 - Verzeichnis-Navigation
-- Datei-Suche
+- Datei-Search
 - Projekt-Export
 
 ### providers/ChatProvider.tsx
@@ -196,7 +196,7 @@ Agent-Modus:
 - Plan-Erstellung aus User-Anfragen
 - Task-Ausführung mit Tool-Calls
 - Brainstorming-Schritte
-- Fehlerbehandlung und Retry
+- Error handling and retry
 - Tool-Genehmigung (Ask-Modus)
 - Finale Antwort-Generierung
 
@@ -245,8 +245,8 @@ Chat-Nachricht Komponente:
 - Kopieren/Bearbeiten Aktionen
 
 ### types/index.ts
-Zentrale Typ-Definitionen:
-- FileNode, Project (Dateisystem)
+Central Type Definitions:
+- FileNode, Project (File system)
 - ChatMessage, ToolCall (Chat)
 - AgentPlan, AgentTask (Agent)
 - AppSettings (Einstellungen)
@@ -624,7 +624,7 @@ import { IDE } from '@/constants/colors';
 export default function NotFoundScreen() {
   return (
     <>
-      <Stack.Screen options={{ title: 'Nicht gefunden' }} />
+      <Stack.Screen options={{ title: 'Not Found' }} />
       <View style={styles.container}>
         <Text style={styles.title}>Diese Seite existiert nicht.</Text>
         <Link href="/" style={styles.link}>
@@ -660,10 +660,10 @@ export default function TabLayout() {
       tabBarStyle: { backgroundColor: IDE.surface, borderTopColor: IDE.border, borderTopWidth: 1 },
       tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
     }}>
-      <Tabs.Screen name="(home)" options={{ title: 'Projekte', tabBarIcon: ({ color, size }) => <FolderOpen size={size - 2} color={color} /> }} />
-      <Tabs.Screen name="chat" options={{ title: 'KI-Chat', tabBarIcon: ({ color, size }) => <Sparkles size={size - 2} color={color} /> }} />
-      <Tabs.Screen name="tools" options={{ title: 'Werkzeuge', tabBarIcon: ({ color, size }) => <Wrench size={size - 2} color={color} /> }} />
-      <Tabs.Screen name="settings" options={{ title: 'Einstellungen', tabBarIcon: ({ color, size }) => <Settings size={size - 2} color={color} /> }} />
+      <Tabs.Screen name="(home)" options={{ title: 'Projects', tabBarIcon: ({ color, size }) => <FolderOpen size={size - 2} color={color} /> }} />
+      <Tabs.Screen name="chat" options={{ title: 'AI Chat', tabBarIcon: ({ color, size }) => <Sparkles size={size - 2} color={color} /> }} />
+      <Tabs.Screen name="tools" options={{ title: 'Tools', tabBarIcon: ({ color, size }) => <Wrench size={size - 2} color={color} /> }} />
+      <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: ({ color, size }) => <Settings size={size - 2} color={color} /> }} />
     </Tabs>
   );
 }`),
@@ -680,14 +680,14 @@ export default function HomeLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'Projekte' }} />
+      <Stack.Screen name="index" options={{ title: 'Projects' }} />
     </Stack>
   );
 }`),
           file('index.tsx', `// Projekte-Screen: Hauptseite der App
-// Features: Projekt-Tabs, Dateibaum, Erstellen/Löschen, Suche, Export
+// Features: Projekt-Tabs, Dateibaum, Erstellen/Löschen, Search, Export
 // Siehe README.md für Details.
-// Vollständiger Quellcode: ~760 Zeilen`),
+// Full Source Code: ~760 Zeilen`),
         ]),
 
         dir('chat', [
@@ -702,14 +702,14 @@ export default function ChatLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'KI-Chat' }} />
+      <Stack.Screen name="index" options={{ title: 'AI Chat' }} />
     </Stack>
   );
 }`),
-          file('index.tsx', `// KI-Chat Screen: Chat mit KI-Assistent
+          file('index.tsx', `// KI-Chat Screen: Chat with AI assistant
 // Features: Nachrichten, Agent-Modus, Datei-Anhänge, Tool-Calls, Streaming
 // Breathing-Animation, Vorschläge, Plan-Erstellung
-// Vollständiger Quellcode: ~900 Zeilen`),
+// Full Source Code: ~900 Zeilen`),
         ]),
 
         dir('tools', [
@@ -724,13 +724,13 @@ export default function ToolsLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'Werkzeuge' }} />
+      <Stack.Screen name="index" options={{ title: 'Tools' }} />
     </Stack>
   );
 }`),
-          file('index.tsx', `// Werkzeuge-Screen: Tool-Registry, Pläne, Memos, Suche, Chat-Verwaltung
+          file('index.tsx', `// Werkzeuge-Screen: Tool-Registry, Pläne, Memos, Search, Chat-Verwaltung
 // Features: Tool-Berechtigungen, YOLO-Modus, Agent-Plan Übersicht
-// Vollständiger Quellcode: ~1167 Zeilen`),
+// Full Source Code: ~1167 Zeilen`),
         ]),
 
         dir('settings', [
@@ -745,84 +745,84 @@ export default function SettingsLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'Einstellungen' }} />
+      <Stack.Screen name="index" options={{ title: 'Settings' }} />
     </Stack>
   );
 }`),
           file('index.tsx', `// Einstellungen-Screen: API-Keys, Modelle, Persona, Beta-Features
 // Features: 7 KI-Anbieter, Editor-Einstellungen, Verhalten
-// Vollständiger Quellcode: ~1098 Zeilen`),
+// Full Source Code: ~1098 Zeilen`),
         ]),
       ]),
 
       file('editor.tsx', `// Code-Editor Screen
 // Features: Syntax-Highlighting, Bearbeitungsmodus, Symbol-Leiste, Speichern
 // Breadcrumb, Zeilennummern, Status-Leiste
-// Vollständiger Quellcode: ~247 Zeilen`),
+// Full Source Code: ~247 Zeilen`),
     ]),
 
     dir('components', [
       file('AgentPlanView.tsx', `// Agent-Plan Visualisierung (To-Do Grafik)
 // Features: Fortschritt, Drag&Drop, Task-Status, Tool-Usage, Brainstorm-Stream
-// Vollständiger Quellcode: ~1044 Zeilen`),
+// Full Source Code: ~1044 Zeilen`),
       file('AgentTaskCard.tsx', `// Agent Task Karte
 // Features: Status-Anzeige, Dateien-Liste, Fehler-Handling, Ergebnisse
-// Vollständiger Quellcode: ~673 Zeilen`),
+// Full Source Code: ~673 Zeilen`),
       file('ChatBubble.tsx', `// Chat-Nachricht Komponente
 // Features: Markdown, Code-Blöcke, Tool-Calls, Thinking, Web-Ergebnisse
-// Vollständiger Quellcode: ~459 Zeilen`),
+// Full Source Code: ~459 Zeilen`),
       file('FileTreeItem.tsx', `// Dateibaum-Eintrag
 // Features: Ordner/Datei Anzeige, Expand/Collapse, Active-State, Long-Press
-// Vollständiger Quellcode: ~142 Zeilen`),
+// Full Source Code: ~142 Zeilen`),
       file('ThinkingBlock.tsx', `// KI-Denkprozess Anzeige
 // Features: Live-Stream, Puls-Animation, Markdown-Stripping, Auto-Scroll
-// Vollständiger Quellcode: ~198 Zeilen`),
+// Full Source Code: ~198 Zeilen`),
       file('ToolCallView.tsx', `// Tool-Aufruf Anzeige
 // Features: Status-Dot, Parameter, Ergebnis, Einklappbar
-// Vollständiger Quellcode: ~168 Zeilen`),
+// Full Source Code: ~168 Zeilen`),
     ]),
 
     dir('providers', [
-      file('AppProvider.tsx', `// App-Einstellungen Provider
+      file('AppProvider.tsx', `// App settings Provider
 // Features: Settings, Todos, Memos, Tool-Berechtigungen, API-Keys
 // Verwendet: @nkzw/create-context-hook, AsyncStorage
-// Vollständiger Quellcode: ~163 Zeilen`),
-      file('ProjectProvider.tsx', `// Projekt-Verwaltung Provider
-// Features: Projekte, Dateisystem, Suche, Export
+// Full Source Code: ~163 Zeilen`),
+      file('ProjectProvider.tsx', `// Project management Provider
+// Features: Projekte, File system, Search, Export
 // Verwendet: @nkzw/create-context-hook, AsyncStorage
-// Vollständiger Quellcode: ~338 Zeilen`),
-      file('ChatProvider.tsx', `// Chat-Verlauf Provider
+// Full Source Code: ~338 Zeilen`),
+      file('ChatProvider.tsx', `// Chat history Provider
 // Features: Nachrichten, KI-API, Tool-Calls, Komprimierung
 // Verwendet: @nkzw/create-context-hook, AsyncStorage
-// Vollständiger Quellcode: ~941 Zeilen`),
+// Full Source Code: ~941 Zeilen`),
       file('AgentProvider.tsx', `// Agent-Modus Provider
 // Features: Plan-Erstellung, Task-Ausführung, Tool-Genehmigung
 // Verwendet: @nkzw/create-context-hook
-// Vollständiger Quellcode: ~1097 Zeilen`),
+// Full Source Code: ~1097 Zeilen`),
     ]),
 
     dir('utils', [
       file('ai-service.ts', `// KI-API Integration
 // Features: Multi-Provider, Streaming, Tool-Calls, Rate-Limiting, Fallback
 // Unterstützt: OpenAI, Anthropic, Gemini, Groq, OpenRouter, Custom
-// Vollständiger Quellcode: ~1018 Zeilen`),
+// Full Source Code: ~1018 Zeilen`),
       file('download.ts', `// Projekt-Export/Download System
 // Features: Flatten, Text-Bundle, JSON-Export, Web-Download, Native-Share
-// Vollständiger Quellcode: ~150 Zeilen`),
-      file('file-icons.ts', `// Datei-Icons und Sprach-Erkennung
-// Features: Farben, Labels, Sprach-Mapping, Binary-Detection
-// Vollständiger Quellcode: ~62 Zeilen`),
-      file('sample-project.ts', `// Beispiel-Projekte
-// Features: Android (Kotlin), Web (TypeScript), Python, Studio IDE
-// Vollständiger Quellcode: ~100 Zeilen`),
-      file('self-source.ts', `// App-Quellcode als Projekt (diese Datei)
-// Generiert die Projektstruktur der Studio IDE App
+// Full Source Code: ~150 Zeilen`),
+      file('file-icons.ts', `// File Icons und Language Recognition
+// Features: Colors, Labels, Sprach-Mapping, Binary-Detection
+// Full Source Code: ~62 Zeilen`),
+      file('sample-project.ts', `// Sample Projects
+// Features: Android (Kotlin), Web (TypeScript), Python, Dev0
+// Full Source Code: ~100 Zeilen`),
+      file('self-source.ts', `// App Source Code as Project (diese Datei)
+// Generiert die Project Structure der Dev0 App
 // Inkl. README-Dokumentation
-// Vollständiger Quellcode: dynamisch generiert`),
-      file('syntax.ts', `// Syntax-Highlighting Engine
+// Full Source Code: dynamisch generiert`),
+      file('syntax.ts', `// Syntax Highlighting Engine
 // Features: Multi-Language, XML/HTML, JSON, Markdown-Parsing
 // Sprachen: Kotlin, Java, TypeScript, JavaScript, Python, Go, Rust, Swift, Dart, CSS, SQL, Shell
-// Vollständiger Quellcode: ~142 Zeilen`),
+// Full Source Code: ~142 Zeilen`),
     ]),
   ];
 }

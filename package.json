@@ -8,7 +8,8 @@
     "start-tunnel": "bunx rork start -p z4baphwr1dneh3hj3x7o1 --tunnel",
     "start-web-dev": "DEBUG=expo* bunx rork start -p z4baphwr1dneh3hj3x7o1 --web --tunnel",
     "lint": "expo lint",
-    "postinstall": "node scripts/patch-modules.js"
+    "postinstall": "node scripts/patch-modules.js",
+    "test": "jest"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -58,9 +59,12 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@expo/ngrok": "^4.1.0",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.1.10",
     "eslint": "^8.57.1",
     "eslint-config-expo": "~10.0.0",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.13",
     "typescript": "~5.9.2"
   },
   "private": true,

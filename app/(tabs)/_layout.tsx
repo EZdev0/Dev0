@@ -23,28 +23,28 @@ export default function TabLayout() {
       <Tabs.Screen
         name="(home)"
         options={{
-          title: 'Projekte',
+          title: 'Projects',
           tabBarIcon: ({ color, size }) => <FolderOpen size={size - 2} color={color} />,
         }}
       />
       <Tabs.Screen
         name="chat"
         options={{
-          title: 'KI-Chat',
+          title: 'AI Chat',
           tabBarIcon: ({ color, size }) => <Sparkles size={size - 2} color={color} />,
         }}
       />
       <Tabs.Screen
         name="tools"
         options={{
-          title: 'Werkzeuge',
+          title: 'Tools',
           tabBarIcon: ({ color, size }) => <Wrench size={size - 2} color={color} />,
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Einstellungen',
+          title: 'Settings',
           tabBarIcon: ({ color, size }) => <Settings size={size - 2} color={color} />,
         }}
       />

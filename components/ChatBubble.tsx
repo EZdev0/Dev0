@@ -2,6 +2,7 @@ import React, { useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { Copy, Bot, User, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
+import { WebView } from 'react-native-webview';
 import { IDE } from '@/constants/colors';
 import { ChatMessage } from '@/types';
 import { highlightLine, parseMarkdownSegments } from '@/utils/syntax';
@@ -93,15 +94,29 @@ const ChatBubble = React.memo(({ message }: Props) => {
           <ThinkingBlock thinking={message.thinking} />
         ) : null}
 
-        {segments.map((seg, i) => (
-          seg.type === 'code' ? (
-            <CodeBlock key={i} code={seg.content} language={seg.language || 'plain'} />
-          ) : (
+        {segments.map((seg, i) => {
+          if (seg.type === 'iframe') {
+            const h = seg.height ? parseInt(seg.height, 10) : 100;
+            const w = seg.width ? parseInt(seg.width, 10) : '100%';
+            return (
+              <View key={i} style={{ height: h, width: w as any, borderRadius: seg.borderRadius ? parseInt(seg.borderRadius, 10) : 0, overflow: 'hidden', marginVertical: 8, alignSelf: isUser ? 'flex-end' : 'flex-start' }}>
+                <WebView
+                  source={{ uri: seg.src || 'about:blank' }}
+                  style={{ height: h, width: '100%', backgroundColor: 'transparent' }}
+                  scrollEnabled={false}
+                />
+              </View>
+            );
+          }
+          if (seg.type === 'code') {
+            return <CodeBlock key={i} code={seg.content} language={seg.language || 'plain'} />;
+          }
+          return (
             <Text key={i} style={[styles.text, isUser && styles.userText]}>
               {formatInlineText(seg.content)}
             </Text>
-          )
-        ))}
+          );
+        })}
 
         {hasTodos && (
           <View style={styles.inlineTodos}>
@@ -163,7 +178,7 @@ const ChatBubble = React.memo(({ message }: Props) => {
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Copy size={12} color={IDE.muted} />
-            <Text style={styles.copyMsgText}>Kopieren</Text>
+            <Text style={styles.copyMsgText}>Copy</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -364,7 +379,7 @@ const CodeBlock = React.memo(({ code, language }: { code: string; language: stri
         <Text style={cbStyles.lang}>{language}</Text>
         <TouchableOpacity onPress={handleCopy} style={cbStyles.copyBtn} activeOpacity={0.6}>
           <Copy size={12} color={IDE.muted} />
-          <Text style={cbStyles.copyText}>Kopieren</Text>
+          <Text style={cbStyles.copyText}>Copy</Text>
         </TouchableOpacity>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={Platform.OS === 'web'} style={cbStyles.codeScroll}>

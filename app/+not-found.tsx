@@ -5,11 +5,11 @@ import { IDE } from '@/constants/colors';
 export default function NotFoundScreen() {
   return (
     <>
-      <Stack.Screen options={{ title: 'Nicht gefunden' }} />
+      <Stack.Screen options={{ title: 'Not Found' }} />
       <View style={styles.container}>
-        <Text style={styles.title}>Diese Seite existiert nicht.</Text>
+        <Text style={styles.title}>This page does not exist.</Text>
         <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Zurück zur Startseite</Text>
+          <Text style={styles.linkText}>Back to Home</Text>
         </Link>
       </View>
     </>

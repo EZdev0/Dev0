@@ -5,7 +5,6 @@ export async function POST(request: ExpoRequest) {
     const body = await request.json();
     let endpoint = body.endpoint;
 
-    // If the SDK uses this route directly without specifying an endpoint wrapper
     if (!endpoint) {
       endpoint = 'https://toolkit.rork.com/agent/chat';
     }
@@ -23,13 +22,17 @@ export async function POST(request: ExpoRequest) {
     };
 
     const response = await fetch(endpoint, fetchConfig);
-    const data = await response.json();
 
-    if (!response.ok) {
-        return Response.json({ error: data }, { status: response.status });
-    }
+    // Pass along the response body as-is to preserve streaming
+    // We create a new response using the remote response's body and headers
+    const newHeaders = new Headers(response.headers);
 
-    return Response.json(data);
+    // We cannot construct Response.json if it is streaming, so we return the raw Response
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: newHeaders,
+    });
   } catch (error: any) {
     console.error('API proxy error:', error);
     return Response.json({ error: error.message || 'Internal Server Error' }, { status: 500 });

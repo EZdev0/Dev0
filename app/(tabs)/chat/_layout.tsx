@@ -9,7 +9,7 @@ export default function ChatLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'KI-Chat' }} />
+      <Stack.Screen name="index" options={{ title: 'AI Chat' }} />
     </Stack>
   );
 }

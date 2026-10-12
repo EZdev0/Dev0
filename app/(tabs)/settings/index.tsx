@@ -8,10 +8,11 @@ import {
   Minus, Plus, Zap, Globe, Shield, RefreshCw, FlaskConical,
   Info, Check, Sparkles, Star, Copy, CircleCheck, Circle,
   Brain, FileText,
-} from 'lucide-react-native';
+ Heart } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { IDE } from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
+import SponsorBanner from '@/components/SponsorBanner';
 import { AI_PROVIDERS, PERSONAS } from '@/types';
 
 interface ProviderMeta {
@@ -23,7 +24,7 @@ interface ProviderMeta {
 
 const PROVIDER_INFO: Record<string, ProviderMeta> = {
   rork: {
-    desc: 'Free AI directly in Studio IDE. No API key required.',
+    desc: 'Free AI directly in Dev0. No API key required.',
     pricing: 'Completely free',
   },
   groq: {
@@ -50,6 +51,11 @@ const PROVIDER_INFO: Record<string, ProviderMeta> = {
     modelHint: 'claude-sonnet-4',
     pricing: 'Paid',
   },
+  nvidia: {
+    desc: 'High performance inference via NVIDIA NIM.',
+    endpoint: 'https://build.nvidia.com/explore/discover',
+    modelHint: 'Llama models running on NVIDIA infra.',
+  },
   openrouter: {
     desc: 'Access to many models via one key. Free and paid options.',
     endpoint: 'https://openrouter.ai/keys',
@@ -68,6 +74,7 @@ const KEY_MAP: Record<string, string> = {
   openai: 'openaiKey',
   anthropic: 'anthropicKey',
   openrouter: 'openrouterKey',
+  nvidia: 'nvidiaKey',
   custom: 'customKey',
 };
 
@@ -130,8 +137,14 @@ export default function SettingsScreen() {
         setIsLoadingModels(true);
         try {
           let base = settings.customEndpoint.trim();
-          if (!base.startsWith('http://') && !base.startsWith('https://')) {
-            base = 'https://' + base;
+          if (base.startsWith('ttps://')) base = 'https://' + base.substring(7);
+          else if (base.startsWith('ttp://')) base = 'http://' + base.substring(6);
+
+          if (!base.startsWith('http://') && !base.startsWith('https://') && !base.startsWith('/')) {
+            // Allow relative api paths for proxying if not starting with /
+            if (!base.startsWith('/')) {
+               base = 'https://' + base;
+            }
           }
           const url = base.replace(/\/v1\/chat\/completions$/, '').replace(/\/$/, '') + '/v1/models';
           const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -193,12 +206,15 @@ export default function SettingsScreen() {
     if (settings.openaiKey) count++;
     if (settings.anthropicKey) count++;
     if (settings.openrouterKey) count++;
+    if (settings.nvidiaKey) count++;
     if (settings.customKey && settings.customEndpoint) count++;
     return count;
   }, [settings]);
 
   return (
-    <ScrollView
+    <View style={{ flex: 1, backgroundColor: IDE.bg }}>
+      <SponsorBanner style={{ marginHorizontal: 16, marginTop: 16, marginBottom: 0 }} />
+      <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
@@ -826,6 +842,25 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.section}>
+            <View style={styles.settingRow}>
+              <View style={styles.settingLabelRow}>
+                <Heart size={14} color={IDE.primary} />
+                <Text style={styles.settingLabel}>Hide Sponsor Message</Text>
+              </View>
+              <Switch
+                value={settings.hideSponsor}
+                onValueChange={(v) => updateSettings({ hideSponsor: v })}
+                trackColor={{ false: IDE.border, true: IDE.primary + '60' }}
+                thumbColor={settings.hideSponsor ? IDE.primary : IDE.muted}
+              />
+            </View>
+            <Text style={styles.settingHint}>
+              Hide the occasional sponsor message in the chat.
+            </Text>
+          </View>
+
+
+          <View style={styles.section}>
             <Text style={styles.sectionTitle}>TOOL MANAGEMENT</Text>
             <Text style={styles.sectionSubtitle}>
               Manage tool permissions in the Tools tab.
@@ -841,10 +876,11 @@ export default function SettingsScreen() {
       )}
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Studio IDE v1.4</Text>
+        <Text style={styles.footerText}>Dev0 v1.4</Text>
         <Text style={styles.footerSubtext}>Mobile Code Editor with AI Assistant</Text>
       </View>
     </ScrollView>
+    </View>
   );
 }
 

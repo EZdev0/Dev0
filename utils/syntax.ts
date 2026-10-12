@@ -115,27 +115,75 @@ function highlightJSON(line: string): SyntaxToken[] {
   return tokens.length > 0 ? tokens : [{ text: line, color: IDE.text }];
 }
 
-export function parseMarkdownSegments(text: string): { type: 'text' | 'code'; content: string; language?: string }[] {
-  const segments: { type: 'text' | 'code'; content: string; language?: string }[] = [];
+export type MarkdownSegment = { type: 'text' | 'code' | 'iframe'; content: string; language?: string; src?: string; height?: string; width?: string; borderRadius?: string };
+
+export function parseMarkdownSegments(text: string): MarkdownSegment[] {
+  const segments: MarkdownSegment[] = [];
+
   const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
+
   let lastIndex = 0;
   let match;
 
   while ((match = codeBlockRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+      const textPart = text.slice(lastIndex, match.index);
+      parseTextForIframes(textPart, segments);
     }
     segments.push({ type: 'code', content: match[2], language: match[1] || 'plain' });
     lastIndex = match.index + match[0].length;
   }
 
   if (lastIndex < text.length) {
-    segments.push({ type: 'text', content: text.slice(lastIndex) });
+    const textPart = text.slice(lastIndex);
+    parseTextForIframes(textPart, segments);
   }
 
-  if (segments.length === 0) {
-    segments.push({ type: 'text', content: text });
+  if (segments.length === 0 && text.length > 0) {
+    parseTextForIframes(text, segments);
+  } else if (segments.length === 0) {
+     segments.push({ type: 'text', content: text });
   }
 
   return segments;
+}
+
+function parseTextForIframes(text: string, segments: MarkdownSegment[]) {
+  const iframeRegex = /<iframe\s+([^>]+)><\/iframe>/gi;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = iframeRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+    }
+
+    const attributesStr = match[1];
+
+    const srcMatch = attributesStr.match(/src=["']([^"']+)["']/i);
+    const heightMatch = attributesStr.match(/height=["']([^"']+)["']/i);
+    const widthMatch = attributesStr.match(/width=["']([^"']+)["']/i);
+    const styleMatch = attributesStr.match(/style=["']([^"']+)["']/i);
+
+    let borderRadius;
+    if (styleMatch && styleMatch[1]) {
+        const brMatch = styleMatch[1].match(/border-radius:\s*([^;]+);?/i);
+        if (brMatch) borderRadius = brMatch[1].trim();
+    }
+
+    segments.push({
+      type: 'iframe',
+      content: match[0],
+      src: srcMatch ? srcMatch[1] : undefined,
+      height: heightMatch ? heightMatch[1] : undefined,
+      width: widthMatch ? widthMatch[1] : undefined,
+      borderRadius
+    });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ type: 'text', content: text.slice(lastIndex) });
+  }
 }

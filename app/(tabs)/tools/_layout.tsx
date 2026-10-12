@@ -9,7 +9,7 @@ export default function ToolsLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'Werkzeuge' }} />
+      <Stack.Screen name="index" options={{ title: 'Tools' }} />
     </Stack>
   );
 }

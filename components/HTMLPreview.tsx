@@ -182,7 +182,7 @@ export const HTMLPreview = React.memo(({ htmlContent, onLoad, onError }: Props) 
         renderLoading={() => (
           <View style={styles.loadingContainer}>
             <View style={styles.spinner} />
-            <Text style={styles.loadingText}>Lade Vorschau...</Text>
+            <Text style={styles.loadingText}>Loading Preview...</Text>
           </View>
         )}
       />

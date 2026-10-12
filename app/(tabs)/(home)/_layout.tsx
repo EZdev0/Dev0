@@ -9,7 +9,7 @@ export default function HomeLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'Projekte' }} />
+      <Stack.Screen name="index" options={{ title: 'Projects' }} />
     </Stack>
   );
 }

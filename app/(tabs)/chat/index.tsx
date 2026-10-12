@@ -7,14 +7,16 @@ import {
 import {
   Send, Square, Paperclip, X, FileText, Sparkles, Brain, MessageSquare,
   Zap, Info, Trash2, ChevronRight, ShieldAlert, Check, Ban,
-  FolderOpen, Code, Search, Lightbulb, PenTool,
+  FolderOpen, Code, Search, Lightbulb, PenTool, Heart
 } from 'lucide-react-native';
+import WebView from 'react-native-webview';
 import { IDE } from '@/constants/colors';
 import { useChat } from '@/providers/ChatProvider';
 import { useAgent } from '@/providers/AgentProvider';
 import { useProject } from '@/providers/ProjectProvider';
 import { useApp } from '@/providers/AppProvider';
 import { ChatMessage } from '@/types';
+import SponsorBanner from '@/components/SponsorBanner';
 import ChatBubble from '@/components/ChatBubble';
 import AgentPlanView from '@/components/AgentPlanView';
 import ThinkingBlock from '@/components/ThinkingBlock';
@@ -156,16 +158,16 @@ export default function ChatScreen() {
 
   const handleAnswerQuestions = useCallback(async (answers: {question: string; answer: string}[]) => {
     console.log('[Chat] Questions answered:', answers);
-    // Questions zurücksetzen damit Modal schließt
+    // Reset questions to close modal
     setClarificationQuestions([]);
-    // Plan mit Antworten als Kontext neu erstellen
+    // Recreate plan with answers as context
     if (activePlan) {
-      // User hat Fragen beantwortet, jetzt wird der finale Plan erstellt
+      // User has answered questions, now the final plan is created
       dismissPlan(activePlan.id);
     }
-    // KI erneut aufrufen mit Antworten für finalen Plan
-    const enhancedRequest = input + '\n\n## Klärungsfragen beantwortet:\n' + 
-      answers.map((qa, i) => `${i + 1}. ${qa.question}\n   Antwort: ${qa.answer}`).join('\n');
+    // Call AI again with answers for final plan
+    const enhancedRequest = input + '\n\n## Clarification questions answered:\n' +
+      answers.map((qa, i) => `${i + 1}. ${qa.question}\n   Answer: ${qa.answer}`).join('\n');
     await createPlan(enhancedRequest);
   }, [activePlan, dismissPlan, createPlan, setClarificationQuestions, input]);
 
@@ -183,10 +185,17 @@ export default function ChatScreen() {
     setShowAttachMenu(p => !p);
   }, []);
 
-  const renderMessage = useCallback(({ item }: { item: ChatMessage }) => {
+
+  const renderMessage = useCallback(({ item, index }: { item: ChatMessage, index: number }) => {
     if (!item) return null;
-    return <ChatBubble message={item} />;
-  }, []);
+    return (
+      <View>
+        {index > 0 && index % 5 === 0 && <SponsorBanner />}
+        <ChatBubble message={item} />
+      </View>
+    );
+  }, [settings?.hideSponsor]);
+
 
   const hasApiKey = useMemo(() => {
     switch (settings?.selectedProvider) {
@@ -291,25 +300,25 @@ export default function ChatScreen() {
   const contextSuggestions = useMemo(() => {
     if (!currentProject) {
       return [
-        { text: 'Erstelle ein neues Projekt für mich', icon: <FolderOpen size={14} color={IDE.muted} />, agent: false },
-        { text: 'Erkläre mir wie ich starten soll', icon: <Lightbulb size={14} color={IDE.warning} />, agent: false },
-        { text: 'Welche Programmiersprachen unterstützt du?', icon: <Code size={14} color={IDE.primary} />, agent: false },
-        { text: 'Hilf mir bei einer Code-Idee', icon: <Sparkles size={14} color={IDE.keyword} />, agent: false },
+        { text: 'Create a new project for me', icon: <FolderOpen size={14} color={IDE.muted} />, agent: false },
+        { text: 'Explain how I should start', icon: <Lightbulb size={14} color={IDE.warning} />, agent: false },
+        { text: 'Which programming languages do you support?', icon: <Code size={14} color={IDE.primary} />, agent: false },
+        { text: 'Help me with a code idea', icon: <Sparkles size={14} color={IDE.keyword} />, agent: false },
       ];
     }
     const paths = allFilePaths ?? [];
     if (paths.length === 0) {
       return [
-        { text: 'Erstelle die Grundstruktur für mein Projekt', icon: <FolderOpen size={14} color={IDE.accent} />, agent: true },
-        { text: 'Was soll ich als erstes erstellen?', icon: <Lightbulb size={14} color={IDE.warning} />, agent: false },
-        { text: 'Erstelle eine README.md', icon: <FileText size={14} color={IDE.primary} />, agent: false },
+        { text: 'Create the basic structure for my project', icon: <FolderOpen size={14} color={IDE.accent} />, agent: true },
+        { text: 'What should I create first?', icon: <Lightbulb size={14} color={IDE.warning} />, agent: false },
+        { text: 'Create a README.md', icon: <FileText size={14} color={IDE.primary} />, agent: false },
       ];
     }
     return [
-      { text: 'Zeige mir die Projektstruktur', icon: <Search size={14} color={IDE.muted} />, agent: false },
-      { text: 'Analysiere mein Projekt und schlage Verbesserungen vor', icon: <PenTool size={14} color={IDE.primary} />, agent: true },
+      { text: 'Show me the project structure', icon: <Search size={14} color={IDE.muted} />, agent: false },
+      { text: 'Analyze my project and suggest improvements', icon: <PenTool size={14} color={IDE.primary} />, agent: true },
       { text: 'Finde alle TODO-Kommentare', icon: <Search size={14} color={IDE.warning} />, agent: false },
-      { text: 'Erkläre den Code', icon: <Code size={14} color={IDE.keyword} />, agent: false },
+      { text: 'Explain the code', icon: <Code size={14} color={IDE.keyword} />, agent: false },
     ];
   }, [currentProject, allFilePaths]);
 
@@ -363,14 +372,14 @@ export default function ChatScreen() {
           <Text style={styles.emptyTitle}>Studio KI-Assistent</Text>
           <Text style={styles.emptySubtitle}>
             {currentProject
-              ? 'Kontext: "' + currentProject.name + '".\nFrage mich alles über dein Projekt!'
-              : 'Erstelle zuerst ein Projekt im Projekte-Tab.'}
+              ? 'Context: "' + currentProject.name + '".\nAsk me anything about your project!'
+              : 'Create a project in the Projects tab first.'}
           </Text>
           {!hasApiKey && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningText}>
-                ⚠️ Kein API-Schlüssel konfiguriert.{"\n"}
-                Gehe zu Einstellungen → API-Schlüssel.{"\n\n"}
+                ⚠️ No API key configured.{"\n"}
+                Go to Settings → API Keys.{"\n\n"}
                 💡 Wähle &quot;Studio KI&quot; als Anbieter für kostenlose Nutzung!
               </Text>
             </View>
@@ -397,7 +406,7 @@ export default function ChatScreen() {
               <Brain size={16} color={agentMode ? IDE.accent : IDE.muted} />
               <View style={styles.modeInfoText}>
                 <Text style={[styles.modeInfoTitle, agentMode && { color: IDE.accent }]}>Agent-Modus</Text>
-                <Text style={styles.modeInfoDesc}>Hauptagent plant, Unteragenten führen aus</Text>
+                <Text style={styles.modeInfoDesc}>Main agent plans, sub-agents execute</Text>
               </View>
               {agentMode && <View style={[styles.modeActiveIndicator, { backgroundColor: IDE.accent }]} />}
             </TouchableOpacity>

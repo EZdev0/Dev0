@@ -12,6 +12,7 @@ import {
 import { IDE } from '@/constants/colors';
 import { useProject } from '@/providers/ProjectProvider';
 import { FileNode, PROJECT_TYPES } from '@/types';
+import SponsorBanner from '@/components/SponsorBanner';
 import FileTreeItem from '@/components/FileTreeItem';
 import { isBinaryFile } from '@/utils/file-icons';
 import { exportProjectAsZip, exportProjectAsText, exportProjectAsJson, countProjectFiles } from '@/utils/download';
@@ -346,6 +347,7 @@ export default function ProjectsScreen() {
         </TouchableOpacity>
       </View>
 
+      <SponsorBanner style={{ marginHorizontal: 16, marginTop: 16, marginBottom: 0 }} />
       <FlatList
         data={filteredFiles}
         keyExtractor={(item) => item.node.id + '_' + item.path}

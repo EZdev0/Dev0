@@ -28,7 +28,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   manualMessagesRef.current = manualMessages;
   const rorkContextSentRef = useRef<boolean>(false);
 
-  const { settings, getApiKey, getFallbackSettings, todos, memos, addTodo, updateTodoItem, addMemo, agentMd, setAgentMd, soulMd, setSoulMd, identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd, getToolPermission } = useApp();
+  const { triggerSponsorInteraction, settings, getApiKey, getFallbackSettings, todos, memos, addTodo, updateTodoItem, addMemo, agentMd, setAgentMd, soulMd, setSoulMd, identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd, getToolPermission } = useApp();
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const {
@@ -272,8 +272,13 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         const url = typeof input === 'string' ? input : (input as Request).url || input.toString();
         // Skip proxy if it's already a relative URL or not toolkit
         if (url.includes('toolkit.rork.com') || url.includes('/agent/chat')) {
-          const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
-          return fetch(proxyUrl, init);
+          try {
+            const bodyObj = init && init.body && typeof init.body === 'string' ? JSON.parse(init.body) : {};
+            bodyObj.endpoint = url;
+            return fetch('/api/chat', { ...init, body: JSON.stringify(bodyObj) });
+          } catch (e) {
+            return fetch('/api/chat', init);
+          }
         }
       }
       return fetch(input, init);
@@ -642,6 +647,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   const sendMessage = useCallback(async (userText: string, attachedFiles: string[] = []) => {
     if (!userText.trim() && attachedFiles.length === 0) return;
 
+    triggerSponsorInteraction();
     setError(null);
     setLastFallbackInfo(null);
 
@@ -650,7 +656,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
 
       let fullMsg = '';
       if (!rorkContextSentRef.current || (rorkAgent.messages ?? []).length === 0) {
-        fullMsg += 'You are an AI coding assistant in "Studio IDE". ALWAYS reply in English.\n';
+        fullMsg += 'You are an AI coding assistant in "Dev0". ALWAYS reply in English.\n';
         fullMsg += 'Use your tools ACTIVELY and IMMEDIATELY. DO NOT ask if you should do something - JUST DO IT.\n';
         fullMsg += 'ALWAYS read files with read_file BEFORE editing them.\n';
         fullMsg += 'Format responses with Markdown: **bold**, `code`, lists.\n';

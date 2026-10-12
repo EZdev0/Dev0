@@ -1,0 +1,11 @@
+--- providers/ChatProvider.tsx
++++ providers/ChatProvider.tsx
+@@ -272,7 +272,7 @@
+         const url = typeof input === 'string' ? input : (input as Request).url || input.toString();
+         // Skip proxy if it's already a relative URL or not toolkit
+         if (url.includes('toolkit.rork.com') || url.includes('/agent/chat')) {
+-          const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
++          const proxyUrl = '/api/chat';
+           return fetch(proxyUrl, init);
+         }
+       }

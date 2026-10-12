@@ -17,6 +17,7 @@ import { ProjectProvider } from '@/providers/ProjectProvider';
 import { ChatProvider } from '@/providers/ChatProvider';
 import { AgentProvider } from '@/providers/AgentProvider';
 import { IDE } from '@/constants/colors';
+import { SponsorOverlay } from '@/components/SponsorBanner';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -24,7 +25,7 @@ const queryClient = new QueryClient();
 
 function RootLayoutNav() {
   return (
-    <Stack screenOptions={{ headerBackTitle: 'Zurück' }}>
+    <Stack screenOptions={{ headerBackTitle: 'Back' }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen
         name="editor"
@@ -53,6 +54,7 @@ export default function RootLayout() {
               <AgentProvider>
                 <StatusBar style="light" />
                 <RootLayoutNav />
+                <SponsorOverlay />
               </AgentProvider>
             </ChatProvider>
           </ProjectProvider>

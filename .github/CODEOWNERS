@@ -1,0 +1,9 @@
+# These owners will be the default owners for everything in the repo.
+*       @EZdev0
+
+# Protect legal and organizational files from unauthorized changes.
+# Changes to these files will require explicit approval from @EZdev0.
+/LICENSE           @EZdev0
+/CONTRIBUTING.md   @EZdev0
+/.github/CODEOWNERS @EZdev0
+/README*           @EZdev0

@@ -1,0 +1,28 @@
+--- utils/ai-service.ts
++++ utils/ai-service.ts
+@@ -561,11 +561,22 @@
+   let url = 'https://api.openai.com/v1/chat/completions';
+   if (endpoint) {
+     let cleanEndpoint = endpoint.trim();
++    if (cleanEndpoint.startsWith('ttps://')) cleanEndpoint = 'https://' + cleanEndpoint.substring(7);
++    else if (cleanEndpoint.startsWith('ttp://')) cleanEndpoint = 'http://' + cleanEndpoint.substring(6);
++
+     if (!cleanEndpoint.startsWith('http://') && !cleanEndpoint.startsWith('https://')) {
+-      cleanEndpoint = 'https://' + cleanEndpoint;
++      if (cleanEndpoint.startsWith('/')) {
++        // Relative URL
++      } else {
++        cleanEndpoint = 'https://' + cleanEndpoint;
++      }
+     }
+     if (cleanEndpoint.endsWith('/v1/chat/completions')) {
+       url = cleanEndpoint;
+     } else {
+-      url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
++      if (cleanEndpoint.startsWith('/')) {
++        url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
++      } else {
++        url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
++      }
+     }
+   }

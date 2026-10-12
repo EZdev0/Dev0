@@ -71,7 +71,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
             />
           ))}
           
-          {/* Neue Agenten hinzufügen */}
+          {/* Add new agents */}
           <TouchableOpacity
             style={styles.deployButton}
             onPress={() => showDeployMenu(onDeploySubAgent)}
@@ -277,7 +277,7 @@ export const MemoSection: React.FC<MemoSectionProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Suche */}
+      {/* Search */}
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={18} color={IDE.muted} />
         <input
@@ -320,7 +320,7 @@ export const MemoSection: React.FC<MemoSectionProps> = ({
         <View style={styles.memoGroup}>
           <View style={styles.memoGroupHeader}>
             <Ionicons name="folder" size={16} color={IDE.text} />
-            <Text style={styles.memoGroupTitle}>Projekt-spezifisch ({localMemos.length})</Text>
+            <Text style={styles.memoGroupTitle}>Project-specific ({localMemos.length})</Text>
           </View>
           {localMemos.slice(0, 5).map(memo => (
             <TouchableOpacity

@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
 import { FileNode, Project } from '@/types';
 import { createSampleProject } from '@/utils/sample-project';
+import { useApp } from '@/providers/AppProvider';
 
 function generateId(): string {
   return 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -107,6 +108,7 @@ function getAllFilePaths(nodes: FileNode[], basePath: string = ''): string[] {
 }
 
 export const [ProjectProvider, useProject] = createContextHook(() => {
+  const { triggerSponsorInteraction } = useApp();
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
@@ -168,6 +170,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, []);
 
   const createProject = useCallback((name: string, projectType: string) => {
+    triggerSponsorInteraction();
     const project: Project = {
       id: Date.now().toString(),
       name,

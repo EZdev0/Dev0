@@ -9,7 +9,7 @@ export default function SettingsLayout() {
       headerShadowVisible: false,
       contentStyle: { backgroundColor: IDE.bg },
     }}>
-      <Stack.Screen name="index" options={{ title: 'Einstellungen' }} />
+      <Stack.Screen name="index" options={{ title: 'Settings' }} />
     </Stack>
   );
 }

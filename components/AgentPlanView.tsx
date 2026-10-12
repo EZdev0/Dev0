@@ -286,7 +286,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   {stats.completed > 0 && (
                     <View style={styles.statItem}>
                       <View style={[styles.statDot, { backgroundColor: IDE.accent }]} />
-                      <Text style={styles.statText}>{stats.completed} fertig</Text>
+                      <Text style={styles.statText}>{stats.completed} done</Text>
                     </View>
                   )}
                   {stats.running > 0 && (
@@ -304,7 +304,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   {stats.error > 0 && (
                     <View style={styles.statItem}>
                       <View style={[styles.statDot, { backgroundColor: IDE.danger }]} />
-                      <Text style={styles.statText}>{stats.error} fehlgeschlagen</Text>
+                      <Text style={styles.statText}>{stats.error} failed</Text>
                     </View>
                   )}
                   {stats.thinking > 0 && (
@@ -321,8 +321,8 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
               <View style={styles.errorBanner}>
                 <AlertTriangle size={14} color={IDE.danger} />
                 <View style={styles.errorBannerContent}>
-                  <Text style={styles.errorBannerText}>{stats.error} Aufgabe(n) fehlgeschlagen</Text>
-                  <Text style={styles.errorBannerHint}>Tippe auf eine fehlgeschlagene Aufgabe zum Wiederholen</Text>
+                  <Text style={styles.errorBannerText}>{stats.error} Task(s) failed</Text>
+                  <Text style={styles.errorBannerHint}>Tap a failed task to retry</Text>
                 </View>
               </View>
             )}
@@ -330,7 +330,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
             {isDone && stats.completed > 0 && stats.completed === totalCount && stats.error === 0 && (
               <View style={styles.successBanner}>
                 <CheckCircle size={14} color={IDE.accent} />
-                <Text style={styles.successBannerText}>Alle {totalCount} Schritte erfolgreich abgeschlossen</Text>
+                <Text style={styles.successBannerText}>All {totalCount} steps completed successfully</Text>
               </View>
             )}
 
@@ -382,7 +382,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   style={styles.addInput}
                   value={newTitle}
                   onChangeText={setNewTitle}
-                  placeholder={addType === 'thinking' ? 'Was analysieren...' : addType === 'brainstorm' ? 'Worüber brainstormen...' : 'Aufgabe Titel...'}
+                  placeholder={addType === 'thinking' ? 'What to analyze...' : addType === 'brainstorm' ? 'What to brainstorm...' : 'Task Title...'}
                   placeholderTextColor={IDE.muted}
                   autoFocus
                 />
@@ -472,7 +472,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                       activeOpacity={0.7}
                     >
                       <Play size={14} color="#fff" />
-                      <Text style={styles.executeBtnText}>Starten</Text>
+                      <Text style={styles.executeBtnText}>Start</Text>
                     </TouchableOpacity>
                   </View>
                 </>
@@ -481,14 +481,14 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
               {isRunning && (
                 <TouchableOpacity onPress={onStop} style={styles.stopBtn} activeOpacity={0.7}>
                   <Square size={14} color={IDE.danger} />
-                  <Text style={styles.stopBtnText}>Stoppen</Text>
+                  <Text style={styles.stopBtnText}>Stop</Text>
                 </TouchableOpacity>
               )}
 
               {isDone && (
                 <TouchableOpacity onPress={() => setCollapsed(true)} style={styles.doneBtn} activeOpacity={0.7}>
                   <CheckCircle size={14} color={IDE.accent} />
-                  <Text style={styles.doneBtnText}>Einklappen</Text>
+                  <Text style={styles.doneBtnText}>Collapse</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -512,7 +512,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
               </TouchableOpacity>
             </View>
             <Text style={styles.swapModalHint}>
-              Wähle eine neue Position:
+              Choose a new position:
             </Text>
             <ScrollView style={styles.swapListScroll} showsVerticalScrollIndicator>
               {tasks.map((task, i) => task ? (
@@ -557,7 +557,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
               ) : null)}
             </ScrollView>
             <TouchableOpacity onPress={handleSwapCancel} style={styles.cancelButtonFullWidth}>
-              <Text style={styles.cancelButtonText}>Abbrechen</Text>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -573,7 +573,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
           <View style={styles.deleteModal}>
             <View style={styles.deleteModalHeader}>
               <AlertTriangle size={20} color={IDE.warning} />
-              <Text style={styles.deleteModalTitle}>Task löschen?</Text>
+              <Text style={styles.deleteModalTitle}>Delete Task?</Text>
             </View>
             <Text style={styles.deleteModalText}>
               Bist du sicher, dass du diesen Task entfernen möchtest? Dieser Schritt kann nicht rückgängig gemacht werden.
@@ -584,14 +584,14 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 style={[styles.deleteBtn, styles.deleteBtnCancel]}
                 activeOpacity={0.7}
               >
-                <Text style={styles.deleteBtnCancelText}>Abbrechen</Text>
+                <Text style={styles.deleteBtnCancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={handleDeleteExecute}
                 style={[styles.deleteBtn, styles.deleteBtnConfirm]}
                 activeOpacity={0.7}
               >
-                <Text style={styles.deleteBtnConfirmText}>Löschen</Text>
+                <Text style={styles.deleteBtnConfirmText}>Delete</Text>
               </TouchableOpacity>
             </View>
           </View>

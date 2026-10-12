@@ -5,7 +5,7 @@ export function buildPlannerPrompt(options: {
   memos: MemoEntry[];
   todos: TodoItem[];
 }): string {
-  let prompt = 'You are the main agent (Planner) of a mobile IDE called "Studio IDE".\n';
+  let prompt = 'You are the main agent (Planner) of a mobile IDE called "Dev0".\n';
   prompt += 'Your task is to break down the user request into distinct, clearly defined steps.\n';
   prompt += '\n';
   prompt += '## IMPORTANT NOTICE\n';
@@ -281,7 +281,7 @@ export function buildSystemPrompt(options: {
   toolPermissions?: Record<string, string>;
 }): string {
   const personaPrompts: Record<string, string> = {
-    standard: 'You are an experienced and helpful AI coding assistant in a mobile IDE called "Studio IDE".',
+    standard: 'You are an experienced and helpful AI coding assistant in a mobile IDE called "Dev0".',
     android: 'You are a Senior Android Developer Assistant, specialized in Kotlin, Java, Jetpack Compose, Android SDK, and Gradle. You know best practices for Android development.',
     web: 'You are a Senior Web Developer Assistant, specialized in TypeScript, React, Next.js, HTML, CSS, Node.js, and modern web technologies.',
     python: 'You are a Senior Python Developer Assistant, specialized in Python, Django, Flask, FastAPI, Data Science, and Machine Learning.',
@@ -562,13 +562,24 @@ async function callOpenAI(apiKey: string, model: string, messages: ChatMessage[]
   let url = 'https://api.openai.com/v1/chat/completions';
   if (endpoint) {
     let cleanEndpoint = endpoint.trim();
+    if (cleanEndpoint.startsWith('ttps://')) cleanEndpoint = 'https://' + cleanEndpoint.substring(7);
+    else if (cleanEndpoint.startsWith('ttp://')) cleanEndpoint = 'http://' + cleanEndpoint.substring(6);
+
     if (!cleanEndpoint.startsWith('http://') && !cleanEndpoint.startsWith('https://')) {
-      cleanEndpoint = 'https://' + cleanEndpoint;
+      if (cleanEndpoint.startsWith('/')) {
+        // Relative URL
+      } else {
+        cleanEndpoint = 'https://' + cleanEndpoint;
+      }
     }
     if (cleanEndpoint.endsWith('/v1/chat/completions')) {
       url = cleanEndpoint;
     } else {
-      url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
+      if (cleanEndpoint.startsWith('/')) {
+        url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
+      } else {
+        url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
+      }
     }
   }
   const formattedMessages = formatMessagesForOpenAI(messages, systemPrompt);
@@ -939,7 +950,7 @@ async function callRork(
       const toolName = msg.toolName || 'tool';
       formatted.push({
         role: 'user',
-        content: '[Tool-Ergebnis von ' + toolName + ']:\n' + (msg.content || '(leer)'),
+        content: '[Tool-Result from ' + toolName + ']:\n' + (msg.content || '(leer)'),
       });
       continue;
     }
@@ -959,10 +970,10 @@ async function callRork(
   if (formatted.length > 0 && formatted[0].role === 'user') {
     formatted[0] = {
       role: 'user',
-      content: '[Systemanweisung: ' + fullSystemPrompt.slice(0, 30000) + ']\n\n' + (formatted[0].content || ''),
+      content: '[System Instruction: ' + fullSystemPrompt.slice(0, 30000) + ']\n\n' + (formatted[0].content || ''),
     };
   } else {
-    formatted.unshift({ role: 'user', content: '[Systemanweisung: ' + fullSystemPrompt.slice(0, 30000) + ']' });
+    formatted.unshift({ role: 'user', content: '[System Instruction: ' + fullSystemPrompt.slice(0, 30000) + ']' });
   }
 
   // Ensure strict alternating pattern if required by SDK, or clean empty content
@@ -996,7 +1007,7 @@ async function callRork(
     const data = await res.json();
     const text = data?.completion || '';
     if (!text && !data?.completion) {
-      throw new Error('Leere Antwort vom Modell erhalten.');
+      throw new Error('Empty response received from model.');
     }
 
     if (tools && tools.length > 0) {
@@ -1035,6 +1046,9 @@ async function callProviderDirect(
       return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal, 'https://api.groq.com/openai');
     case 'openrouter':
       return await callOpenRouter(apiKey, model, messages, tools, systemPrompt, signal);
+    case 'nvidia':
+      const isWeb = typeof window !== 'undefined';
+      return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal, isWeb ? '/api/nvidia' : 'https://integrate.api.nvidia.com');
     case 'custom':
       return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal, customEndpoint);
     default:
@@ -1053,7 +1067,7 @@ export async function callAI(
   fallbackSettings?: Record<string, string>,
 ): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
   if (!apiKey && provider !== 'rork' && provider !== 'custom') {
-    throw new Error('API-Schlüssel fehlt. Bitte in den Einstellungen konfigurieren.\n\nTipp: Wähle "Studio KI" als Anbieter für kostenlose Nutzung ohne Schlüssel!');
+    throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "Studio KI" as provider for free usage without key!');
   }
 
   const controller = new AbortController();
@@ -1067,7 +1081,7 @@ export async function callAI(
       try {
         const result = await callProviderDirect(provider, apiKey, model, messages, tools, systemPrompt, controller.signal, customEndpoint);
         if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
-           throw new Error('Leere Antwort vom Modell erhalten (Kein Text, keine Tools).');
+           throw new Error('Empty response received from model (No text, no tools).');
         }
         return result;
       } catch (error: any) {
@@ -1075,7 +1089,7 @@ export async function callAI(
         console.log('[AI] Attempt', attempt + 1, 'failed:', error?.message?.slice(0, 100));
 
         if (isAuthError(error)) {
-          throw new Error('Ungültiger API-Schlüssel für ' + provider + '. Bitte überprüfe deinen Schlüssel in den Einstellungen.');
+          throw new Error('Invalid API key for ' + provider + '. Please check your key in settings.');
         }
 
         if (error.name === 'AbortError') {

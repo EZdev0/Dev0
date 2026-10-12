@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
 import { AppSettings, TodoItem, MemoEntry, DEFAULT_SETTINGS, ToolPermission, TOOL_REGISTRY } from '@/types';
@@ -12,6 +12,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [memos, setMemos] = useState<MemoEntry[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [showSponsorModal, setShowSponsorModal] = useState<boolean>(false);
+  const sponsorInteractionCountRef = useRef<number>(0);
 
   useEffect(() => {
     const load = async () => {
@@ -44,6 +46,18 @@ export const [AppProvider, useApp] = createContextHook(() => {
       );
       return updated;
     });
+  }, []);
+
+  const triggerSponsorInteraction = useCallback(() => {
+    if (settings.hideSponsor) return;
+    sponsorInteractionCountRef.current += 1;
+    if (sponsorInteractionCountRef.current % 3 === 0) {
+      setShowSponsorModal(true);
+    }
+  }, [settings.hideSponsor]);
+
+  const closeSponsorModal = useCallback(() => {
+    setShowSponsorModal(false);
   }, []);
 
   const addTodo = useCallback((text: string) => {
@@ -117,6 +131,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
       geminiKey: settings.geminiKey || '',
       groqKey: settings.groqKey || '',
       openrouterKey: settings.openrouterKey || '',
+      nvidiaKey: settings.nvidiaKey || '',
       customKey: settings.customKey || '',
     };
   }, [settings]);
@@ -201,5 +216,6 @@ export const [AppProvider, useApp] = createContextHook(() => {
     getToolPermission, setToolPermission,
     agentMd, setAgentMd, soulMd, setSoulMd,
     identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd,
+    showSponsorModal, triggerSponsorInteraction, closeSponsorModal,
   };
 });
