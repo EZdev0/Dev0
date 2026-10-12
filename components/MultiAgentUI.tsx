@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IDE } from '@/constants/colors';
 import { SubAgent, SubAgentType } from '@/utils/multi-agent-system';
@@ -31,6 +31,17 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
   onViewSubAgentResult,
   currentTask
 }) => {
+  const [deployModalVisible, setDeployModalVisible] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<SubAgent | null>(null);
+
+  const AGENT_OPTIONS: { type: SubAgentType; label: string; desc: string; icon: any; color: string }[] = [
+    { type: 'analyst', label: 'Analyst Agent', desc: 'Read-only code inspection and deep codebase analysis', icon: 'search', color: '#3B82F6' },
+    { type: 'developer', label: 'Developer Agent', desc: 'Feature implementation and code edits (Read-Before-Write)', icon: 'code-slash', color: '#10B981' },
+    { type: 'tester', label: 'Tester Agent', desc: 'Compiles code, runs tests, and finds edge cases', icon: 'flask', color: '#F59E0B' },
+    { type: 'researcher', label: 'Researcher Agent', desc: 'Researches framework documentation and best practices', icon: 'book', color: '#8B5CF6' },
+    { type: 'critic', label: 'Critic Agent', desc: 'Strict AAA quality checks, bug hunting, and code review', icon: 'shield-checkmark', color: '#EF4444' },
+  ];
+
   return (
     <View style={styles.dashboard}>
       {/* Main Agent Status */}
@@ -43,46 +54,70 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
           </View>
         </View>
         
-        {currentTask && (
+        {currentTask ? (
           <View style={styles.currentTask}>
             <Text style={styles.taskLabel}>Current Task:</Text>
             <Text style={styles.taskContent}>{currentTask}</Text>
           </View>
+        ) : (
+          <Text style={{ color: IDE.muted, fontSize: 13, marginTop: 4 }}>
+            System ready. The Main Agent plans tasks and delegates to sub-agents.
+          </Text>
         )}
       </View>
 
-      {/* Subagents Übersicht */}
+      {/* Subagents Section */}
       <View style={styles.subAgentsSection}>
         <View style={styles.sectionHeader}>
           <Ionicons name="people" size={24} color={IDE.text} />
-          <Text style={styles.sectionTitle}>Subagents</Text>
+          <Text style={styles.sectionTitle}>Sub-Agents</Text>
           <View style={styles.countBadge}>
             <Text style={styles.countText}>{subAgents.length}</Text>
           </View>
         </View>
 
-        {/* Vorhandene Subagents */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.agentsScroll}>
-          {subAgents.map(agent => (
-            <SubAgentCard
-              key={agent.id}
-              agent={agent}
-              onPress={() => onViewSubAgentResult(agent.id)}
-            />
-          ))}
-          
-          {/* Add new agents */}
-          <TouchableOpacity
-            style={styles.deployButton}
-            onPress={() => showDeployMenu(onDeploySubAgent)}
-          >
-            <Ionicons name="add-circle" size={32} color={IDE.primary} />
-            <Text style={styles.deployText}>Deploy Agent</Text>
-          </TouchableOpacity>
-        </ScrollView>
+        {subAgents.length === 0 ? (
+          <View style={{ backgroundColor: IDE.surface, borderRadius: 10, padding: 16, alignItems: 'center', marginBottom: 8, borderWidth: 1, borderColor: IDE.border }}>
+            <Ionicons name="cube-outline" size={32} color={IDE.muted} style={{ marginBottom: 8 }} />
+            <Text style={{ color: IDE.text, fontWeight: '600', marginBottom: 4 }}>No sub-agents active</Text>
+            <Text style={{ color: IDE.muted, fontSize: 12, textAlign: 'center', marginBottom: 12 }}>
+              Deploy specialized agents to analyze code, run tests, or implement features.
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: IDE.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              onPress={() => setDeployModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add-circle" size={16} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Deploy First Agent</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.agentsScroll}>
+            {subAgents.map(agent => (
+              <SubAgentCard
+                key={agent.id}
+                agent={agent}
+                onPress={() => {
+                  setSelectedAgent(agent);
+                  onViewSubAgentResult(agent.id);
+                }}
+              />
+            ))}
+            
+            <TouchableOpacity
+              style={styles.deployButton}
+              onPress={() => setDeployModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add-circle" size={32} color={IDE.primary} />
+              <Text style={styles.deployText}>Deploy Agent</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        )}
       </View>
 
-      {/* Koordinations-Chat */}
+      {/* Agent Coordination Section */}
       <View style={styles.coordinationSection}>
         <View style={styles.sectionHeader}>
           <Ionicons name="chatbubbles" size={24} color={IDE.text} />
@@ -90,10 +125,119 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
         </View>
         <View style={styles.coordinationContent}>
           <Text style={styles.coordinationPlaceholder}>
-            Live communication between agents will be displayed here...
+            Live communication between main agent and sub-agents is coordinated here.
           </Text>
         </View>
       </View>
+
+      {/* Deploy Agent Modal */}
+      <Modal visible={deployModalVisible} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: IDE.surface, borderRadius: 16, padding: 20, width: '100%', maxWidth: 440, borderWidth: 1, borderColor: IDE.border }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ fontSize: 18, fontWeight: 'bold', color: IDE.text }}>Deploy Sub-Agent</Text>
+              <TouchableOpacity onPress={() => setDeployModalVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={22} color={IDE.muted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: IDE.muted, fontSize: 13, marginBottom: 16 }}>
+              Select a specialized AI sub-agent to execute targeted tasks:
+            </Text>
+
+            {AGENT_OPTIONS.map(opt => (
+              <TouchableOpacity
+                key={opt.type}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: IDE.bg,
+                  padding: 12,
+                  borderRadius: 10,
+                  marginBottom: 10,
+                  borderWidth: 1,
+                  borderColor: IDE.border,
+                }}
+                onPress={() => {
+                  onDeploySubAgent(opt.type);
+                  setDeployModalVisible(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: opt.color + '25', justifyContent: 'center', alignItems: 'center', marginRight: 12 }}>
+                  <Ionicons name={opt.icon} size={20} color={opt.color} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: IDE.text, fontWeight: 'bold', fontSize: 14 }}>{opt.label}</Text>
+                  <Text style={{ color: IDE.muted, fontSize: 12, marginTop: 2 }}>{opt.desc}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={IDE.muted} />
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              style={{ marginTop: 8, padding: 12, borderRadius: 8, backgroundColor: IDE.surface, borderWidth: 1, borderColor: IDE.border, alignItems: 'center' }}
+              onPress={() => setDeployModalVisible(false)}
+            >
+              <Text style={{ color: IDE.muted, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Selected Agent Detail Modal */}
+      {selectedAgent && (
+        <Modal visible={!!selectedAgent} transparent animationType="fade">
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: IDE.surface, borderRadius: 16, padding: 20, width: '100%', maxWidth: 440, borderWidth: 1, borderColor: IDE.border }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name={getAgentTypeIcon(selectedAgent.type) as any} size={22} color={getAgentStatusColor(selectedAgent.status)} />
+                  <Text style={{ fontSize: 17, fontWeight: 'bold', color: IDE.text }}>{selectedAgent.name}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setSelectedAgent(null)}>
+                  <Ionicons name="close" size={22} color={IDE.muted} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                <Ionicons name={getAgentStatusIcon(selectedAgent.status) as any} size={14} color={getAgentStatusColor(selectedAgent.status)} />
+                <Text style={{ color: getAgentStatusColor(selectedAgent.status), fontSize: 12, fontWeight: '600' }}>
+                  Status: {getAgentStatusText(selectedAgent.status)}
+                </Text>
+              </View>
+
+              {selectedAgent.currentTask && (
+                <View style={{ backgroundColor: IDE.bg, padding: 10, borderRadius: 8, marginBottom: 10 }}>
+                  <Text style={{ color: IDE.muted, fontSize: 11, fontWeight: 'bold' }}>TASK</Text>
+                  <Text style={{ color: IDE.text, fontSize: 13, marginTop: 2 }}>{selectedAgent.currentTask.title}</Text>
+                  <Text style={{ color: IDE.muted, fontSize: 12, marginTop: 2 }}>{selectedAgent.currentTask.description}</Text>
+                </View>
+              )}
+
+              {selectedAgent.result && (
+                <View style={{ backgroundColor: IDE.bg, padding: 10, borderRadius: 8, marginBottom: 10 }}>
+                  <Text style={{ color: IDE.accent, fontSize: 11, fontWeight: 'bold' }}>RESULT</Text>
+                  <Text style={{ color: IDE.text, fontSize: 13, marginTop: 2 }}>{selectedAgent.result.summary}</Text>
+                </View>
+              )}
+
+              <View style={{ marginBottom: 16 }}>
+                <Text style={{ color: IDE.muted, fontSize: 11, fontWeight: 'bold', marginBottom: 6 }}>PERMISSIONS</Text>
+                <Text style={{ color: IDE.textSecondary, fontSize: 12 }}>
+                  {selectedAgent.permissions.join(', ')}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={{ padding: 12, borderRadius: 8, backgroundColor: IDE.primary, alignItems: 'center' }}
+                onPress={() => setSelectedAgent(null)}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 };
@@ -428,30 +572,7 @@ function getRiskText(level: 'low' | 'medium' | 'high'): string {
   }
 }
 
-function showDeployMenu(onDeploy: (type: SubAgentType) => void) {
-  // Simple menu implementation
-  const choices: {type: SubAgentType, label: string, icon: string}[] = [
-    { type: 'analyst', label: 'Analyse-Agent', icon: '🔍' },
-    { type: 'developer', label: 'Code-Agent', icon: '💻' },
-    { type: 'tester', label: 'Test-Agent', icon: '🧪' },
-    { type: 'researcher', label: 'Research-Agent', icon: '📚' },
-    { type: 'critic', label: 'Critic-Agent', icon: '🛡️' }
-  ];
-
-  // In production: Show proper modal/dialog
-  const choice = prompt(
-    'Welchen Agenten möchtest du einsetzen?\n\n' +
-    choices.map(c => `${c.icon} ${c.label}`).join('\n') +
-    '\n\nGib die Nummer ein (1-5):'
-  );
-
-  if (choice) {
-    const index = parseInt(choice) - 1;
-    if (index >= 0 && index < choices.length) {
-      onDeploy(choices[index].type);
-    }
-  }
-}
+// showDeployMenu replaced by interactive modal in AgentDashboard
 
 // ==================== Styles ====================
 

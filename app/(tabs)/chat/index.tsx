@@ -7,9 +7,10 @@ import {
 import {
   Send, Square, Paperclip, X, FileText, Sparkles, Brain, MessageSquare,
   Zap, Info, Trash2, ChevronRight, ShieldAlert, Check, Ban,
-  FolderOpen, Code, Search, Lightbulb, PenTool, Heart
+  FolderOpen, Code, Search, Lightbulb, PenTool, Heart, LayoutDashboard
 } from 'lucide-react-native';
 import WebView from 'react-native-webview';
+import { useRouter } from 'expo-router';
 import { IDE } from '@/constants/colors';
 import { useChat } from '@/providers/ChatProvider';
 import { useAgent } from '@/providers/AgentProvider';
@@ -22,6 +23,7 @@ import AgentPlanView from '@/components/AgentPlanView';
 import ThinkingBlock from '@/components/ThinkingBlock';
 
 export default function ChatScreen() {
+  const router = useRouter();
   const { messages, isLoading, isThinking, thinkingPhase, sendMessage, stopGeneration, clearChat, lastFallbackInfo, pendingApproval, approvePendingTool } = useChat();
   const {
     activePlan, isPlanning, isExecuting,
@@ -496,6 +498,18 @@ export default function ChatScreen() {
                 </View>
               )}
             </TouchableOpacity>
+            <View style={styles.attachMenuDivider} />
+            <TouchableOpacity
+              style={styles.attachMenuItem}
+              onPress={() => {
+                setShowAttachMenu(false);
+                router.push({ pathname: '/(tabs)/tools', params: { tab: 'dashboard' } } as any);
+              }}
+              activeOpacity={0.7}
+            >
+              <LayoutDashboard size={16} color={IDE.primary} />
+              <Text style={styles.attachMenuText}>Agent Dashboard</Text>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       )}
@@ -592,10 +606,16 @@ export default function ChatScreen() {
       )}
 
       {showAgentBadge && (
-        <Animated.View style={[styles.agentModeBadgeRow, { opacity: agentBadgeAnim, transform: [{ translateY: agentBadgeAnim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) }] }]} pointerEvents={isBusy || hasAttachments || keyboardVisible ? 'none' : 'auto'}>
-          <Brain size={10} color={IDE.accent} />
-          <Text style={styles.agentModeBadgeText}>AGENT</Text>
-        </Animated.View>
+        <TouchableOpacity
+          onPress={() => router.push({ pathname: '/(tabs)/tools', params: { tab: 'dashboard' } } as any)}
+          activeOpacity={0.7}
+        >
+          <Animated.View style={[styles.agentModeBadgeRow, { opacity: agentBadgeAnim, transform: [{ translateY: agentBadgeAnim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) }] }]} pointerEvents={isBusy || hasAttachments || keyboardVisible ? 'none' : 'auto'}>
+            <Brain size={10} color={IDE.accent} />
+            <Text style={styles.agentModeBadgeText}>AGENT</Text>
+            <Text style={[styles.agentModeBadgeText, { opacity: 0.6, fontSize: 9, marginLeft: 4 }]}>• Dashboard</Text>
+          </Animated.View>
+        </TouchableOpacity>
       )}
 
       <Animated.View style={[styles.inputBar, { borderTopColor: activeBorderColor, borderTopWidth: isBusy || hasAttachments ? 2 : 1 }]}>
@@ -617,6 +637,22 @@ export default function ChatScreen() {
           maxLength={10000}
           editable={!isBusy}
           onFocus={() => setShowAttachMenu(false)}
+          onKeyPress={(e: any) => {
+            if (Platform.OS === 'web') {
+              if (e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
+                e.preventDefault?.();
+                if ((input.trim() || attachedFiles.length > 0) && !isBusy) {
+                  handleSend();
+                }
+              }
+            }
+          }}
+          onSubmitEditing={() => {
+            if (Platform.OS === 'web' && (input.trim() || attachedFiles.length > 0) && !isBusy) {
+              handleSend();
+            }
+          }}
+          blurOnSubmit={false}
         />
 
         {isBusy ? (
