@@ -98,3 +98,14 @@ if (fs.existsSync(metroAssetsPath)) {
   }
 }
 
+// Patch image-size index.js to maintain CommonJS default function compatibility
+const imageSizeIndexPath = path.join(__dirname, '..', 'node_modules', 'image-size', 'dist', 'cjs', 'index.js');
+if (fs.existsSync(imageSizeIndexPath)) {
+  let content = fs.readFileSync(imageSizeIndexPath, 'utf8');
+  if (!content.includes('module.exports = lookup_1.imageSize;')) {
+    content += '\nmodule.exports = lookup_1.imageSize;\nmodule.exports.default = lookup_1.imageSize;\nmodule.exports.imageSize = lookup_1.imageSize;\nmodule.exports.disableTypes = lookup_1.disableTypes;\nmodule.exports.types = types_1.types;\nmodule.exports.__esModule = true;\n';
+    fs.writeFileSync(imageSizeIndexPath, content, 'utf8');
+    console.log('Patched', imageSizeIndexPath);
+  }
+}
+
