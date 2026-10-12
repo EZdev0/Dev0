@@ -10,6 +10,7 @@ import {
   FolderOpen, Code, Search, Lightbulb, PenTool, Heart
 } from 'lucide-react-native';
 import WebView from 'react-native-webview';
+import { useRouter } from 'expo-router';
 import { IDE } from '@/constants/colors';
 import { useChat } from '@/providers/ChatProvider';
 import { useAgent } from '@/providers/AgentProvider';
@@ -22,6 +23,7 @@ import AgentPlanView from '@/components/AgentPlanView';
 import ThinkingBlock from '@/components/ThinkingBlock';
 
 export default function ChatScreen() {
+  const router = useRouter();
   const { messages, isLoading, isThinking, thinkingPhase, sendMessage, stopGeneration, clearChat, lastFallbackInfo, pendingApproval, approvePendingTool } = useChat();
   const {
     activePlan, isPlanning, isExecuting,

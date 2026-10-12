@@ -10,6 +10,7 @@ import {
   Brain, FileText,
  Heart } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
+import { useRouter } from 'expo-router';
 import { IDE } from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
 import SponsorBanner from '@/components/SponsorBanner';
@@ -88,6 +89,7 @@ const KEY_PLACEHOLDER: Record<string, string> = {
 };
 
 export default function SettingsScreen() {
+  const router = useRouter();
   const { settings, updateSettings, agentMd, setAgentMd, soulMd, setSoulMd, identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd } = useApp();
 
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});

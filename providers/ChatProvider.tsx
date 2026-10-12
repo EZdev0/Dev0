@@ -6,6 +6,7 @@ import { createRorkTool, useRorkAgent } from '@rork-ai/toolkit-sdk';
 import { ChatMessage, ToolCall, AIProviderType, InlineTodo, PendingToolApproval, TOOL_REGISTRY } from '@/types';
 import { callAI, TOOL_DEFINITIONS, buildSystemPrompt, parseThinkingFromContent } from '@/utils/ai-service';
 import { compressChat } from '@/utils/chat-compression';
+import { performWebSearch, performWebFetch } from '@/utils/web-tools';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
@@ -207,18 +208,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         if (perm === 'blocked') return 'ERROR: Web search is blocked by the user.';
         if (perm === 'removed') return 'ERROR: Unknown Tool.';
         try {
-          const resp = await fetch('https://api.duckduckgo.com/?q=' + encodeURIComponent(input.query) + '&format=json&no_redirect=1&no_html=1');
-          if (!resp.ok) return 'Web search failed (Status ' + resp.status + ').';
-          const data = await resp.json();
-          let results = '';
-          if (data?.Abstract) results += 'Summary: ' + data.Abstract + '\n\n';
-          if (data?.RelatedTopics) {
-            for (const t of (data.RelatedTopics || []).slice(0, 8)) {
-              if (t?.Text) results += '• ' + t.Text + '\n';
-              if (t?.FirstURL) results += '  URL: ' + t.FirstURL + '\n';
-            }
-          }
-          return results || 'No results found for: ' + input.query;
+          return await performWebSearch(input.query);
         } catch (e: any) {
           return 'ERROR during web search: ' + (e?.message || 'Network error');
         }
@@ -251,12 +241,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         if (perm === 'blocked') return 'ERROR: Web fetch is blocked by the user.';
         if (perm === 'removed') return 'ERROR: Unknown Tool.';
         try {
-          const resp = await fetch(input.url, { headers: { 'Accept': 'text/html,text/plain,application/json' } });
-          if (!resp.ok) return 'Fetch failed (Status ' + resp.status + ').';
-          const text = await resp.text();
-          const maxLen = input.max_length || 5000;
-          const cleaned = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          return cleaned.length > maxLen ? cleaned.slice(0, maxLen) + '... (truncated)' : cleaned;
+          return await performWebFetch(input.url, input.max_length);
         } catch (e: any) {
           return 'ERROR during web fetch: ' + (e?.message || 'Network error');
         }
@@ -607,17 +592,8 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         case 'web_search': {
           if (!args?.query) return { result: 'ERROR: Search term is missing.' };
           try {
-            const resp = await fetch('https://api.duckduckgo.com/?q=' + encodeURIComponent(args.query) + '&format=json&no_redirect=1&no_html=1');
-            if (!resp.ok) return { result: 'Web search failed.' };
-            const data = await resp.json();
-            let results = '';
-            if (data?.Abstract) results += data.Abstract + '\n\n';
-            if (data?.RelatedTopics) {
-              for (const t of (data.RelatedTopics || []).slice(0, 8)) {
-                if (t?.Text) results += '• ' + t.Text + '\n';
-              }
-            }
-            return { result: results || 'No results for: ' + args.query };
+            const result = await performWebSearch(args.query);
+            return { result };
           } catch (e: any) {
             return { result: 'ERROR: ' + (e?.message || 'Network error') };
           }
@@ -625,12 +601,8 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         case 'web_fetch': {
           if (!args?.url) return { result: 'ERROR: URL is missing.' };
           try {
-            const resp = await fetch(args.url);
-            if (!resp.ok) return { result: 'Fetch failed (' + resp.status + ').' };
-            const text = await resp.text();
-            const maxLen = args.max_length || 5000;
-            const cleaned = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            return { result: cleaned.length > maxLen ? cleaned.slice(0, maxLen) + '...' : cleaned };
+            const result = await performWebFetch(args.url, args.max_length);
+            return { result };
           } catch (e: any) {
             return { result: 'ERROR: ' + (e?.message || 'Network error') };
           }

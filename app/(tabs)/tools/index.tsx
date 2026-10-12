@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Alert, KeyboardAvoidingView, Platform, Modal,
@@ -9,13 +9,16 @@ import {
   Search, FolderTree, Zap, Wrench, ChevronRight, ChevronDown,
   Shield, ShieldCheck, ShieldOff, ShieldX, Info, CircleCheck,
   Clock, AlertCircle, Play, RefreshCw, Brain, Globe, FileText,
-  Folder, ClipboardList, Database, Settings2, Eye,
+  Folder, ClipboardList, Database, Settings2, Eye, LayoutDashboard,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 import { useChat } from '@/providers/ChatProvider';
 import { useAgent } from '@/providers/AgentProvider';
+import { useLocalSearchParams } from 'expo-router';
+import { AgentDashboard } from '@/components/MultiAgentUI';
+import { SubAgent, SubAgentType, createSubAgent } from '@/utils/multi-agent-system';
 import {
   ToolPermission, TOOL_REGISTRY, TOOL_CATEGORIES, ToolRegistryItem,
   AgentPlan, AgentTask,
@@ -66,7 +69,15 @@ export default function ToolsScreen() {
   const { clearChat, startNewChat, compressChat, applyChatCompression, messages } = useChat();
   const { plans, activePlan } = useAgent();
 
-  const [activeTab, setActiveTab] = useState<'tools' | 'plans' | 'memos' | 'search' | 'chat'>('tools');
+  const { tab } = useLocalSearchParams<{ tab?: string }>();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat'>('dashboard');
+  const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
+
+  useEffect(() => {
+    if (tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'memos' || tab === 'search' || tab === 'chat') {
+      setActiveTab(tab as any);
+    }
+  }, [tab]);
 
   const [newMemoText, setNewMemoText] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -201,6 +212,27 @@ export default function ToolsScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
+        {activeTab === 'dashboard' && (
+          <AgentDashboard
+            mainAgentStatus={activePlan?.status === 'executing' ? 'executing' : activePlan?.status === 'review' ? 'planning' : 'idle'}
+            subAgents={subAgents}
+            onDeploySubAgent={(type) => {
+              const newAgent = createSubAgent(type);
+              setSubAgents(prev => [...prev, newAgent]);
+              Alert.alert('Agent Deployed', `${newAgent.name} is now active and ready for tasks.`);
+            }}
+            onViewSubAgentResult={(agentId) => {
+              const ag = subAgents.find(a => a.id === agentId);
+              if (ag?.result) {
+                Alert.alert(ag.name + ' Result', ag.result.summary);
+              } else {
+                Alert.alert(ag?.name || 'Agent', 'Status: ' + (ag?.status || 'idle'));
+              }
+            }}
+            currentTask={activePlan?.userRequest}
+          />
+        )}
+
         {activeTab === 'tools' && (
           <>
             <View style={styles.toolsHeader}>

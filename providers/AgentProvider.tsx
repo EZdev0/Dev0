@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import createContextHook from '@nkzw/create-context-hook';
 import { AgentPlan, AgentTask, AgentTaskStatus, AgentTaskType, AgentToolUsage, ChatMessage, ToolCall, AIProviderType, PendingToolApproval, TOOL_REGISTRY } from '@/types';
 import { callAI, TOOL_DEFINITIONS, buildSystemPrompt, buildPlannerPrompt, parsePlanFromAI, generateFinalResponse } from '@/utils/ai-service';
+import { performWebSearch, performWebFetch } from '@/utils/web-tools';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
@@ -265,81 +266,10 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
         case 'web_search': {
           if (!args?.query) return { result: 'ERROR: Search term is missing.' };
           try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 8000);
-            
-            const resp = await fetch(
-              'https://api.duckduckgo.com/?q=' + encodeURIComponent(args.query) + '&format=json&no_redirect=1&no_html=1',
-              { signal: controller.signal }
-            );
-            clearTimeout(timeoutId);
-            
-            let results = '';
-            
-            if (resp.ok) {
-              const data = await resp.json();
-              
-              // Abstract
-              if (data?.Abstract) {
-                results += '**Summary:**\n' + data.Abstract + '\n\n';
-                if (data?.AbstractURL) results += '_Source: ' + data.AbstractURL + '_\n\n';
-              }
-              
-              // Related Topics
-              if (data?.RelatedTopics && Array.isArray(data.RelatedTopics)) {
-                const topics = data.RelatedTopics.slice(0, 8);
-                if (topics.length > 0) {
-                  results += '**Related Topics:**\n';
-                  for (const t of topics) {
-                    if (t?.Text) {
-                      results += '• ' + t.Text + '\n';
-                      if (t?.FirstURL) results += '  _Source: ' + t.FirstURL + '_\n';
-                    }
-                  }
-                  results += '\n';
-                }
-              }
-              
-              // Results Array
-              if (data?.Results && Array.isArray(data.Results)) {
-                const res = data.Results.slice(0, 5);
-                if (res.length > 0) {
-                  results += '**Results:**\n';
-                  for (const r of res) {
-                    if (r?.Text && r?.FirstURL) {
-                      results += '• ' + r.Text + '\n  _' + r.FirstURL + '_\n';
-                    }
-                  }
-                }
-              }
-            }
-            
-            // Fallback message if no results
-            if (!results.trim()) {
-              console.log('[Web-Search] No results for:', args.query);
-              return { 
-                result: 'ℹ️ No direct web results found for "' + args.query + '".\n\n' +
-                        '**Possible reasons:**\n' +
-                        '• Highly specific or technical query\n' +
-                        '• Term spelled differently\n' +
-                        '• Current topic not yet indexed\n\n' +
-                        '**Try:**\n' +
-                        '• Different phrasing\n' +
-                        '• English instead of German\n' +
-                        '• Broader terms'
-              };
-            }
-            
-            return { result: results };
+            const result = await performWebSearch(args.query);
+            return { result };
           } catch (e: any) {
-            console.log('[Web-Search] Error:', e.message);
-            return { 
-              result: '⚠️ Web search currently unavailable (Network error).\n\n' +
-                      '**Describe what you want to find:**\n' +
-                      '• Which topic?\n' +
-                      '• What information do you need?\n' +
-                      '• Are there alternative sources?'
-            };
+            return { result: 'ERROR during web search: ' + (e?.message || 'Network error') };
           }
         }
         case 'web_fetch': {
