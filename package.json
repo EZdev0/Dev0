@@ -7,7 +7,7 @@
     "start-web": "expo start --web",
     "start-tunnel": "bunx rork start -p z4baphwr1dneh3hj3x7o1 --tunnel",
     "start-web-dev": "DEBUG=expo* bunx rork start -p z4baphwr1dneh3hj3x7o1 --web --tunnel",
-    "lint": "expo lint",
+    "lint": "eslint . --resolve-plugins-relative-to node_modules/eslint-config-expo",
     "postinstall": "node scripts/patch-modules.js",
     "test": "node scripts/test-runner.js"
   },
@@ -57,18 +57,19 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
-    "@babel/core": "^8.0.7",
+    "@babel/core": "^7.25.2",
     "@expo/ngrok": "^4.1.0",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.1.10",
-    "eslint": "^10.12.0",
-    "eslint-config-expo": "~57.0.2",
+    "eslint": "^8.57.1",
+    "eslint-config-expo": "~10.0.0",
     "jest": "^30.5.2",
-    "ts-jest": "^29.4.14",
-    "typescript": "~7.0.2"
+    "ts-jest": "^29.4.13",
+    "typescript": "~5.9.2"
   },
   "private": true,
   "overrides": {
-    "undici": "^7.29.1"
+    "undici": "^7.29.1",
+    "node-forge": "^1.4.0"
   }
 }

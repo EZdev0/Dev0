@@ -1,3 +1,4 @@
+/* eslint-disable no-var */
 // Type definitions for Jest testing globals
 declare var describe: (name: string, fn: () => void) => void;
 declare var it: (name: string, fn: () => void | Promise<void>) => void;
