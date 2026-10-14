@@ -45,4 +45,15 @@ rork-eslint.config.js
 core
 node_modules
 .expo
+# Local AI Agent, Rules, Skills & Customizations (strictly local)
+.agent/
 .agents/
+_agent/
+_agents/
+skills/
+sidecars/
+plugins/
+.gemini/
+.codegraph/
+*.db
+*.db-journal
