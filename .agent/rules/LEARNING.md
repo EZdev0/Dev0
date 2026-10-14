@@ -55,3 +55,9 @@
 - **[ERROR]** Providing only a PR link or high-level summary without a structured, copy-pasteable PR description and title.
 - **[CAUSE]** Missing rule requiring a complete GitHub PR template/message in the final response.
 - **[PREVENTION]** Whenever creating or updating a PR, the AI MUST ALWAYS include a ready-to-use PR message (Title, Description, Detailed Changes, Test Verification) alongside the PR link.
+
+### [2026-10-14] Mandatory Persistent Memory Recall & Active Tool Engagement
+- **[CONTEXT]** Persistent Memory plugin successfully installed and validated with SQLite FTS5 BM25 search across 428 conversations and 21,300+ messages.
+- **[DIRECTIVE]** The user mandates that the AI MUST ALWAYS proactively query Persistent Memory (`get_user_profile` and `search_past_memory`) and leverage active MCP tools and Skills on every task.
+- **[PREVENTION]** Never begin solving complex tasks without first querying memory for existing patterns, solutions, and historical fixes. Always incorporate remembered context into the strategy.
+

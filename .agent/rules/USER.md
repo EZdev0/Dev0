@@ -26,3 +26,13 @@
 - **ALWAYS provide the clickable localhost URL** (e.g., http://localhost:8081) in the chat response immediately after starting any development server.
 
 - **ALWAYS create a NEW branch** for every distinct task or feature request. Do not push unrelated changes to an already existing PR branch.
+
+## 🧠 MANDATORY PERSISTENT MEMORY & TOOL USAGE
+- **Always Check Persistent Memory First:**
+  - Before starting any non-trivial feature, bug fix, or architecture change, call `get_user_profile()` to review explicit rules and user constraints.
+  - Query `search_past_memory(query)` with relevant keywords to check if a previous solution, fix, or context already exists across projects.
+  - Reference relevant past learnings explicitly in the response.
+- **Active MCP & Skill Engagement:**
+  - Actively use specialized MCP tools (`persistent-memory`, `codegraph`, `sequentialthinking`, web search) rather than guessing or relying purely on internal knowledge.
+  - Always check and leverage available Skills (`persistent-memory`, `plugin`, etc.) when applicable.
+
