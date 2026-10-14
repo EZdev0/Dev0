@@ -42,6 +42,11 @@
     "experiments": {
       "typedRoutes": true
     },
-    "owner": "ezdev2"
+    "owner": "ezdev2",
+    "extra": {
+      "eas": {
+        "projectId": "48bad3a1-e2e3-4771-9dd7-a3cc128ca5e0"
+      }
+    }
   }
 }

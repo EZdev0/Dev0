@@ -1,5 +1,5 @@
 [build]
-  command = "bun install && bun x expo export -p web"
+  command = "bun install && node scripts/patch-modules.js && bun run export-web"
   functions = "netlify/functions"
   publish = "dist/client"
 
