@@ -7,6 +7,7 @@
     "start-web": "expo start --web",
     "start-tunnel": "bunx rork start -p z4baphwr1dneh3hj3x7o1 --tunnel",
     "start-web-dev": "DEBUG=expo* bunx rork start -p z4baphwr1dneh3hj3x7o1 --web --tunnel",
+    "export-web": "expo export -p web",
     "lint": "eslint . --resolve-plugins-relative-to node_modules/eslint-config-expo",
     "postinstall": "node scripts/patch-modules.js",
     "test": "node scripts/test-runner.js"
