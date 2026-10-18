@@ -1,4 +1,11 @@
-import { normalizeUrl, cleanHtml, performWebSearch, performWebFetch } from '../../utils/web-tools';
+import {
+  normalizeUrl,
+  cleanHtml,
+  optimizeSearchQuery,
+  performWebSearch,
+  performWebFetch,
+  runSubAISearchAgent,
+} from '../../utils/web-tools';
 
 describe('web-tools utils', () => {
   describe('normalizeUrl', () => {
@@ -17,8 +24,9 @@ describe('web-tools utils', () => {
       expect(normalizeUrl('ttp://example.com')).toBe('http://example.com');
     });
 
-    it('should trim surrounding whitespace', () => {
+    it('should trim surrounding whitespace and handle empty input', () => {
       expect(normalizeUrl('   https://example.com/path   ')).toBe('https://example.com/path');
+      expect(normalizeUrl('')).toBe('');
     });
   });
 
@@ -44,24 +52,112 @@ describe('web-tools utils', () => {
     });
   });
 
-  describe('performWebSearch', () => {
+  describe('optimizeSearchQuery (Sub-KI Search Agent helper)', () => {
+    it('should strip conversational filler words and preserve technical terms', () => {
+      const optimized = optimizeSearchQuery('Kannst du bitte im Internet nach Expo SDK 54 Router suchen?');
+      expect(optimized).toContain('Expo');
+      expect(optimized).toContain('SDK');
+      expect(optimized).toContain('54');
+      expect(optimized).not.toContain('Kannst');
+    });
+
+    it('should fallback to original trimmed query if only filler words exist', () => {
+      const optimized = optimizeSearchQuery('bitte danke');
+      expect(optimized.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('performWebSearch (Keyless 4-Stage Fallback)', () => {
     it('should reject empty queries gracefully', async () => {
       const result = await performWebSearch('   ');
       expect(result).toContain('ERROR');
     });
 
-    it('should return formatted markdown search results for queries', async () => {
-      const result = await performWebSearch('TypeScript');
-      expect(typeof result).toBe('string');
-      expect(result.length).toBeGreaterThan(10);
+    it('should fall back across stages when earlier stages fail (mocked fetch)', async () => {
+      const origFetch = global.fetch;
+      let callCount = 0;
+      global.fetch = (async (url: any) => {
+        callCount++;
+        const urlStr = String(url);
+        // Simulate Stage 1 (Jina) failing, Stage 2 (Pollinations) succeeding
+        if (urlStr.includes('r.jina.ai')) {
+          return { ok: false, status: 503, text: async () => '' } as any;
+        }
+        if (urlStr.includes('pollinations.ai')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              choices: [{ message: { content: '### React Native 0.81\n- Supports Expo SDK 54\n- Source: https://reactnative.dev' } }],
+            }),
+          } as any;
+        }
+        return { ok: false, status: 500, text: async () => '' } as any;
+      }) as any;
+
+      try {
+        const result = await performWebSearch('React Native 0.81', { summarizeWithAI: false });
+        expect(callCount).toBeGreaterThanOrEqual(2);
+        expect(result).toContain('React Native 0.81');
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+
+    it('should run Sub-KI Search Agent and return structured markdown', async () => {
+      const origFetch = global.fetch;
+      global.fetch = (async (url: any) => {
+        const urlStr = String(url);
+        if (urlStr.includes('r.jina.ai')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => '[TypeScript Handbook](https://www.typescriptlang.org/docs/) Official TypeScript documentation and guides for static typing.',
+          } as any;
+        }
+        if (urlStr.includes('pollinations.ai')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              choices: [{ message: { content: '- **TypeScript**: Strongly typed programming language.\n- Source: https://www.typescriptlang.org/docs/' } }],
+            }),
+          } as any;
+        }
+        return { ok: false, status: 404, text: async () => '' } as any;
+      }) as any;
+
+      try {
+        const result = await runSubAISearchAgent('Was ist TypeScript?');
+        expect(result).toContain('TypeScript');
+        expect(result.length).toBeLessThanOrEqual(6000);
+      } finally {
+        global.fetch = origFetch;
+      }
     });
   });
 
-  describe('performWebFetch', () => {
-    it('should handle invalid or unreachable URLs gracefully without throwing', async () => {
-      const result = await performWebFetch('https://invalid-non-existent-domain-12345.xyz');
-      expect(typeof result).toBe('string');
-      expect(result).toBeDefined();
+  describe('performWebFetch (Keyless 3-Stage Fallback & 6000-char limit)', () => {
+    it('should handle empty URLs gracefully', async () => {
+      const result = await performWebFetch('   ');
+      expect(result).toContain('FEHLER');
+    });
+
+    it('should truncate fetched webpage content to at most 6000 characters', async () => {
+      const origFetch = global.fetch;
+      global.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => 'A'.repeat(12000),
+      })) as any;
+
+      try {
+        const result = await performWebFetch('https://example.com/large-page');
+        expect(result.length).toBeLessThanOrEqual(6000);
+        expect(result).toContain('example.com');
+      } finally {
+        global.fetch = origFetch;
+      }
     });
   });
 });

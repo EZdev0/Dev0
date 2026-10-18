@@ -148,6 +148,11 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
       }
     };
     load();
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+      }
+    };
   }, []);
 
   const persist = useCallback((updated: Project[]) => {
@@ -181,20 +186,24 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
     };
     setProjects(prev => {
       const updated = [...prev, project];
+      plansProjectsRef.current = updated;
       persist(updated);
       return updated;
     });
+    currentProjectIdRef.current = project.id;
     setCurrentProjectId(project.id);
     AsyncStorage.setItem('ide_current_project', project.id).catch(console.log);
     return project.id;
-  }, [persist]);
+  }, [persist, triggerSponsorInteraction]);
 
   const deleteProject = useCallback((id: string) => {
     setProjects(prev => {
       const updated = prev.filter(p => p.id !== id);
+      plansProjectsRef.current = updated;
       persist(updated);
       if (currentProjectId === id) {
         const nextId = updated.length > 0 ? updated[0].id : null;
+        currentProjectIdRef.current = nextId;
         setCurrentProjectId(nextId);
         if (nextId) {
           AsyncStorage.setItem('ide_current_project', nextId).catch(console.log);
@@ -207,6 +216,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, [persist, currentProjectId]);
 
   const selectProject = useCallback((id: string) => {
+    currentProjectIdRef.current = id;
     setCurrentProjectId(id);
     AsyncStorage.setItem('ide_current_project', id).catch(console.log);
   }, []);
@@ -225,6 +235,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
           return p;
         }
       });
+      plansProjectsRef.current = updated;
       persist(updated);
       return updated;
     });
@@ -243,13 +254,16 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, []);
 
   const updateFileContent = useCallback((path: string, content: string) => {
+    if (!path || !path.trim()) return;
     updateFiles(f => {
       const parts = splitPath(path);
+      if (parts.length === 0) return f;
       const node = findNode(f, parts);
       if (node && node.type === 'file') {
         node.content = content;
       } else {
-        const fileName = parts.pop()!;
+        const fileName = parts.pop();
+        if (!fileName) return f;
         if (parts.length > 0) {
           ensureDirectories(f, parts);
         }
@@ -270,9 +284,11 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, [updateFiles]);
 
   const createFile = useCallback((path: string, content: string) => {
+    if (!path || !path.trim()) return;
     updateFiles(f => {
       const parts = splitPath(path);
-      const fileName = parts.pop()!;
+      const fileName = parts.pop();
+      if (!fileName) return f;
       ensureDirectories(f, parts);
 
       let target = f;
@@ -292,9 +308,11 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, [updateFiles]);
 
   const deleteFile = useCallback((path: string) => {
+    if (!path || !path.trim()) return;
     updateFiles(f => {
       const parts = splitPath(path);
-      const fileName = parts.pop()!;
+      const fileName = parts.pop();
+      if (!fileName) return f;
       let target = f;
       for (const dir of parts) {
         const found = target.find(n => n.name === dir && n.type === 'directory');
@@ -308,6 +326,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, [updateFiles]);
 
   const renameFile = useCallback((oldPath: string, newPath: string) => {
+    if (!oldPath || !newPath) return;
     const content = getFileContent(oldPath);
     if (content !== null) {
       deleteFile(oldPath);
@@ -318,7 +337,9 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
         const node = findNode(f, parts);
         if (node) {
           const newParts = splitPath(newPath);
-          node.name = newParts[newParts.length - 1];
+          if (newParts.length > 0) {
+            node.name = newParts[newParts.length - 1];
+          }
         }
         return f;
       });
@@ -326,6 +347,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   }, [getFileContent, deleteFile, createFile, updateFiles]);
 
   const createDirectory = useCallback((path: string) => {
+    if (!path || !path.trim()) return;
     updateFiles(f => {
       ensureDirectories(f, splitPath(path));
       return f;

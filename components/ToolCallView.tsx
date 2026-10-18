@@ -2,7 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { ChevronDown, ChevronRight, Check, X, Loader2, Wrench } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
-import { ToolCall } from '@/types';
+import { ToolCall, isLearningTool, isLearningEnabled } from '@/types';
+import { useApp } from '@/providers/AppProvider';
 
 const TOOL_LABELS: Record<string, string> = {
   read_file: 'Read File',
@@ -26,6 +27,13 @@ const TOOL_LABELS: Record<string, string> = {
   think: 'Think',
   task_complete: 'Task Complete',
   verify_file: 'Verify File',
+  read_identity_files: 'Read Identity Files',
+  update_soul_md: 'Update SOUL.md',
+  update_agents_md: 'Update AGENT.md',
+  update_identity_md: 'Update IDENTITY.md',
+  update_user_md: 'Update USER.md',
+  update_memory_md: 'Update MEMORY.md',
+  get_active_tools: 'Get Active Tools',
 };
 
 interface Props {
@@ -33,9 +41,14 @@ interface Props {
 }
 
 const ToolCallView = React.memo(({ toolCall }: Props) => {
+  const { settings } = useApp();
   const [expanded, setExpanded] = useState<boolean>(false);
 
   const toggle = useCallback(() => setExpanded(p => !p), []);
+
+  if (!toolCall || (isLearningTool(toolCall.name) && !isLearningEnabled(settings))) {
+    return null;
+  }
 
   const statusColor = toolCall.status === 'completed' ? IDE.accent
     : toolCall.status === 'error' ? IDE.danger

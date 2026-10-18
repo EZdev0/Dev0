@@ -27,6 +27,112 @@ export interface ChatAnalysis {
   repetitions: ChatMessage[];
 }
 
+export const MAX_TOOL_RESULT_LENGTH = 6000;
+
+/**
+ * Truncates long tool results to at most maxLength characters (default: 6000)
+ * to prevent HTTP 413 / 500 / timeout crashes on Rork and other providers.
+ */
+export function truncateToolResult(
+  content: string | undefined | null,
+  maxLength: number = MAX_TOOL_RESULT_LENGTH
+): string {
+  if (typeof content !== 'string') return '';
+  if (content.length <= maxLength) return content;
+  const suffix = '\n... [... Tool-Output gekürzt / truncated]';
+  if (maxLength <= suffix.length) {
+    return content.slice(0, Math.max(0, maxLength));
+  }
+  return content.slice(0, maxLength - suffix.length) + suffix;
+}
+
+/**
+ * Enforces context compression and truncates all tool outputs to max 6,000 characters
+ * before sending messages to an AI API endpoint.
+ */
+export function compressAndSanitizeMessagesForAPI(
+  messages: ChatMessage[],
+  options?: {
+    maxMessages?: number;
+    keepLastN?: number;
+    maxToolLength?: number;
+  }
+): ChatMessage[] {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+  const {
+    maxMessages = 20,
+    keepLastN = 12,
+    maxToolLength = MAX_TOOL_RESULT_LENGTH,
+  } = options || {};
+
+  const validMessages = messages.filter((m): m is ChatMessage => Boolean(m && typeof m === 'object'));
+  if (validMessages.length === 0) return [];
+
+  const effectiveKeepLastN = validMessages.length <= maxMessages
+    ? validMessages.length
+    : keepLastN;
+
+  const compressed = compressChat(validMessages, {
+    maxMessages,
+    keepLastN: effectiveKeepLastN,
+    includeSummary: validMessages.length > maxMessages,
+  });
+
+  // Ensure assistant tool_calls and their corresponding tool result messages stay paired
+  const keptIdSet = new Set(compressed.messages.map(m => m.id));
+  for (const msg of validMessages) {
+    if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0 && keptIdSet.has(msg.id)) {
+      const callIds = new Set(msg.toolCalls.map(tc => tc.id));
+      for (const candidate of validMessages) {
+        if (candidate.role === 'tool' && candidate.toolCallId && callIds.has(candidate.toolCallId)) {
+          keptIdSet.add(candidate.id);
+        }
+      }
+    }
+    if (msg.role === 'tool' && msg.toolCallId && keptIdSet.has(msg.id)) {
+      for (const candidate of validMessages) {
+        if (candidate.role === 'assistant' && candidate.toolCalls?.some(tc => tc.id === msg.toolCallId)) {
+          keptIdSet.add(candidate.id);
+        }
+      }
+    }
+  }
+
+  const orderedMessages = validMessages
+    .filter(m => keptIdSet.has(m.id))
+    .map(m => {
+      const rawContent = typeof m.content === 'string' ? m.content : '';
+      const sanitizedContent = m.role === 'tool'
+        ? truncateToolResult(rawContent, maxToolLength)
+        : rawContent;
+
+      const sanitizedToolCalls = Array.isArray(m.toolCalls)
+        ? m.toolCalls.map(tc => ({
+            ...tc,
+            result: tc.result !== undefined ? truncateToolResult(tc.result, maxToolLength) : undefined,
+          }))
+        : undefined;
+
+      return {
+        ...m,
+        content: sanitizedContent,
+        ...(sanitizedToolCalls ? { toolCalls: sanitizedToolCalls } : {}),
+      };
+    });
+
+  if (compressed.removedMessages.length > 0 && compressed.summary && orderedMessages.length > 0) {
+    const firstIdx = orderedMessages.findIndex(m => m.role === 'user');
+    if (firstIdx >= 0 && !orderedMessages[firstIdx].content.includes('[Compressed Context Summary]')) {
+      orderedMessages[firstIdx] = {
+        ...orderedMessages[firstIdx],
+        content: `[Compressed Context Summary]\n${compressed.summary}\n\n---\n${orderedMessages[firstIdx].content}`,
+      };
+    }
+  }
+
+  return orderedMessages;
+}
+
 /**
  * Komprimiert Chatverlauf intelligent
  */
@@ -35,14 +141,26 @@ export function compressChat(messages: ChatMessage[], options?: {
   keepLastN?: number;
   includeSummary?: boolean;
 }): CompressedChat {
+  const safeMessages = Array.isArray(messages) ? messages.filter(Boolean) : [];
   const {
     maxMessages = 20,
     keepLastN = 10,
     includeSummary = true
   } = options || {};
 
+  if (safeMessages.length === 0) {
+    return {
+      originalCount: 0,
+      compressedCount: 0,
+      summary: '',
+      messages: [],
+      removedMessages: [],
+      compressionRatio: 0,
+    };
+  }
+
   // 1. Chat analysieren
-  const analysis = analyzeChat(messages);
+  const analysis = analyzeChat(safeMessages);
 
   // 2. Wichtige Nachrichten behalten
   const importantSet = new Set([
@@ -53,22 +171,26 @@ export function compressChat(messages: ChatMessage[], options?: {
   ]);
 
   // 3. Letzte N Nachrichten immer behalten
-  messages.slice(-keepLastN).forEach(m => importantSet.add(m.id));
+  safeMessages.slice(-keepLastN).forEach(m => importantSet.add(m.id));
 
-  // 4. Filtern
-  const keptMessages = messages.filter(m => importantSet.has(m.id));
-  const removedMessages = messages.filter(m => !importantSet.has(m.id));
+  // 4. Filtern (und auf maxMessages begrenzen, falls nötig)
+  let keptMessages = safeMessages.filter(m => importantSet.has(m.id));
+  if (keptMessages.length > maxMessages && maxMessages > 0) {
+    keptMessages = keptMessages.slice(-maxMessages);
+  }
+  const keptIds = new Set(keptMessages.map(m => m.id));
+  const removedMessages = safeMessages.filter(m => !keptIds.has(m.id));
 
   // 5. Zusammenfassung generieren
   const summary = includeSummary ? generateSummary(analysis) : '';
 
   return {
-    originalCount: messages.length,
+    originalCount: safeMessages.length,
     compressedCount: keptMessages.length,
     summary,
     messages: keptMessages,
     removedMessages,
-    compressionRatio: ((messages.length - keptMessages.length) / messages.length) * 100
+    compressionRatio: ((safeMessages.length - keptMessages.length) / safeMessages.length) * 100
   };
 }
 
@@ -86,10 +208,14 @@ export function analyzeChat(messages: ChatMessage[]): ChatAnalysis {
     repetitions: []
   };
 
+  if (!Array.isArray(messages)) return analysis;
+
   const contentHash = new Map<string, number>();
 
   for (const message of messages) {
-    const content = message.content.toLowerCase();
+    if (!message || typeof message !== 'object') continue;
+    const rawContent = typeof message.content === 'string' ? message.content : '';
+    const content = rawContent.toLowerCase();
     const isUser = message.role === 'user';
 
     // Begrüßungen erkennen
@@ -121,7 +247,7 @@ export function analyzeChat(messages: ChatMessage[]): ChatAnalysis {
     }
 
     // Wiederholungen erkennen
-    const hash = hashContent(message.content);
+    const hash = hashContent(rawContent);
     if (contentHash.has(hash)) {
       analysis.repetitions.push(message);
       analysis.removableMessages.push(message);

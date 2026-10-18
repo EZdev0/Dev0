@@ -1,9 +1,28 @@
-import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS } from '@/types';
+import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS, isLearningTool } from '@/types';
+import { MAX_TOOL_RESULT_LENGTH, truncateToolResult, compressAndSanitizeMessagesForAPI } from '@/utils/chat-compression';
+import { runSubAISearchAgent } from '@/utils/web-tools';
+
+export function resolveDefaultModel(provider: AIProviderType, model?: string | null): string {
+  if (typeof model === 'string' && model.trim().length > 0) {
+    return model.trim();
+  }
+  const providerConfig = AI_PROVIDERS.find(p => p.id === provider);
+  if (providerConfig && providerConfig.models.length > 0 && providerConfig.models[0]?.id) {
+    return providerConfig.models[0].id;
+  }
+  if (provider === 'rork') return 'rork-default';
+  return 'openai';
+}
+
+export async function runSearchSubAgent(query: string): Promise<string> {
+  return await runSubAISearchAgent(query);
+}
 
 export function buildPlannerPrompt(options: {
   projectTree: string;
   memos: MemoEntry[];
   todos: TodoItem[];
+  learningEnabled?: boolean;
 }): string {
   let prompt = 'You are the main agent (Planner) of a mobile IDE called "Dev0".\n';
   prompt += 'Your task is to break down the user request into distinct, clearly defined steps.\n';
@@ -42,12 +61,12 @@ export function buildPlannerPrompt(options: {
 
   prompt += '## Project Structure\n```\n' + (options.projectTree || '(Empty Project)') + '\n```\n';
 
-  if (options.memos.length > 0) {
+  if (options.learningEnabled && options.memos && options.memos.length > 0) {
     prompt += '\n## Project Memos\n';
     options.memos.forEach(m => { prompt += '- ' + m.content + '\n'; });
   }
 
-  if (options.todos.length > 0) {
+  if (options.todos && options.todos.length > 0) {
     prompt += '\n## Current Todos\n';
     options.todos.forEach(t => {
       prompt += '- [' + (t.completed ? 'x' : ' ') + '] ' + t.text + '\n';
@@ -68,6 +87,7 @@ export function buildPlannerPrompt(options: {
 
   return prompt;
 }
+
 
 export function parsePlanFromAI(content: string): { title: string; description: string; taskType: 'task' | 'thinking' | 'brainstorm' | 'web_search' }[] {
   const tasks: { title: string; description: string; taskType: 'task' | 'thinking' | 'brainstorm' | 'web_search' }[] = [];
@@ -265,6 +285,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
+export function getAvailableTools(options?: {
+  learningEnabled?: boolean;
+  betaAgentLearning?: boolean;
+  toolPermissions?: Record<string, string>;
+}): ToolDefinition[] {
+  const learningActive = Boolean(options?.learningEnabled ?? options?.betaAgentLearning ?? false);
+  const perms = options?.toolPermissions || {};
+
+  return TOOL_DEFINITIONS.filter(tool => {
+    if (!learningActive && isLearningTool(tool.name)) {
+      return false;
+    }
+    const perm = perms[tool.name];
+    if (perm === 'removed' || perm === 'blocked') {
+      return false;
+    }
+    return true;
+  });
+}
+
 export function buildSystemPrompt(options: {
   persona: string;
   projectTree: string;
@@ -278,8 +318,11 @@ export function buildSystemPrompt(options: {
   userMd?: string;
   memoryMd?: string;
   betaAgentLearning?: boolean;
+  learningEnabled?: boolean;
   toolPermissions?: Record<string, string>;
 }): string {
+  const learningActive = Boolean(options.learningEnabled ?? options.betaAgentLearning ?? false);
+
   const personaPrompts: Record<string, string> = {
     standard: 'You are an experienced and helpful AI coding assistant in a mobile IDE called "Dev0".',
     android: 'You are a Senior Android Developer Assistant, specialized in Kotlin, Java, Jetpack Compose, Android SDK, and Gradle. You know best practices for Android development.',
@@ -287,7 +330,6 @@ export function buildSystemPrompt(options: {
     python: 'You are a Senior Python Developer Assistant, specialized in Python, Django, Flask, FastAPI, Data Science, and Machine Learning.',
     fullstack: 'You are an experienced Fullstack Developer Assistant with expertise in frontend, backend, databases, DevOps, and cloud architectures.',
   };
-
 
   let prompt = personaPrompts[options.persona] || personaPrompts.standard;
   prompt += `\n\n
@@ -344,8 +386,6 @@ outside the tools provided to you.
 # TOKEN EFFICIENCY
 - Do not quote file contents completely if an excerpt is sufficient.
 - Summarize completed steps in a maximum of 1–2 sentences before proceeding to the next step.
-- Use Identity/Memory files (if learning mode is active) only if they are directly relevant to THIS task
-  — do not read them routinely for every sub-task if you have already read them in this session.
 
 # RESPONSE FORMAT
 - Short, direct, no filler phrases ("With pleasure!", "Sure, no problem!").
@@ -368,7 +408,7 @@ outside the tools provided to you.
   prompt += '- Mention in your thought process which tools you will use (e.g., "I need to work with read_file").\n';
   prompt += '- ALWAYS write complete sentences. No incomplete sentences!\n';
 
-  if (options.betaAgentLearning) {
+  if (learningActive) {
     prompt += '\n## Learning Capability (Active)\n';
     prompt += 'You have access to 5 persistent identity files. These files survive sessions and define who you are and what you know about the user.\n';
     prompt += 'You MUST actively update these files when you gain new insights.\n\n';
@@ -386,30 +426,32 @@ outside the tools provided to you.
     prompt += '- Update SOUL.md only if fundamental values/style should change.\n';
     prompt += '- NEVER DELETE these files. You may only update them.\n';
     prompt += '- Always write the FULL new content, not just changes.\n';
-  }
 
-  if (options.soulMd && options.soulMd.trim()) {
-    prompt += '\n## SOUL.md\n' + options.soulMd.slice(0, 500) + (options.soulMd.length > 500 ? "... (use read_identity_files to read more)" : "") + '\n';
-  }
+    if (options.soulMd && options.soulMd.trim()) {
+      prompt += '\n## SOUL.md\n' + options.soulMd.slice(0, 500) + (options.soulMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
+    }
 
-  if (options.agentMd && options.agentMd.trim()) {
-    prompt += '\n## AGENTS.md\n' + options.agentMd.slice(0, 500) + (options.agentMd.length > 500 ? "... (use read_identity_files to read more)" : "") + '\n';
-  }
+    if (options.agentMd && options.agentMd.trim()) {
+      prompt += '\n## AGENTS.md\n' + options.agentMd.slice(0, 500) + (options.agentMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
+    }
 
-  if (options.identityMd && options.identityMd.trim()) {
-    prompt += '\n## IDENTITY.md\n' + options.identityMd.slice(0, 500) + (options.identityMd.length > 500 ? "... (use read_identity_files to read more)" : "") + '\n';
-  }
+    if (options.identityMd && options.identityMd.trim()) {
+      prompt += '\n## IDENTITY.md\n' + options.identityMd.slice(0, 500) + (options.identityMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
+    }
 
-  if (options.userMd && options.userMd.trim()) {
-    prompt += '\n## USER.md\n' + options.userMd.slice(0, 500) + (options.userMd.length > 500 ? "... (use read_identity_files to read more)" : "") + '\n';
-  }
+    if (options.userMd && options.userMd.trim()) {
+      prompt += '\n## USER.md\n' + options.userMd.slice(0, 500) + (options.userMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
+    }
 
-  if (options.memoryMd && options.memoryMd.trim()) {
-    prompt += '\n## MEMORY.md\n' + options.memoryMd.slice(0, 500) + (options.memoryMd.length > 500 ? "... (use read_identity_files to read more)" : "") + '\n';
+    if (options.memoryMd && options.memoryMd.trim()) {
+      prompt += '\n## MEMORY.md\n' + options.memoryMd.slice(0, 500) + (options.memoryMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
+    }
   }
 
   if (options.toolPermissions) {
-    const blocked = Object.entries(options.toolPermissions).filter(([_, v]) => v === 'blocked').map(([k]) => k);
+    const blocked = Object.entries(options.toolPermissions)
+      .filter(([k, v]) => v === 'blocked' && (learningActive || !isLearningTool(k)))
+      .map(([k]) => k);
     const removed = Object.entries(options.toolPermissions).filter(([_, v]) => v === 'removed').map(([k]) => k);
     if (blocked.length > 0) {
       prompt += '\n## Blocked Tools\n';
@@ -433,22 +475,22 @@ outside the tools provided to you.
 
   prompt += '\n## Project Structure\n```\n' + (options.projectTree || '(Empty Project)') + '\n```\n';
 
-  if (options.memos.length > 0) {
+  if (learningActive && options.memos && options.memos.length > 0) {
     prompt += '\n## Project Memos\n';
     options.memos.forEach(m => { prompt += '- ' + m.content + '\n'; });
   }
 
-  if (options.todos.length > 0) {
+  if (options.todos && options.todos.length > 0) {
     prompt += '\n## Current Todos\n';
     options.todos.forEach(t => {
       prompt += '- [' + (t.completed ? 'x' : ' ') + '] (ID: ' + t.id + ') ' + t.text + '\n';
     });
   }
 
-  if (options.mentionedFiles.length > 0) {
+  if (options.mentionedFiles && options.mentionedFiles.length > 0) {
     prompt += '\n## Referenced Files\n';
     options.mentionedFiles.forEach(f => {
-      prompt += '\n### ' + f.path + '\n```\n' + f.content + '\n```\n';
+      prompt += '\n### ' + f.path + '\n```\n' + truncateToolResult(f.content || '', MAX_TOOL_RESULT_LENGTH) + '\n```\n';
     });
   }
 
@@ -463,7 +505,7 @@ function formatMessagesForOpenAI(messages: ChatMessage[], systemPrompt: string) 
       formatted.push({
         role: 'tool',
         tool_call_id: msg.toolCallId || '',
-        content: msg.content || '',
+        content: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH),
       });
     } else if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
       formatted.push({
@@ -510,7 +552,7 @@ function formatMessagesForAnthropic(messages: ChatMessage[]) {
         toolResults.push({
           type: 'tool_result',
           tool_use_id: messages[i].toolCallId || '',
-          content: messages[i].content || '',
+          content: truncateToolResult(messages[i].content || '', MAX_TOOL_RESULT_LENGTH),
         });
         i++;
       }
@@ -520,7 +562,7 @@ function formatMessagesForAnthropic(messages: ChatMessage[]) {
     } else if (msg.role === 'tool') {
       formatted.push({
         role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: msg.toolCallId || '', content: msg.content || '' }],
+        content: [{ type: 'tool_result', tool_use_id: msg.toolCallId || '', content: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH) }],
       });
       i++;
     } else {
@@ -550,7 +592,7 @@ function formatMessagesForGemini(messages: ChatMessage[]) {
     } else if (msg.role === 'tool') {
       contents.push({
         role: 'user',
-        parts: [{ functionResponse: { name: msg.toolName || 'unknown', response: { result: msg.content || '' } } }],
+        parts: [{ functionResponse: { name: msg.toolName || 'unknown', response: { result: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH) } } }],
       });
     }
   }
@@ -928,12 +970,83 @@ function parseToolCallsFromText(text: string): { toolCalls: { id: string; name: 
   return { toolCalls, cleanContent };
 }
 
+export async function callPollinationsFallback(
+  formattedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[],
+  tools?: ToolDefinition[],
+  signal?: AbortSignal,
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback: boolean; fallbackProvider: string }> {
+  const POLLINATIONS_URL = 'https://text.pollinations.ai/openai';
+  console.log('[AI] Falling back to keyless Pollinations AI (model: openai), messages:', formattedMessages.length);
+
+  const res = await fetch(POLLINATIONS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'openai',
+      messages: formattedMessages.length > 0 ? formattedMessages : [{ role: 'user', content: 'Hello' }],
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error('Pollinations Fallback Error: ' + res.status + ' ' + errText);
+  }
+
+  let text = '';
+  if (typeof res.text === 'function') {
+    const rawText = await res.text();
+    try {
+      const data = JSON.parse(rawText);
+      text =
+        data?.choices?.[0]?.message?.content ||
+        data?.completion ||
+        (typeof data === 'string' ? data : '');
+    } catch {
+      text = rawText;
+    }
+  } else if (typeof res.json === 'function') {
+    const data = await res.json();
+    text =
+      data?.choices?.[0]?.message?.content ||
+      data?.completion ||
+      (typeof data === 'string' ? data : '');
+  }
+
+  if (!text || !text.trim()) {
+    throw new Error('Empty response received from Pollinations fallback model.');
+  }
+
+  if (tools && tools.length > 0) {
+    const { toolCalls, cleanContent } = parseToolCallsFromText(text);
+    const allowLearning = tools.some(t => isLearningTool(t.name));
+    const filteredCalls = allowLearning ? toolCalls : toolCalls.filter(tc => !isLearningTool(tc.name));
+    return {
+      content: cleanContent,
+      toolCalls: filteredCalls,
+      usedFallback: true,
+      fallbackProvider: 'pollinations',
+    };
+  }
+
+  return {
+    content: text,
+    toolCalls: [],
+    usedFallback: true,
+    fallbackProvider: 'pollinations',
+  };
+}
+
 async function callRork(
   messages: ChatMessage[],
   systemPrompt: string,
   tools?: ToolDefinition[],
-): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[] }> {
-  console.log('[AI] Calling Rork free model, messages:', messages.length, 'tools:', tools?.length ?? 0);
+  model?: string,
+  signal?: AbortSignal,
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
+  const safeModel = resolveDefaultModel('rork', model);
+  const sanitizedMessages = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
+  console.log('[AI] Calling Rork free model:', safeModel, 'messages:', sanitizedMessages.length, 'tools:', tools?.length ?? 0);
 
   type UserMessage = { role: 'user'; content: string };
   type AssistantMessage = { role: 'assistant'; content: string };
@@ -945,12 +1058,13 @@ async function callRork(
     fullSystemPrompt += buildToolCallInstructions(tools);
   }
 
-  for (const msg of messages) {
+  for (const msg of sanitizedMessages) {
     if (msg.role === 'tool') {
       const toolName = msg.toolName || 'tool';
+      const truncatedToolContent = truncateToolResult(msg.content || '(leer)', MAX_TOOL_RESULT_LENGTH);
       formatted.push({
         role: 'user',
-        content: '[Tool-Result from ' + toolName + ']:\n' + (msg.content || '(leer)'),
+        content: '[Tool-Result from ' + toolName + ']:\n' + truncatedToolContent,
       });
       continue;
     }
@@ -980,46 +1094,79 @@ async function callRork(
   const cleanedFormatted: (UserMessage | AssistantMessage)[] = [];
   for (const msg of formatted) {
     if (typeof msg.content === 'string' && msg.content.trim() === '') {
-        msg.content = '(empty message)';
+      msg.content = '(empty message)';
     }
     cleanedFormatted.push(msg);
   }
 
+  const isWeb = typeof window !== 'undefined';
+  const RORK_URL = 'https://toolkit.rork.com/llm/text';
+  const fetchUrl = isWeb ? '/api/chat' : RORK_URL;
+
+  const bodyPayload = isWeb
+    ? JSON.stringify({ endpoint: RORK_URL, model: safeModel, messages: cleanedFormatted })
+    : JSON.stringify({ model: safeModel, messages: cleanedFormatted });
+
+  const rorkMaxRetries = 2; // Initial attempt + up to 2 retries with exponential backoff
+  let lastRorkError: any = null;
+
+  for (let retry = 0; retry <= rorkMaxRetries; retry++) {
+    try {
+      if (retry > 0) {
+        const backoffMs = Math.min(500 * Math.pow(2, retry - 1), 2500);
+        console.log(`[AI] Rork retry ${retry}/${rorkMaxRetries} after ${backoffMs}ms backoff...`);
+        await sleep(backoffMs);
+      }
+
+      const res = await fetch(fetchUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyPayload,
+        signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error('Rork API Error: ' + res.status + ' ' + errText);
+      }
+
+      const data = await res.json();
+      const text = data?.completion || data?.choices?.[0]?.message?.content || '';
+      if (!text) {
+        throw new Error('Empty response received from model.');
+      }
+
+      if (tools && tools.length > 0) {
+        const { toolCalls, cleanContent } = parseToolCallsFromText(text);
+        const allowLearning = tools.some(t => isLearningTool(t.name));
+        const filteredCalls = allowLearning ? toolCalls : toolCalls.filter(tc => !isLearningTool(tc.name));
+        console.log('[AI] Rork parsed tool calls:', filteredCalls.length, filteredCalls.map(tc => tc.name));
+        return {
+          content: cleanContent,
+          toolCalls: filteredCalls,
+          usedFallback: Boolean(data?.usedFallback),
+          fallbackProvider: data?.fallbackProvider,
+        };
+      }
+
+      return {
+        content: text,
+        toolCalls: [],
+        usedFallback: Boolean(data?.usedFallback),
+        fallbackProvider: data?.fallbackProvider,
+      };
+    } catch (e: any) {
+      lastRorkError = e;
+      console.log(`[AI] Rork attempt ${retry + 1}/${rorkMaxRetries + 1} failed:`, e?.message || e);
+    }
+  }
+
+  // Seamless keyless fallback to Pollinations AI within the same call
   try {
-    // Use universal API route proxy if running on Web to bypass CORS, else direct
-    const isWeb = typeof window !== 'undefined';
-    const RORK_URL = 'https://toolkit.rork.com/llm/text';
-    const fetchUrl = isWeb ? '/api/chat' : RORK_URL;
-
-    const bodyPayload = isWeb
-      ? JSON.stringify({ endpoint: RORK_URL, messages: cleanedFormatted })
-      : JSON.stringify({ messages: cleanedFormatted });
-
-    const res = await fetch(fetchUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: bodyPayload
-    });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      throw new Error('Rork API Error: ' + res.status + ' ' + errText);
-    }
-    const data = await res.json();
-    const text = data?.completion || '';
-    if (!text && !data?.completion) {
-      throw new Error('Empty response received from model.');
-    }
-
-    if (tools && tools.length > 0) {
-      const { toolCalls, cleanContent } = parseToolCallsFromText(text);
-      console.log('[AI] Rork parsed tool calls:', toolCalls.length, toolCalls.map(tc => tc.name));
-      return { content: cleanContent, toolCalls };
-    }
-
-    return { content: text, toolCalls: [] };
-  } catch (e: any) {
-    console.log('[AI] Rork error:', e);
-    throw new Error('Studio AI error: ' + (e?.message || 'Unknown error'));
+    return await callPollinationsFallback(cleanedFormatted, tools, signal);
+  } catch (fallbackErr: any) {
+    console.log('[AI] Pollinations fallback after Rork error also failed:', fallbackErr?.message);
+    throw new Error('Studio AI error: ' + (lastRorkError?.message || fallbackErr?.message || 'Unknown error'));
   }
 }
 
@@ -1032,25 +1179,27 @@ async function callProviderDirect(
   systemPrompt: string,
   signal: AbortSignal,
   customEndpoint?: string,
-): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[] }> {
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
+  const safeModel = resolveDefaultModel(provider, model);
   switch (provider) {
     case 'rork':
-      return await callRork(messages, systemPrompt, tools);
+      return await callRork(messages, systemPrompt, tools, safeModel, signal);
     case 'openai':
-      return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal);
+      return await callOpenAI(apiKey, safeModel, messages, tools, systemPrompt, signal);
     case 'anthropic':
-      return await callAnthropic(apiKey, model, messages, tools, systemPrompt, signal);
+      return await callAnthropic(apiKey, safeModel, messages, tools, systemPrompt, signal);
     case 'gemini':
-      return await callGemini(apiKey, model, messages, tools, systemPrompt, signal);
+      return await callGemini(apiKey, safeModel, messages, tools, systemPrompt, signal);
     case 'groq':
-      return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal, 'https://api.groq.com/openai');
+      return await callOpenAI(apiKey, safeModel, messages, tools, systemPrompt, signal, 'https://api.groq.com/openai');
     case 'openrouter':
-      return await callOpenRouter(apiKey, model, messages, tools, systemPrompt, signal);
-    case 'nvidia':
+      return await callOpenRouter(apiKey, safeModel, messages, tools, systemPrompt, signal);
+    case 'nvidia': {
       const isWeb = typeof window !== 'undefined';
-      return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal, isWeb ? '/api/nvidia' : 'https://integrate.api.nvidia.com');
+      return await callOpenAI(apiKey, safeModel, messages, tools, systemPrompt, signal, isWeb ? '/api/nvidia' : 'https://integrate.api.nvidia.com');
+    }
     case 'custom':
-      return await callOpenAI(apiKey, model, messages, tools, systemPrompt, signal, customEndpoint);
+      return await callOpenAI(apiKey, safeModel, messages, tools, systemPrompt, signal, customEndpoint);
     default:
       throw new Error('Unknown provider: ' + provider);
   }
@@ -1070,20 +1219,34 @@ export async function callAI(
     throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "Studio KI" as provider for free usage without key!');
   }
 
+  const safeModel = resolveDefaultModel(provider, model);
+  const compressedMessages = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
+  const allowLearningTools = Array.isArray(tools) && tools.some(t => isLearningTool(t.name));
+
+  const filterResultTools = (res: { content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }) => {
+    if (!allowLearningTools && Array.isArray(res.toolCalls) && res.toolCalls.length > 0) {
+      return {
+        ...res,
+        toolCalls: res.toolCalls.filter(tc => !isLearningTool(tc.name)),
+      };
+    }
+    return res;
+  };
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
 
   try {
     let lastError: any = null;
-    const maxRetries = 3;
+    const maxRetries = provider === 'rork' ? 1 : 3; // callRork already performs 2 exponential backoff retries + Pollinations fallback internally
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const result = await callProviderDirect(provider, apiKey, model, messages, tools, systemPrompt, controller.signal, customEndpoint);
+        const result = await callProviderDirect(provider, apiKey, safeModel, compressedMessages, tools, systemPrompt, controller.signal, customEndpoint);
         if (!result.content && (!result.toolCalls || result.toolCalls.length === 0)) {
-           throw new Error('Empty response received from model (No text, no tools).');
+          throw new Error('Empty response received from model (No text, no tools).');
         }
-        return result;
+        return filterResultTools(result);
       } catch (error: any) {
         lastError = error;
         console.log('[AI] Attempt', attempt + 1, 'failed:', error?.message?.slice(0, 100));
@@ -1109,12 +1272,20 @@ export async function callAI(
             if (fallback) {
               console.log('[AI] Rate limit persists, falling back to:', fallback.provider, fallback.model);
               try {
-                const result = await callProviderDirect(fallback.provider, fallback.key, fallback.model, messages, tools, systemPrompt, controller.signal);
-                return { ...result, usedFallback: true, fallbackProvider: fallback.provider };
+                const result = await callProviderDirect(fallback.provider, fallback.key, fallback.model, compressedMessages, tools, systemPrompt, controller.signal);
+                return filterResultTools({ ...result, usedFallback: true, fallbackProvider: fallback.provider });
               } catch (fbError: any) {
                 console.log('[AI] Fallback also failed:', fbError?.message?.slice(0, 100));
               }
             }
+          }
+
+          // Final keyless fallback to Pollinations AI on rate limit
+          try {
+            const fallbackResult = await callRork(compressedMessages, systemPrompt, tools, 'rork-default', controller.signal);
+            return filterResultTools({ ...fallbackResult, usedFallback: true, fallbackProvider: fallbackResult.fallbackProvider || 'pollinations' });
+          } catch {
+            // Fall through to rate limit error message
           }
 
           throw new Error(

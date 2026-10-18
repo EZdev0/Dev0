@@ -8,7 +8,20 @@
 
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
-import { Project } from '@/types';
+import { Project, AppSettings, isLearningEnabled } from '@/types';
+
+let memoSystemEnabledState = false;
+
+export function setMemoSystemEnabled(enabled: boolean): void {
+  memoSystemEnabledState = Boolean(enabled);
+}
+
+export function isMemoSystemEnabled(settings?: Partial<AppSettings> | null): boolean {
+  if (settings) {
+    return isLearningEnabled(settings);
+  }
+  return memoSystemEnabledState;
+}
 
 // Helper für documentDirectory (unterstützt altes und neues API)
 function getDocumentDirectory(): string {
@@ -49,27 +62,40 @@ const LOCAL_MEMOS_DIR = '.qcoder/memos/';
  * Erstellt einen neuen Memo-Eintrag
  */
 export async function createMemo(
-  title: string,
-  content: string,
+  titleOrOptions: string | { title: string; content: string; type?: 'global' | 'local'; projectId?: string; linkedFiles?: string[]; [key: string]: any },
+  content: string = '',
   type: 'global' | 'local' = 'local',
   projectId?: string,
-  linkedFiles?: string[]
-): Promise<Memo> {
+  linkedFiles?: string[],
+  learningEnabledOverride?: boolean
+): Promise<Memo | null> {
+  const allowed = learningEnabledOverride !== undefined ? learningEnabledOverride : memoSystemEnabledState;
+  if (!allowed) {
+    console.log('[Memo] Blocked createMemo because learning/memo function is disabled.');
+    return null;
+  }
+
+  const resolvedTitle = typeof titleOrOptions === 'object' && titleOrOptions !== null ? titleOrOptions.title : titleOrOptions;
+  const resolvedContent = typeof titleOrOptions === 'object' && titleOrOptions !== null ? titleOrOptions.content : content;
+  const resolvedType = typeof titleOrOptions === 'object' && titleOrOptions !== null ? (titleOrOptions.type || 'local') : type;
+  const resolvedProjectId = typeof titleOrOptions === 'object' && titleOrOptions !== null ? titleOrOptions.projectId : projectId;
+  const resolvedLinkedFiles = typeof titleOrOptions === 'object' && titleOrOptions !== null ? titleOrOptions.linkedFiles : linkedFiles;
+
   const memo: Memo = {
     id: `memo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    type,
-    title,
-    content,
+    type: resolvedType,
+    title: resolvedTitle,
+    content: resolvedContent,
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    tags: extractTags(content),
-    linkedFiles
+    tags: extractTags(resolvedContent || ''),
+    linkedFiles: resolvedLinkedFiles
   };
 
-  if (type === 'global') {
+  if (resolvedType === 'global') {
     await appendToGlobalMemo(memo);
   } else {
-    await saveLocalMemo(memo, projectId);
+    await saveLocalMemo(memo, resolvedProjectId);
   }
 
   return memo;
@@ -78,7 +104,22 @@ export async function createMemo(
 /**
  * Erstellt automatisches Memo bei Fehlern oder Erkenntnissen
  */
-export async function createAutoMemo(data: AutoMemoData, projectId?: string): Promise<Memo> {
+export async function createAutoMemo(
+  dataOrCategory: AutoMemoData | string,
+  projectIdOrData?: string | AutoMemoData,
+  learningEnabledOverride?: boolean
+): Promise<Memo | null> {
+  const allowed = learningEnabledOverride !== undefined ? learningEnabledOverride : memoSystemEnabledState;
+  if (!allowed) {
+    console.log('[Memo] Blocked createAutoMemo because learning/memo function is disabled.');
+    return null;
+  }
+
+  const data: AutoMemoData = typeof dataOrCategory === 'string'
+    ? (typeof projectIdOrData === 'object' && projectIdOrData !== null ? projectIdOrData : { error: dataOrCategory })
+    : dataOrCategory;
+  const projectId = typeof projectIdOrData === 'string' ? projectIdOrData : undefined;
+
   const title = data.error ? `Fehler: ${data.error.substring(0, 50)}...` : 'Neue Erkenntnis';
   
   const content = buildAutoMemoContent(data);
@@ -88,9 +129,12 @@ export async function createAutoMemo(data: AutoMemoData, projectId?: string): Pr
     content,
     'local',
     projectId,
-    data.files
+    data.files,
+    allowed
   );
 }
+
+export const autoCreateMemo = createAutoMemo;
 
 /**
  * Baut den Inhalt für ein Auto-Memo
@@ -209,7 +253,12 @@ async function saveLocalMemo(memo: Memo, projectId?: string): Promise<void> {
 /**
  * Liest alle Memos (global + lokal)
  */
-export async function getAllMemos(projectId?: string): Promise<Memo[]> {
+export async function getAllMemos(projectId?: string, learningEnabledOverride?: boolean): Promise<Memo[]> {
+  const allowed = learningEnabledOverride !== undefined ? learningEnabledOverride : memoSystemEnabledState;
+  if (!allowed) {
+    return [];
+  }
+
   const memos: Memo[] = [];
   
   try {
@@ -342,8 +391,12 @@ function getLocalMemoHeader(projectId: string): string {
 /**
  * Sucht Memos nach Tags oder Inhalt
  */
-export async function searchMemos(query: string, projectId?: string): Promise<Memo[]> {
-  const allMemos = await getAllMemos(projectId);
+export async function searchMemos(query: string, projectId?: string, learningEnabledOverride?: boolean): Promise<Memo[]> {
+  const allowed = learningEnabledOverride !== undefined ? learningEnabledOverride : memoSystemEnabledState;
+  if (!allowed) {
+    return [];
+  }
+  const allMemos = await getAllMemos(projectId, allowed);
   const queryLower = query.toLowerCase();
   
   return allMemos.filter(memo => 
@@ -356,11 +409,13 @@ export async function searchMemos(query: string, projectId?: string): Promise<Me
 /**
  * Aktualisiert ein bestehendes Memo
  */
-export async function updateMemo(memoId: string, updates: Partial<Memo>): Promise<Memo | null> {
-  // Implementation depends on storage structure
-  // For simplicity, we'll just update in memory and resave
+export async function updateMemo(memoId: string, updates: Partial<Memo>, learningEnabledOverride?: boolean): Promise<Memo | null> {
+  const allowed = learningEnabledOverride !== undefined ? learningEnabledOverride : memoSystemEnabledState;
+  if (!allowed) {
+    return null;
+  }
   
-  const allMemos = await getAllMemos();
+  const allMemos = await getAllMemos(undefined, allowed);
   const memoIndex = allMemos.findIndex(m => m.id === memoId);
   
   if (memoIndex === -1) {
@@ -386,13 +441,17 @@ export async function updateMemo(memoId: string, updates: Partial<Memo>): Promis
 /**
  * Löscht ein Memo (nur lokale, globale sind persistent)
  */
-export async function deleteMemo(memoId: string, type: 'global' | 'local'): Promise<boolean> {
+export async function deleteMemo(memoId: string, type: 'global' | 'local', learningEnabledOverride?: boolean): Promise<boolean> {
+  const allowed = learningEnabledOverride !== undefined ? learningEnabledOverride : memoSystemEnabledState;
+  if (!allowed) {
+    return false;
+  }
   if (type === 'global') {
     console.warn('[Memo] Cannot delete global memos, they are permanent learning');
     return false;
   }
   
   // Local memos can be deleted
-  // Implementation similar to updateMemo
   return true;
 }
+

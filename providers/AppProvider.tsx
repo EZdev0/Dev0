@@ -1,7 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
-import { AppSettings, TodoItem, MemoEntry, DEFAULT_SETTINGS, ToolPermission, TOOL_REGISTRY } from '@/types';
+import {
+  AppSettings,
+  TodoItem,
+  MemoEntry,
+  DEFAULT_SETTINGS,
+  ToolPermission,
+  TOOL_REGISTRY,
+  isLearningTool,
+  isLearningEnabled,
+} from '@/types';
+import { setMemoSystemEnabled } from '@/utils/memo-system';
 
 function uniqueId(prefix: string = ''): string {
   return prefix + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
@@ -15,6 +25,12 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [showSponsorModal, setShowSponsorModal] = useState<boolean>(false);
   const sponsorInteractionCountRef = useRef<number>(0);
 
+  const learningActive = isLearningEnabled(settings);
+
+  useEffect(() => {
+    setMemoSystemEnabled(learningActive);
+  }, [learningActive]);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -25,7 +41,11 @@ export const [AppProvider, useApp] = createContextHook(() => {
         ]);
         if (settingsStr) {
           const parsed = JSON.parse(settingsStr);
-          setSettings(prev => ({ ...prev, ...parsed }));
+          setSettings(prev => {
+            const merged = { ...prev, ...parsed };
+            setMemoSystemEnabled(isLearningEnabled(merged));
+            return merged;
+          });
         }
         if (todosStr) setTodos(JSON.parse(todosStr));
         if (memosStr) setMemos(JSON.parse(memosStr));
@@ -41,6 +61,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
     setSettings(prev => {
       const updated = { ...prev, ...partial };
+      if ('betaAgentLearning' in partial && partial.learningEnabled === undefined) {
+        updated.learningEnabled = Boolean(partial.betaAgentLearning);
+      }
+      if ('learningEnabled' in partial && partial.betaAgentLearning === undefined) {
+        updated.betaAgentLearning = Boolean(partial.learningEnabled);
+      }
+      setMemoSystemEnabled(isLearningEnabled(updated));
       AsyncStorage.setItem('ide_settings', JSON.stringify(updated)).catch(e =>
         console.log('[App] Fehler beim Speichern:', e)
       );
@@ -94,6 +121,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, []);
 
   const addMemo = useCallback((content: string) => {
+    if (!isLearningEnabled(settings)) {
+      console.log('[App] Blocked addMemo because learning/memo function is disabled.');
+      return '';
+    }
     const item: MemoEntry = { id: uniqueId('mm_'), content, createdAt: Date.now() };
     setMemos(prev => {
       const updated = [...prev, item];
@@ -101,7 +132,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
       return updated;
     });
     return item.id;
-  }, []);
+  }, [settings]);
 
   const deleteMemo = useCallback((id: string) => {
     setMemos(prev => {
@@ -119,6 +150,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
       case 'gemini': return settings.geminiKey || '';
       case 'groq': return settings.groqKey || '';
       case 'openrouter': return settings.openrouterKey || '';
+      case 'nvidia': return settings.nvidiaKey || '';
       case 'custom': return settings.customKey || '';
       default: return '';
     }
@@ -147,13 +179,18 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, []);
 
   const getToolPermission = useCallback((toolName: string): ToolPermission => {
-    if (settings.yoloMode) return 'always';
+    // 1. Strict Learning/Memo tool guard (takes precedence over YOLO mode)
+    if (isLearningTool(toolName) && !isLearningEnabled(settings)) {
+      return 'removed';
+    }
     const reg = TOOL_REGISTRY.find(t => t.name === toolName);
     if (reg?.isBeta) {
       if (toolName === 'web_search' && !settings.betaWebSearch) return 'removed';
       if (toolName === 'web_fetch' && !settings.betaWebFetch) return 'removed';
     }
     const custom = settings.toolPermissions?.[toolName];
+    if (custom === 'removed' || custom === 'blocked') return custom;
+    if (settings.yoloMode) return 'always';
     if (custom) return custom;
     return reg?.defaultPermission ?? 'ask';
   }, [settings]);
@@ -209,9 +246,9 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, []);
 
   return {
-    settings, updateSettings, isLoaded,
+    settings, updateSettings, isLoaded, learningEnabled: learningActive,
     todos, addTodo, updateTodoItem, deleteTodo, clearAllTodos,
-    memos, addMemo, deleteMemo, clearAllMemos,
+    memos: learningActive ? memos : [], addMemo, deleteMemo, clearAllMemos,
     getApiKey, getFallbackSettings,
     getToolPermission, setToolPermission,
     agentMd, setAgentMd, soulMd, setSoulMd,
@@ -219,3 +256,4 @@ export const [AppProvider, useApp] = createContextHook(() => {
     showSponsorModal, triggerSponsorInteraction, closeSponsorModal,
   };
 });
+

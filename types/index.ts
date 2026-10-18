@@ -80,6 +80,8 @@ export interface AppSettings {
   betaWebSearch: boolean;
   betaWebFetch: boolean;
   betaAgentLearning: boolean;
+  learningEnabled?: boolean;
+  memoEnabled?: boolean;
   betaSuperAgent: boolean;
   agentMode: boolean;
   hideSponsor: boolean;
@@ -143,7 +145,7 @@ export interface AgentPlan {
   id: string;
   userRequest: string;
   tasks: AgentTask[];
-  status: 'planning' | 'review' | 'executing' | 'completed' | 'error';
+  status: 'planning' | 'clarifying' | 'review' | 'executing' | 'completed' | 'error';
   summary?: string;
   finalResponse?: string;
   totalToolsUsed?: AgentToolUsage[];
@@ -297,6 +299,30 @@ export const TOOL_CATEGORIES: { id: string; label: string; icon: string }[] = [
   { id: 'system', label: 'System', icon: '⚙️' },
 ];
 
+export const LEARNING_TOOL_NAMES = [
+  'add_memo',
+  'read_identity_files',
+  'update_soul_md',
+  'update_agents_md',
+  'update_identity_md',
+  'update_user_md',
+  'update_memory_md',
+] as const;
+
+export function isLearningTool(toolName?: string | null): boolean {
+  if (!toolName || typeof toolName !== 'string') return false;
+  if ((LEARNING_TOOL_NAMES as readonly string[]).includes(toolName)) return true;
+  const reg = TOOL_REGISTRY.find(t => t.name === toolName);
+  return reg?.category === 'learning' || reg?.category === 'memory';
+}
+
+export function isLearningEnabled(settings?: Partial<AppSettings> | null): boolean {
+  if (!settings) return false;
+  if (settings.learningEnabled === false || settings.memoEnabled === false) return false;
+  if (settings.betaAgentLearning === false && settings.learningEnabled === undefined && settings.memoEnabled === undefined) return false;
+  return Boolean(settings.betaAgentLearning || settings.learningEnabled || settings.memoEnabled);
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   openaiKey: '',
   anthropicKey: '',
@@ -319,6 +345,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   betaWebSearch: false,
   betaWebFetch: false,
   betaAgentLearning: false,
+  learningEnabled: false,
+  memoEnabled: false,
   betaSuperAgent: false,
   agentMode: false,
   hideSponsor: false,
@@ -332,3 +360,4 @@ export const PROJECT_TYPES = [
   { id: 'studio-ide', name: 'Dev0 (Source)', icon: '🛠️' },
   { id: 'empty', name: 'Leeres Projekt', icon: '📁' },
 ];
+

@@ -21,7 +21,7 @@ import { AgentDashboard } from '@/components/MultiAgentUI';
 import { SubAgent, SubAgentType, createSubAgent } from '@/utils/multi-agent-system';
 import {
   ToolPermission, TOOL_REGISTRY, TOOL_CATEGORIES, ToolRegistryItem,
-  AgentPlan, AgentTask,
+  AgentPlan, AgentTask, isLearningTool, isLearningEnabled,
 } from '@/types';
 
 const PERMISSION_OPTIONS: { value: ToolPermission; label: string; desc: string; color: string }[] = [
@@ -73,11 +73,17 @@ export default function ToolsScreen() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat'>('dashboard');
   const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
 
+  const learningActive = isLearningEnabled(settings);
+
   useEffect(() => {
     if (tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'memos' || tab === 'search' || tab === 'chat') {
-      setActiveTab(tab as any);
+      if (tab === 'memos' && !learningActive) {
+        setActiveTab('tools');
+      } else {
+        setActiveTab(tab as any);
+      }
     }
-  }, [tab]);
+  }, [tab, learningActive]);
 
   const [newMemoText, setNewMemoText] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -87,12 +93,18 @@ export default function ToolsScreen() {
   const [selectedTool, setSelectedTool] = useState<ToolRegistryItem | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['filesystem', 'planning', 'analysis']));
 
+  useEffect(() => {
+    if (!learningActive && selectedTool && isLearningTool(selectedTool.name)) {
+      setSelectedTool(null);
+    }
+  }, [learningActive, selectedTool]);
 
   const handleAddMemo = useCallback(() => {
+    if (!learningActive) return;
     if (!newMemoText.trim()) return;
     addMemo(newMemoText.trim());
     setNewMemoText('');
-  }, [newMemoText, addMemo]);
+  }, [newMemoText, addMemo, learningActive]);
 
   const handleSearch = useCallback(() => {
     if (!searchQuery.trim()) return;
@@ -133,6 +145,8 @@ export default function ToolsScreen() {
   const groupedTools = useMemo(() => {
     const groups: Record<string, ToolRegistryItem[]> = {};
     for (const tool of TOOL_REGISTRY) {
+      // Strictly hide all Learn / Memo tools when learningEnabled is false
+      if (isLearningTool(tool.name) && !learningActive) continue;
       if (tool.isBeta && !settings.yoloMode) {
         if (tool.name === 'web_search' && !settings.betaWebSearch) continue;
         if (tool.name === 'web_fetch' && !settings.betaWebFetch) continue;
@@ -141,16 +155,21 @@ export default function ToolsScreen() {
       groups[tool.category].push(tool);
     }
     return groups;
-  }, [settings.betaWebSearch, settings.betaWebFetch, settings.yoloMode]);
+  }, [settings.betaWebSearch, settings.betaWebFetch, settings.yoloMode, learningActive]);
 
   const activeToolCount = useMemo(() => {
     let count = 0;
     for (const tool of TOOL_REGISTRY) {
+      if (isLearningTool(tool.name) && !learningActive) continue;
+      if (tool.isBeta && !settings.yoloMode) {
+        if (tool.name === 'web_search' && !settings.betaWebSearch) continue;
+        if (tool.name === 'web_fetch' && !settings.betaWebFetch) continue;
+      }
       const perm = getToolPermission(tool.name);
       if (perm !== 'removed') count++;
     }
     return count;
-  }, [getToolPermission]);
+  }, [getToolPermission, learningActive, settings.betaWebSearch, settings.betaWebFetch, settings.yoloMode]);
 
 
   const activePlans = useMemo(() =>
@@ -166,7 +185,7 @@ export default function ToolsScreen() {
     { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard, badge: subAgents.length || undefined },
     { id: 'tools' as const, label: 'Tools', icon: Wrench, badge: activeToolCount },
     { id: 'plans' as const, label: 'Plans', icon: Brain, badge: activePlans.length || undefined },
-    { id: 'memos' as const, label: 'Memos', icon: BookOpen, badge: undefined },
+    ...(learningActive ? [{ id: 'memos' as const, label: 'Memos', icon: BookOpen, badge: undefined }] : []),
     { id: 'search' as const, label: 'Search', icon: Search, badge: undefined },
     { id: 'chat' as const, label: 'Chat', icon: Zap, badge: undefined },
   ];
@@ -215,7 +234,7 @@ export default function ToolsScreen() {
       >
         {activeTab === 'dashboard' && (
           <AgentDashboard
-            mainAgentStatus={activePlan?.status === 'executing' ? 'executing' : activePlan?.status === 'review' ? 'planning' : 'idle'}
+            mainAgentStatus={activePlan?.status === 'executing' ? 'executing' : (activePlan?.status === 'review' || activePlan?.status === 'clarifying') ? 'planning' : 'idle'}
             subAgents={subAgents}
             onDeploySubAgent={(type) => {
               const newAgent = createSubAgent(type);
@@ -231,6 +250,7 @@ export default function ToolsScreen() {
               }
             }}
             currentTask={activePlan?.userRequest}
+            hasClarificationQuestions={activePlan?.status === 'clarifying'}
           />
         )}
 
