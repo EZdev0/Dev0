@@ -109,33 +109,126 @@ if (fs.existsSync(imageSizeIndexPath)) {
   }
 }
 
-// Shim expo-router/internal/static for static export compatibility with @expo/router-server
+// Create comprehensive shims for expo-router/internal/* for full compatibility with @expo/router-server
 const expoRouterDir = path.join(__dirname, '..', 'node_modules', 'expo-router');
 if (fs.existsSync(expoRouterDir)) {
   const internalDir = path.join(expoRouterDir, 'internal');
   if (!fs.existsSync(internalDir)) {
     fs.mkdirSync(internalDir, { recursive: true });
   }
-  const internalStaticFile = path.join(internalDir, 'static.js');
-  const internalStaticDir = path.join(internalDir, 'static');
-  const shimCode = `"use strict";
+
+  function createShim(name, code) {
+    const filePath = path.join(internalDir, name + '.js');
+    const dirPath = path.join(internalDir, name);
+    const indexPath = path.join(dirPath, 'index.js');
+    fs.writeFileSync(filePath, code, 'utf8');
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    fs.writeFileSync(indexPath, code, 'utf8');
+    console.log('Created shim', filePath);
+  }
+
+  // 1. expo-router/internal/static
+  createShim('static', `"use strict";
 // Auto-generated shim for expo-router/internal/static compatibility
 const renderStatic = require('../build/static/renderStaticContent');
-module.exports = renderStatic;
-module.exports.default = renderStatic;
-`;
-  if (!fs.existsSync(internalStaticFile)) {
-    fs.writeFileSync(internalStaticFile, shimCode, 'utf8');
-    console.log('Created shim', internalStaticFile);
-  }
-  if (!fs.existsSync(internalStaticDir)) {
-    fs.mkdirSync(internalStaticDir, { recursive: true });
-  }
-  const internalStaticIndex = path.join(internalStaticDir, 'index.js');
-  if (!fs.existsSync(internalStaticIndex)) {
-    fs.writeFileSync(internalStaticIndex, shimCode, 'utf8');
-    console.log('Created shim', internalStaticIndex);
-  }
+module.exports = {
+  ...renderStatic,
+  default: renderStatic,
+  registerStaticRootComponent: (Component, props) => {
+    try {
+      const { AppRegistry } = require('react-native-web');
+      return AppRegistry.getApplication('App', { initialProps: props });
+    } catch (e) {
+      return { element: null, getStyleElement: () => null };
+    }
+  },
+  InnerRoot: ({ children }) => children,
+};
+`);
+
+  // 2. expo-router/internal/routing
+  createShim('routing', `"use strict";
+// Auto-generated shim for expo-router/internal/routing compatibility
+const getRoutesMod = require('../build/getRoutes');
+const getRoutesCoreMod = require('../build/getRoutesCore');
+const getReactNavigationConfigMod = require('../build/getReactNavigationConfig');
+const matchersMod = require('../build/matchers');
+const sortRoutesMod = require('../build/sortRoutes');
+const loadStaticParamsMod = require('../build/loadStaticParamsAsync');
+
+module.exports = {
+  ...getRoutesMod,
+  ...getRoutesCoreMod,
+  ...getReactNavigationConfigMod,
+  ...matchersMod,
+  ...sortRoutesMod,
+  ...loadStaticParamsMod,
+  getRoutes: getRoutesMod.getRoutes || getRoutesCoreMod.getRoutes,
+  getRoutesCore: getRoutesCoreMod.getRoutesCore || getRoutesCoreMod.getRoutes,
+  getExactRoutes: getRoutesMod.getExactRoutes || getRoutesMod.getRoutes,
+  generateDynamic: getRoutesMod.generateDynamic,
+  extrapolateGroups: getRoutesMod.extrapolateGroups,
+  getReactNavigationConfig: getReactNavigationConfigMod.getReactNavigationConfig,
+  getReactNavigationScreensConfig: getReactNavigationConfigMod.getReactNavigationScreensConfig,
+  loadStaticParamsAsync: loadStaticParamsMod.loadStaticParamsAsync,
+  matchGroupName: matchersMod.matchGroupName,
+  matchDynamicName: matchersMod.matchDynamicName,
+  getContextKey: matchersMod.getContextKey,
+  removeSupportedExtensions: matchersMod.removeSupportedExtensions,
+  isTypedRoute: matchersMod.isTypedRoute,
+  sortRoutes: sortRoutesMod.sortRoutes,
+};
+module.exports.default = module.exports;
+`);
+
+  // 3. expo-router/internal/utils
+  createShim('utils', `"use strict";
+// Auto-generated shim for expo-router/internal/utils compatibility
+const urlUtils = require('../build/utils/url');
+module.exports = {
+  ...urlUtils,
+  shouldLinkExternally: urlUtils.shouldLinkExternally || (() => false),
+};
+module.exports.default = module.exports;
+`);
+
+  // 4. expo-router/internal/server
+  createShim('server', `"use strict";
+// Auto-generated shim for expo-router/internal/server compatibility
+module.exports = {
+  ServerDocument: ({ children }) => children,
+};
+module.exports.default = module.exports;
+`);
+
+  // 5. expo-router/internal/rsc
+  createShim('rsc', `"use strict";
+// Auto-generated shim for expo-router/internal/rsc compatibility
+module.exports = {
+  decodeActionId: (id) => id,
+  Children: ({ children }) => children,
+  LOCATION_ID: 'location',
+  PARAM_KEY_SKIP: 'skip',
+  SHOULD_SKIP_ID: 'should_skip',
+  ServerRouter: ({ children }) => children,
+  Slot: ({ children }) => children,
+  getComponentIds: () => [],
+  getInputString: () => '',
+  parseInputString: () => ({}),
+};
+module.exports.default = module.exports;
+`);
+
+  // 6. expo-router/internal/testing
+  createShim('testing', `"use strict";
+module.exports = {
+  requireContext: () => () => null,
+  inMemoryContext: () => () => null,
+};
+module.exports.default = module.exports;
+`);
 }
 
 // Recursively find and patch any @expo/router-server instance if present
@@ -146,18 +239,37 @@ function findAndPatchRouterServer(currentDir) {
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name === '@expo' || entry.name === 'expo' || entry.name === '@expo/cli' || entry.name === 'router-server' || entry.name === 'build' || entry.name === 'static') {
+        if (entry.name === 'node_modules' || entry.name === '@expo' || entry.name === 'expo' || entry.name === '@expo/cli' || entry.name === 'router-server' || entry.name === 'build' || entry.name === 'static' || entry.name === 'node') {
           findAndPatchRouterServer(fullPath);
         }
-      } else if (entry.isFile() && entry.name === 'renderStaticContent.js') {
-        let content = fs.readFileSync(fullPath, 'utf8');
-        if (content.includes('require("expo-router/internal/static")')) {
-          content = content.replace(
-            /require\(["']expo-router\/internal\/static["']\)/g,
-            'require("expo-router/build/static/renderStaticContent")'
-          );
-          fs.writeFileSync(fullPath, content, 'utf8');
-          console.log('Patched router-server at', fullPath);
+      } else if (entry.isFile()) {
+        // Direct override of @expo/router-server render entrypoints to expo-router
+        if (fullPath.includes('@expo') && fullPath.includes('router-server')) {
+          if (entry.name === 'render.js' && fullPath.includes('node')) {
+            fs.writeFileSync(fullPath, "// Redirected to expo-router native renderer\nmodule.exports = require('expo-router/build/static/renderStaticContent');\n", 'utf8');
+            console.log('Redirected router-server render.js at', fullPath);
+          } else if (entry.name === 'renderStaticContent.js') {
+            fs.writeFileSync(fullPath, "// Redirected to expo-router native renderer\nmodule.exports = require('expo-router/build/static/renderStaticContent');\n", 'utf8');
+            console.log('Redirected router-server renderStaticContent.js at', fullPath);
+          } else if (entry.name === 'getServerManifest.js' && fullPath.includes('static')) {
+            fs.writeFileSync(fullPath, "// Redirected to expo-router getServerManifest\nmodule.exports = require('expo-router/build/static/getServerManifest');\n", 'utf8');
+            console.log('Redirected router-server getServerManifest.js at', fullPath);
+          } else if (entry.name.endsWith('.js')) {
+            let content = fs.readFileSync(fullPath, 'utf8');
+            let modified = false;
+            if (content.includes('require("expo-router/internal/static")')) {
+              content = content.replace(/require\(["']expo-router\/internal\/static["']\)/g, 'require("expo-router/build/static/renderStaticContent")');
+              modified = true;
+            }
+            if (content.includes('require("expo-router/internal/routing")')) {
+              content = content.replace(/require\(["']expo-router\/internal\/routing["']\)/g, 'require("expo-router/internal/routing")');
+              modified = true;
+            }
+            if (modified) {
+              fs.writeFileSync(fullPath, content, 'utf8');
+              console.log('Patched router-server at', fullPath);
+            }
+          }
         }
       }
     }
@@ -167,5 +279,6 @@ function findAndPatchRouterServer(currentDir) {
 }
 const nodeModulesRoot = path.join(__dirname, '..', 'node_modules');
 findAndPatchRouterServer(nodeModulesRoot);
+
 
 
