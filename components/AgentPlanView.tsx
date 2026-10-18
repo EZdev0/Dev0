@@ -1811,6 +1811,8 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   questionsScroll: {
+    flexShrink: 1,
+    maxHeight: 380,
     paddingHorizontal: 16,
     paddingBottom: 8,
   },

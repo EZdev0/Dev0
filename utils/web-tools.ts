@@ -191,7 +191,7 @@ export async function runSubAISearchAgent(
   if (!trimmed) return 'ERROR: Search query cannot be empty.';
 
   const optimizedQuery = optimizeSearchQuery(trimmed);
-  const shouldSummarize = options?.summarizeWithAI ?? false;
+  const shouldSummarize = options?.summarizeWithAI ?? true;
 
   // Stage 1: Jina Reader + DuckDuckGo Lite (keyless, CORS-friendly markdown)
   try {

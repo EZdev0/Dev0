@@ -2,6 +2,8 @@ import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PR
 import { MAX_TOOL_RESULT_LENGTH, truncateToolResult, compressAndSanitizeMessagesForAPI } from '@/utils/chat-compression';
 import { runSubAISearchAgent } from '@/utils/web-tools';
 
+export const DEFAULT_RORK_MODEL = 'gpt-4o-mini';
+
 export function resolveDefaultModel(provider: AIProviderType, model?: string | null): string {
   if (typeof model === 'string' && model.trim().length > 0) {
     return model.trim();
@@ -970,23 +972,59 @@ function parseToolCallsFromText(text: string): { toolCalls: { id: string; name: 
   return { toolCalls, cleanContent };
 }
 
+function extractNativeToolCalls(data: any): { id: string; name: string; arguments: Record<string, any> }[] {
+  const rawCalls = data?.choices?.[0]?.message?.tool_calls || data?.toolCalls;
+  if (!Array.isArray(rawCalls)) return [];
+  const extracted: { id: string; name: string; arguments: Record<string, any> }[] = [];
+  for (const tc of rawCalls) {
+    const name = tc?.function?.name || tc?.name;
+    if (!name || typeof name !== 'string') continue;
+    let args: Record<string, any> = {};
+    const rawArgs = tc?.function?.arguments ?? tc?.arguments;
+    if (typeof rawArgs === 'string') {
+      try {
+        args = JSON.parse(rawArgs);
+      } catch {
+        args = {};
+      }
+    } else if (rawArgs && typeof rawArgs === 'object') {
+      args = rawArgs;
+    }
+    extracted.push({
+      id: tc?.id || 'tc_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+      name,
+      arguments: args,
+    });
+  }
+  return extracted;
+}
+
 export async function callPollinationsFallback(
   formattedMessages: { role: 'user' | 'assistant' | 'system'; content: string }[],
   tools?: ToolDefinition[],
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback: boolean; fallbackProvider: string }> {
   const POLLINATIONS_URL = 'https://text.pollinations.ai/openai';
   console.log('[AI] Falling back to keyless Pollinations AI (model: openai), messages:', formattedMessages.length);
 
-  const res = await fetch(POLLINATIONS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'openai',
-      messages: formattedMessages.length > 0 ? formattedMessages : [{ role: 'user', content: 'Hello' }],
-    }),
-    signal,
-  });
+  // Always use a fresh timeout controller so a timed-out primary Rork signal does not abort the fallback
+  const fbController = new AbortController();
+  const fbTimeout = setTimeout(() => fbController.abort(), 45000);
+
+  let res: Response;
+  try {
+    res = await fetch(POLLINATIONS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'openai',
+        messages: formattedMessages.length > 0 ? formattedMessages : [{ role: 'user', content: 'Hello' }],
+      }),
+      signal: fbController.signal,
+    });
+  } finally {
+    clearTimeout(fbTimeout);
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -994,33 +1032,37 @@ export async function callPollinationsFallback(
   }
 
   let text = '';
+  let parsedData: any = null;
   if (typeof res.text === 'function') {
     const rawText = await res.text();
     try {
-      const data = JSON.parse(rawText);
+      parsedData = JSON.parse(rawText);
       text =
-        data?.choices?.[0]?.message?.content ||
-        data?.completion ||
-        (typeof data === 'string' ? data : '');
+        parsedData?.choices?.[0]?.message?.content ||
+        parsedData?.completion ||
+        (typeof parsedData === 'string' ? parsedData : '');
     } catch {
       text = rawText;
     }
   } else if (typeof res.json === 'function') {
-    const data = await res.json();
+    parsedData = await res.json();
     text =
-      data?.choices?.[0]?.message?.content ||
-      data?.completion ||
-      (typeof data === 'string' ? data : '');
+      parsedData?.choices?.[0]?.message?.content ||
+      parsedData?.completion ||
+      (typeof parsedData === 'string' ? parsedData : '');
   }
 
-  if (!text || !text.trim()) {
+  const nativeToolCalls = extractNativeToolCalls(parsedData);
+
+  if ((!text || !text.trim()) && nativeToolCalls.length === 0) {
     throw new Error('Empty response received from Pollinations fallback model.');
   }
 
   if (tools && tools.length > 0) {
-    const { toolCalls, cleanContent } = parseToolCallsFromText(text);
+    const { toolCalls: textToolCalls, cleanContent } = parseToolCallsFromText(text || '');
+    const combinedCalls = [...nativeToolCalls, ...textToolCalls];
     const allowLearning = tools.some(t => isLearningTool(t.name));
-    const filteredCalls = allowLearning ? toolCalls : toolCalls.filter(tc => !isLearningTool(tc.name));
+    const filteredCalls = allowLearning ? combinedCalls : combinedCalls.filter(tc => !isLearningTool(tc.name));
     return {
       content: cleanContent,
       toolCalls: filteredCalls,
@@ -1044,7 +1086,7 @@ async function callRork(
   model?: string,
   signal?: AbortSignal,
 ): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
-  const safeModel = resolveDefaultModel('rork', model);
+  const safeModel = resolveDefaultModel('rork', model) || DEFAULT_RORK_MODEL;
   const sanitizedMessages = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
   console.log('[AI] Calling Rork free model:', safeModel, 'messages:', sanitizedMessages.length, 'tools:', tools?.length ?? 0);
 
@@ -1111,6 +1153,17 @@ async function callRork(
   let lastRorkError: any = null;
 
   for (let retry = 0; retry <= rorkMaxRetries; retry++) {
+    const attemptController = new AbortController();
+    const attemptTimeout = setTimeout(() => attemptController.abort(), 25000);
+    const onParentAbort = () => attemptController.abort();
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(attemptTimeout);
+        break;
+      }
+      signal.addEventListener('abort', onParentAbort, { once: true });
+    }
+
     try {
       if (retry > 0) {
         const backoffMs = Math.min(500 * Math.pow(2, retry - 1), 2500);
@@ -1122,7 +1175,7 @@ async function callRork(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: bodyPayload,
-        signal,
+        signal: attemptController.signal,
       });
 
       if (!res.ok) {
@@ -1132,14 +1185,17 @@ async function callRork(
 
       const data = await res.json();
       const text = data?.completion || data?.choices?.[0]?.message?.content || '';
-      if (!text) {
+      const nativeToolCalls = extractNativeToolCalls(data);
+
+      if (!text && nativeToolCalls.length === 0) {
         throw new Error('Empty response received from model.');
       }
 
       if (tools && tools.length > 0) {
-        const { toolCalls, cleanContent } = parseToolCallsFromText(text);
+        const { toolCalls: textToolCalls, cleanContent } = parseToolCallsFromText(text || '');
+        const combinedCalls = [...nativeToolCalls, ...textToolCalls];
         const allowLearning = tools.some(t => isLearningTool(t.name));
-        const filteredCalls = allowLearning ? toolCalls : toolCalls.filter(tc => !isLearningTool(tc.name));
+        const filteredCalls = allowLearning ? combinedCalls : combinedCalls.filter(tc => !isLearningTool(tc.name));
         console.log('[AI] Rork parsed tool calls:', filteredCalls.length, filteredCalls.map(tc => tc.name));
         return {
           content: cleanContent,
@@ -1158,12 +1214,17 @@ async function callRork(
     } catch (e: any) {
       lastRorkError = e;
       console.log(`[AI] Rork attempt ${retry + 1}/${rorkMaxRetries + 1} failed:`, e?.message || e);
+    } finally {
+      clearTimeout(attemptTimeout);
+      if (signal) {
+        signal.removeEventListener('abort', onParentAbort);
+      }
     }
   }
 
   // Seamless keyless fallback to Pollinations AI within the same call
   try {
-    return await callPollinationsFallback(cleanedFormatted, tools, signal);
+    return await callPollinationsFallback(cleanedFormatted, tools);
   } catch (fallbackErr: any) {
     console.log('[AI] Pollinations fallback after Rork error also failed:', fallbackErr?.message);
     throw new Error('Studio AI error: ' + (lastRorkError?.message || fallbackErr?.message || 'Unknown error'));

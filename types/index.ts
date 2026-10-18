@@ -323,6 +323,24 @@ export function isLearningEnabled(settings?: Partial<AppSettings> | null): boole
   return Boolean(settings.betaAgentLearning || settings.learningEnabled || settings.memoEnabled);
 }
 
+export function syncLearningSettings(prev: AppSettings, partial: Partial<AppSettings>): AppSettings {
+  const updated: AppSettings = { ...prev, ...partial };
+  if ('betaAgentLearning' in partial) {
+    const val = Boolean(partial.betaAgentLearning);
+    if (partial.learningEnabled === undefined) updated.learningEnabled = val;
+    if (partial.memoEnabled === undefined) updated.memoEnabled = val;
+  } else if ('learningEnabled' in partial) {
+    const val = Boolean(partial.learningEnabled);
+    if (partial.betaAgentLearning === undefined) updated.betaAgentLearning = val;
+    if (partial.memoEnabled === undefined) updated.memoEnabled = val;
+  } else if ('memoEnabled' in partial) {
+    const val = Boolean(partial.memoEnabled);
+    if (partial.betaAgentLearning === undefined) updated.betaAgentLearning = val;
+    if (partial.learningEnabled === undefined) updated.learningEnabled = val;
+  }
+  return updated;
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   openaiKey: '',
   anthropicKey: '',

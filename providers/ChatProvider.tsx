@@ -31,6 +31,9 @@ import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
 
+export const SKIP_QUESTIONS_INSTRUCTION =
+  'Überspringe alle Rückfragen. Triff sinnvolle Standard-Annahmen und beginne SOFORT mit der Umsetzung.';
+
 function genId(): string {
   return 'm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
 }
@@ -285,7 +288,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
 
   const rorkAgent = useRorkAgent({
     tools: rorkTools,
-    // Proxy and ensure non-empty model parameter + retry backoff
+    // Proxy and ensure non-empty model parameter, payload truncation, and retry backoff
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : (input as Request).url || input.toString();
       let targetInput: RequestInfo | URL = input;
@@ -295,6 +298,29 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         if (init?.body && typeof init.body === 'string') {
           const bodyObj = JSON.parse(init.body);
           bodyObj.model = resolveDefaultModel('rork', bodyObj.model || settingsRef.current.selectedModel);
+          if (Array.isArray(bodyObj.messages)) {
+            bodyObj.messages = bodyObj.messages.slice(-40).map((m: any) => {
+              if (!m || typeof m !== 'object') return m;
+              const copy = { ...m };
+              if (typeof copy.content === 'string' && copy.content.length > MAX_TOOL_RESULT_LENGTH) {
+                copy.content = truncateToolResult(copy.content, MAX_TOOL_RESULT_LENGTH);
+              }
+              if (Array.isArray(copy.parts)) {
+                copy.parts = copy.parts.map((p: any) => {
+                  if (!p || typeof p !== 'object') return p;
+                  const pCopy = { ...p };
+                  if (typeof pCopy.text === 'string' && pCopy.text.length > MAX_TOOL_RESULT_LENGTH) {
+                    pCopy.text = truncateToolResult(pCopy.text, MAX_TOOL_RESULT_LENGTH);
+                  }
+                  if (typeof pCopy.output === 'string' && pCopy.output.length > MAX_TOOL_RESULT_LENGTH) {
+                    pCopy.output = truncateToolResult(pCopy.output, MAX_TOOL_RESULT_LENGTH);
+                  }
+                  return pCopy;
+                });
+              }
+              return copy;
+            });
+          }
           if (Platform.OS === 'web' && (url.includes('toolkit.rork.com') || url.includes('/agent/chat'))) {
             bodyObj.endpoint = url;
             targetInput = '/api/chat';
@@ -316,7 +342,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             await new Promise(r => setTimeout(r, 500 * Math.pow(2, retry - 1)));
           }
           const resp = await fetch(targetInput, targetInit);
-          if (resp.ok || resp.status < 500) {
+          const shouldRetryStatus =
+            resp.status >= 500 || resp.status === 408 || resp.status === 413 || resp.status === 429;
+          if (resp.ok || !shouldRetryStatus) {
             return resp;
           }
           lastErr = new Error(`HTTP ${resp.status}`);
@@ -1071,10 +1099,28 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     return true;
   }, [isRorkProvider, rorkAgent, convertRorkMessages]);
 
+  const hasPendingChatQuestions = useMemo(() => {
+    if (isLoading || !Array.isArray(messages) || messages.length === 0) return false;
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.role !== 'assistant' || typeof lastMsg.content !== 'string') return false;
+    const trimmed = lastMsg.content.trim();
+    if (!trimmed.includes('?')) return false;
+    const questionLines = trimmed
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 8 && l.endsWith('?'));
+    return questionLines.length >= 1;
+  }, [isLoading, messages]);
+
+  const skipClarificationQuestions = useCallback(() => {
+    sendMessage(SKIP_QUESTIONS_INSTRUCTION);
+  }, [sendMessage]);
+
   return {
     messages, isLoading, isThinking, thinkingPhase, error, lastFallbackInfo,
     sendMessage, stopGeneration, clearChat, startNewChat,
     compressChat, applyChatCompression,
     pendingApproval, approvePendingTool,
+    hasPendingChatQuestions, skipClarificationQuestions,
   };
 });

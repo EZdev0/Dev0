@@ -10,6 +10,7 @@ import {
   TOOL_REGISTRY,
   isLearningTool,
   isLearningEnabled,
+  syncLearningSettings,
 } from '@/types';
 import { setMemoSystemEnabled } from '@/utils/memo-system';
 
@@ -42,7 +43,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
         if (settingsStr) {
           const parsed = JSON.parse(settingsStr);
           setSettings(prev => {
-            const merged = { ...prev, ...parsed };
+            const merged = syncLearningSettings(prev, parsed);
             setMemoSystemEnabled(isLearningEnabled(merged));
             return merged;
           });
@@ -60,13 +61,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
 
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
     setSettings(prev => {
-      const updated = { ...prev, ...partial };
-      if ('betaAgentLearning' in partial && partial.learningEnabled === undefined) {
-        updated.learningEnabled = Boolean(partial.betaAgentLearning);
-      }
-      if ('learningEnabled' in partial && partial.betaAgentLearning === undefined) {
-        updated.betaAgentLearning = Boolean(partial.learningEnabled);
-      }
+      const updated = syncLearningSettings(prev, partial);
       setMemoSystemEnabled(isLearningEnabled(updated));
       AsyncStorage.setItem('ide_settings', JSON.stringify(updated)).catch(e =>
         console.log('[App] Fehler beim Speichern:', e)

@@ -392,14 +392,14 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       }
 
       const shouldAskQuestions =
-        Boolean(settings.betaSuperAgent && settings.agentMode) &&
+        Boolean(settings.betaSuperAgent || settings.agentMode) &&
         !options?.skipQuestions &&
         !cleanRequest.includes(SKIP_QUESTIONS_INSTRUCTION) &&
         !cleanRequest.includes('Zusätzlicher Kontext (Antworten):');
 
-      // CHECK: SuperAgent + AgentMode -> Questions phase (with Null Safety & Skip Support)
+      // CHECK: SuperAgent / AgentMode -> Questions phase (with Null Safety & Skip Support)
       if (shouldAskQuestions) {
-        console.log('[Agent] SuperAgent + AgentMode: Starting clarification phase');
+        console.log('[Agent] SuperAgent / AgentMode: Starting clarification phase');
         const questionPrompt = 'You are an experienced project planner. Before creating a plan, ask CLARIFICATION QUESTIONS to fully understand the requirements.\n\n' +
           'User request: ' + cleanRequest + '\n\n' +
           'Ask 2-5 precise questions that will help you create the best plan.\n' +
@@ -444,6 +444,22 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             if (validQuestions.length > 0) {
               setClarificationQuestions(validQuestions);
               console.log('[Agent] Clarification questions:', validQuestions.map(q => q.question));
+              const clarifyingPlan: AgentPlan = {
+                id: genId(),
+                userRequest: cleanRequest,
+                tasks: [],
+                status: 'clarifying',
+                createdAt: Date.now(),
+              };
+              setPlans(prev => {
+                const cleaned = prev.filter(p => !(p.status === 'clarifying' && (!p.tasks || p.tasks.length === 0)));
+                const next = [...cleaned, clarifyingPlan];
+                plansRef.current = next;
+                return next;
+              });
+              activePlanIdRef.current = clarifyingPlan.id;
+              setActivePlanId(clarifyingPlan.id);
+              return clarifyingPlan.id;
             }
           }
         } catch (e) {

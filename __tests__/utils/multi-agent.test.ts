@@ -1,11 +1,12 @@
 import { createSubAgent, SUB_AGENT_PERMISSIONS, SubAgentType } from '../../utils/multi-agent-system';
-import { LEARNING_TOOL_NAMES, isLearningTool, isLearningEnabled } from '../../types';
+import { DEFAULT_SETTINGS, LEARNING_TOOL_NAMES, isLearningTool, isLearningEnabled, syncLearningSettings } from '../../types';
 import {
   resolveDefaultModel,
   getAvailableTools,
   buildSystemPrompt,
   buildPlannerPrompt,
   callAI,
+  callPollinationsFallback,
 } from '../../utils/ai-service';
 import {
   setMemoSystemEnabled,
@@ -71,6 +72,21 @@ describe('multi-agent system & AI resilience utils', () => {
       expect(isLearningEnabled({ betaAgentLearning: true, learningEnabled: false, memoEnabled: true })).toBe(false);
       expect(isLearningEnabled({ betaAgentLearning: true, learningEnabled: true, memoEnabled: false })).toBe(false);
       expect(isLearningEnabled({ betaAgentLearning: true, learningEnabled: true, memoEnabled: true })).toBe(true);
+    });
+
+    it('should synchronize betaAgentLearning, learningEnabled, and memoEnabled when toggled via syncLearningSettings', () => {
+      expect(isLearningEnabled(DEFAULT_SETTINGS)).toBe(false);
+      const enabled = syncLearningSettings(DEFAULT_SETTINGS, { betaAgentLearning: true });
+      expect(enabled.betaAgentLearning).toBe(true);
+      expect(enabled.learningEnabled).toBe(true);
+      expect(enabled.memoEnabled).toBe(true);
+      expect(isLearningEnabled(enabled)).toBe(true);
+
+      const disabled = syncLearningSettings(enabled, { betaAgentLearning: false });
+      expect(disabled.betaAgentLearning).toBe(false);
+      expect(disabled.learningEnabled).toBe(false);
+      expect(disabled.memoEnabled).toBe(false);
+      expect(isLearningEnabled(disabled)).toBe(false);
     });
 
     it('should strip all 7 Learn/Memo tools from getAvailableTools when learning is disabled', () => {
@@ -182,6 +198,42 @@ describe('multi-agent system & AI resilience utils', () => {
         expect(res.usedFallback).toBe(true);
         const rorkAttempts = calledUrls.filter(u => u.includes('toolkit.rork.com')).length;
         expect(rorkAttempts).toBe(3); // 1 initial + 2 retries
+      } finally {
+        global.fetch = origFetch;
+      }
+    });
+
+    it('should extract native OpenAI tool_calls in callPollinationsFallback even when content is empty and caller signal is aborted', async () => {
+      const origFetch = global.fetch;
+      global.fetch = (async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+          choices: [{
+            message: {
+              content: '',
+              tool_calls: [
+                { id: 'call_1', function: { name: 'read_file', arguments: '{"path":"index.ts"}' } },
+                { id: 'call_2', function: { name: 'add_memo', arguments: '{"content":"secret"}' } },
+              ],
+            },
+          }],
+        }),
+      })) as any;
+
+      try {
+        const abortedController = new AbortController();
+        abortedController.abort();
+        const tools = getAvailableTools({ betaAgentLearning: false, learningEnabled: false });
+        const res = await callPollinationsFallback(
+          [{ role: 'user', content: 'Read index.ts' }],
+          tools,
+          abortedController.signal,
+        );
+        expect(res.usedFallback).toBe(true);
+        expect(res.toolCalls).toHaveLength(1);
+        expect(res.toolCalls[0].name).toBe('read_file');
+        expect(res.toolCalls[0].arguments).toEqual({ path: 'index.ts' });
       } finally {
         global.fetch = origFetch;
       }

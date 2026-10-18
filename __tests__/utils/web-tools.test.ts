@@ -129,7 +129,9 @@ describe('web-tools utils', () => {
 
       try {
         const result = await runSubAISearchAgent('Was ist TypeScript?');
+        expect(result).toContain('Sub-AI Search Summary');
         expect(result).toContain('TypeScript');
+        expect(result).toContain('https://www.typescriptlang.org/docs/');
         expect(result.length).toBeLessThanOrEqual(6000);
       } finally {
         global.fetch = origFetch;

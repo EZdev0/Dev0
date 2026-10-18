@@ -67,7 +67,7 @@ export default function ToolsScreen() {
   const { todos, addTodo, updateTodoItem, deleteTodo, memos, addMemo, deleteMemo, settings, getToolPermission, setToolPermission } = useApp();
   const { getProjectTree, searchFilesInProject, currentProject } = useProject();
   const { clearChat, startNewChat, compressChat, applyChatCompression, messages } = useChat();
-  const { plans, activePlan } = useAgent();
+  const { plans, activePlan, clarificationQuestions, skipClarificationQuestions } = useAgent();
 
   const { tab } = useLocalSearchParams<{ tab?: string }>();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat'>('dashboard');
@@ -76,6 +76,10 @@ export default function ToolsScreen() {
   const learningActive = isLearningEnabled(settings);
 
   useEffect(() => {
+    if (!learningActive && activeTab === 'memos') {
+      setActiveTab('tools');
+      return;
+    }
     if (tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'memos' || tab === 'search' || tab === 'chat') {
       if (tab === 'memos' && !learningActive) {
         setActiveTab('tools');
@@ -83,7 +87,7 @@ export default function ToolsScreen() {
         setActiveTab(tab as any);
       }
     }
-  }, [tab, learningActive]);
+  }, [tab, learningActive, activeTab]);
 
   const [newMemoText, setNewMemoText] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -250,7 +254,8 @@ export default function ToolsScreen() {
               }
             }}
             currentTask={activePlan?.userRequest}
-            hasClarificationQuestions={activePlan?.status === 'clarifying'}
+            hasClarificationQuestions={Boolean(activePlan?.status === 'clarifying' || (clarificationQuestions && clarificationQuestions.length > 0))}
+            onSkipClarificationQuestions={() => skipClarificationQuestions(activePlan?.id, true)}
           />
         )}
 
@@ -403,7 +408,7 @@ export default function ToolsScreen() {
           </>
         )}
 
-        {activeTab === 'memos' && (
+        {activeTab === 'memos' && learningActive && (
           <>
             <View style={styles.inputRow}>
               <TextInput

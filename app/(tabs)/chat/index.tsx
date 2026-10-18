@@ -24,7 +24,12 @@ import ThinkingBlock from '@/components/ThinkingBlock';
 
 export default function ChatScreen() {
   const router = useRouter();
-  const { messages, isLoading, isThinking, thinkingPhase, sendMessage, stopGeneration, clearChat, lastFallbackInfo, pendingApproval, approvePendingTool } = useChat();
+  const {
+    messages, isLoading, isThinking, thinkingPhase,
+    sendMessage, stopGeneration, clearChat, lastFallbackInfo,
+    pendingApproval, approvePendingTool,
+    hasPendingChatQuestions, skipClarificationQuestions: skipChatClarification,
+  } = useChat();
   const {
     activePlan, isPlanning, isExecuting,
     createPlan, executePlan, stopExecution, dismissPlan,
@@ -34,7 +39,7 @@ export default function ChatScreen() {
     skipClarificationQuestions, submitClarificationAnswers,
   } = useAgent();
   const { allFilePaths, currentProject } = useProject();
-  const { settings } = useApp();
+  const { settings, updateSettings } = useApp();
 
   const [input, setInput] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
@@ -42,7 +47,20 @@ export default function ChatScreen() {
   const [fileSearch, setFileSearch] = useState<string>('');
   const [showAtSuggestions, setShowAtSuggestions] = useState<boolean>(false);
   const [atQuery, setAtQuery] = useState<string>('');
-  const [agentMode, setAgentMode] = useState<boolean>(false);
+  const [agentMode, setAgentModeState] = useState<boolean>(Boolean(settings?.agentMode));
+
+  const setAgentMode = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setAgentModeState(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      updateSettings({ agentMode: next });
+      return next;
+    });
+  }, [updateSettings]);
+
+  useEffect(() => {
+    setAgentModeState(Boolean(settings?.agentMode));
+  }, [settings?.agentMode]);
+
   const [showAttachMenu, setShowAttachMenu] = useState<boolean>(false);
   const flatListRef = useRef<FlatList<ChatMessage>>(null);
   const breatheAnim = useRef(new Animated.Value(0)).current;
@@ -161,8 +179,14 @@ export default function ChatScreen() {
 
   const handleSkipQuestions = useCallback(async () => {
     console.log('[Chat] Skipping clarification questions -> executing directly with best-practice assumptions');
-    await skipClarificationQuestions(activePlan?.id, true);
-  }, [activePlan?.id, skipClarificationQuestions]);
+    if ((clarificationQuestions && clarificationQuestions.length > 0) || activePlan?.status === 'clarifying') {
+      await skipClarificationQuestions(activePlan?.id, true);
+    } else if (hasPendingChatQuestions) {
+      skipChatClarification();
+    } else {
+      await skipClarificationQuestions(activePlan?.id, true);
+    }
+  }, [activePlan?.id, activePlan?.status, clarificationQuestions, hasPendingChatQuestions, skipChatClarification, skipClarificationQuestions]);
 
   const handleAnswerQuestions = useCallback(async (answers: {question: string; answer: string}[]) => {
     console.log('[Chat] Questions answered:', answers);
@@ -601,7 +625,7 @@ export default function ChatScreen() {
         </View>
       )}
 
-      {((clarificationQuestions && clarificationQuestions.length > 0) || activePlan?.status === 'clarifying') && (
+      {((clarificationQuestions && clarificationQuestions.length > 0) || activePlan?.status === 'clarifying' || hasPendingChatQuestions) && (
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
