@@ -3,7 +3,10 @@ const path = require('path');
 const ts = require('typescript');
 const Module = require('module');
 
-// Mock react-native and handle @/ alias for node testing
+global.__DEV__ = false;
+const memoryStorage = new Map();
+
+// Mock react-native, async-storage, expo-file-system, and handle @/ alias for node testing
 const origRequire = Module.prototype.require;
 Module.prototype.require = function (id) {
   if (id === 'react-native') {
@@ -11,6 +14,27 @@ Module.prototype.require = function (id) {
       Platform: { OS: 'web' },
       Alert: { alert: console.log },
       StyleSheet: { create: (s) => s },
+    };
+  }
+  if (id === 'expo-file-system') {
+    return {
+      documentDirectory: '/mock-docs/',
+      getInfoAsync: async () => ({ exists: false }),
+      makeDirectoryAsync: async () => {},
+      readAsStringAsync: async () => '[]',
+      writeAsStringAsync: async () => {},
+    };
+  }
+  if (id === '@react-native-async-storage/async-storage') {
+    return {
+      default: {
+        getItem: async (k) => memoryStorage.get(k) ?? null,
+        setItem: async (k, v) => { memoryStorage.set(k, v); },
+        removeItem: async (k) => { memoryStorage.delete(k); },
+      },
+      getItem: async (k) => memoryStorage.get(k) ?? null,
+      setItem: async (k, v) => { memoryStorage.set(k, v); },
+      removeItem: async (k) => { memoryStorage.delete(k); },
     };
   }
   if (id.startsWith('@/')) {
@@ -23,40 +47,23 @@ Module.prototype.require = function (id) {
 let passed = 0;
 let failed = 0;
 let currentSuite = '';
+const testQueue = [];
 
 global.describe = (name, fn) => {
   const prevSuite = currentSuite;
   currentSuite = prevSuite ? `${prevSuite} > ${name}` : name;
-  console.log(`\n📁 ${currentSuite}`);
+  testQueue.push({ type: 'suite', name: currentSuite });
   try {
     fn();
   } catch (e) {
-    console.error(`💥 Suite failed: ${name}`, e);
+    console.error(`💥 Suite definition failed: ${name}`, e);
+    failed++;
   }
   currentSuite = prevSuite;
 };
 
 global.it = (name, fn) => {
-  try {
-    const res = fn();
-    if (res && typeof res.then === 'function') {
-      res
-        .then(() => {
-          passed++;
-          console.log(`  ✅ ${name}`);
-        })
-        .catch(e => {
-          failed++;
-          console.error(`  ❌ ${name}:`, e.message);
-        });
-    } else {
-      passed++;
-      console.log(`  ✅ ${name}`);
-    }
-  } catch (e) {
-    failed++;
-    console.error(`  ❌ ${name}:`, e.message);
-  }
+  testQueue.push({ type: 'test', suite: currentSuite, name, fn });
 };
 
 global.test = global.it;
@@ -136,18 +143,33 @@ require.extensions['.ts'] = function (module, filename) {
 
 console.log('--- Running Test Suites ---');
 
-// 1. Run web-tools test
+// 1. Load web-tools test
 require('../__tests__/utils/web-tools.test.ts');
 
-// 2. Run chat-compression test
+// 2. Load chat-compression test
 require('../__tests__/utils/chat-compression.test.ts');
 
-// 3. Run multi-agent test
+// 3. Load multi-agent & AI fallback / learning guard test
 require('../__tests__/utils/multi-agent.test.ts');
 
-setTimeout(() => {
+(async () => {
+  for (const item of testQueue) {
+    if (item.type === 'suite') {
+      console.log(`\n📁 ${item.name}`);
+      continue;
+    }
+    try {
+      await item.fn();
+      passed++;
+      console.log(`  ✅ ${item.name}`);
+    } catch (e) {
+      failed++;
+      console.error(`  ❌ ${item.name}:`, e && e.message ? e.message : e);
+    }
+  }
+
   console.log(`\n========================================`);
   console.log(`Tests passed: ${passed}, Tests failed: ${failed}`);
   console.log(`========================================`);
   if (failed > 0) process.exit(1);
-}, 2500);
+})();

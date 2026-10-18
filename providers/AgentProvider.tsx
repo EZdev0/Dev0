@@ -1,10 +1,39 @@
 import React, { useState, useCallback, useRef } from 'react';
 import createContextHook from '@nkzw/create-context-hook';
-import { AgentPlan, AgentTask, AgentTaskStatus, AgentTaskType, AgentToolUsage, ChatMessage, ToolCall, AIProviderType, PendingToolApproval, TOOL_REGISTRY } from '@/types';
-import { callAI, TOOL_DEFINITIONS, buildSystemPrompt, buildPlannerPrompt, parsePlanFromAI, generateFinalResponse } from '@/utils/ai-service';
+import {
+  AgentPlan,
+  AgentTask,
+  AgentTaskStatus,
+  AgentTaskType,
+  AgentToolUsage,
+  ChatMessage,
+  ToolCall,
+  AIProviderType,
+  PendingToolApproval,
+  TOOL_REGISTRY,
+  isLearningTool,
+  isLearningEnabled,
+} from '@/types';
+import {
+  callAI,
+  TOOL_DEFINITIONS,
+  buildSystemPrompt,
+  buildPlannerPrompt,
+  parsePlanFromAI,
+  generateFinalResponse,
+  resolveDefaultModel,
+} from '@/utils/ai-service';
+import {
+  MAX_TOOL_RESULT_LENGTH,
+  truncateToolResult,
+  compressAndSanitizeMessagesForAPI,
+} from '@/utils/chat-compression';
 import { performWebSearch, performWebFetch } from '@/utils/web-tools';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
+
+export const SKIP_QUESTIONS_INSTRUCTION =
+  'Fragen wurden vom Nutzer übersprungen. Triff eigenständig die sinnvollsten Best-Practice-Annahmen und führe die Aufgabe direkt vollständig aus.';
 
 function genId(): string {
   return 'ag_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
@@ -46,6 +75,9 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
   const abortRef = useRef<boolean>(false);
   const plansRef = useRef<AgentPlan[]>([]);
   plansRef.current = plans;
+  const activePlanIdRef = useRef<string | null>(null);
+  activePlanIdRef.current = activePlanId;
+  const lastUserRequestRef = useRef<string>('');
 
   const { settings, getApiKey, getFallbackSettings, todos, memos, addTodo, updateTodoItem, addMemo, agentMd, setAgentMd, soulMd, setSoulMd, identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd, getToolPermission } = useApp();
   const {
@@ -56,20 +88,31 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
   const activePlan = plans.find(p => p.id === activePlanId) ?? null;
 
   const updatePlan = useCallback((planId: string, updater: (plan: AgentPlan) => AgentPlan) => {
-    setPlans(prev => prev.map(p => p.id === planId ? updater({ ...p }) : p));
+    setPlans(prev => {
+      const next = prev.map(p => p.id === planId ? updater({ ...p }) : p);
+      plansRef.current = next;
+      return next;
+    });
   }, []);
 
   const updateTaskInPlan = useCallback((planId: string, taskId: string, updater: (task: AgentTask) => AgentTask) => {
-    setPlans(prev => prev.map(p => {
-      if (p.id !== planId) return p;
-      return {
-        ...p,
-        tasks: p.tasks.map(t => t.id === taskId ? updater({ ...t }) : t),
-      };
-    }));
+    setPlans(prev => {
+      const next = prev.map(p => {
+        if (p.id !== planId) return p;
+        return {
+          ...p,
+          tasks: p.tasks.map(t => t.id === taskId ? updater({ ...t }) : t),
+        };
+      });
+      plansRef.current = next;
+      return next;
+    });
   }, []);
 
   const checkAgentToolPermission = useCallback(async (toolName: string, args: Record<string, any>): Promise<{ allowed: boolean; reason?: string }> => {
+    if (isLearningTool(toolName) && !isLearningEnabled(settings)) {
+      return { allowed: false, reason: 'TOOL_HIDDEN' };
+    }
     const perm = getToolPermission(toolName);
     console.log('[Agent] Checking permission for', toolName, ':', perm);
 
@@ -99,7 +142,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
     }
 
     return { allowed: true };
-  }, [getToolPermission]);
+  }, [getToolPermission, settings]);
 
   const approveAgentTool = useCallback((approved: boolean) => {
     if (pendingToolApproval) {
@@ -108,9 +151,15 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
   }, [pendingToolApproval]);
 
   const executeTool = useCallback(async (name: string, args: Record<string, any>): Promise<{ result: string; fileAction?: { type: 'created' | 'modified' | 'deleted'; path: string } }> => {
-    console.log('[Agent] Executing tool:', name, JSON.stringify(args).slice(0, 200));
+    console.log('[Agent] Executing tool:', name, JSON.stringify(args || {}).slice(0, 200));
 
-    if (name !== 'think' && name !== 'task_complete' && name !== 'verify_file') {
+    // Layer 3 Guard: Strictly block execution of any Learn/Memo tools when disabled
+    if (isLearningTool(name) && !isLearningEnabled(settings)) {
+      console.log('[Agent] Blocked disabled learning tool execution:', name);
+      return { result: 'ERROR: Unknown tool "' + name + '". Learning and memory tools are disabled in settings.' };
+    }
+
+    if (name !== 'think' && name !== 'task_complete' && name !== 'verify_file' && name !== 'get_active_tools') {
       const permCheck = await checkAgentToolPermission(name, args);
       if (!permCheck.allowed) {
         if (permCheck.reason === 'TOOL_HIDDEN') {
@@ -120,13 +169,18 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       }
     }
 
+    const wrapResult = (res: { result: string; fileAction?: { type: 'created' | 'modified' | 'deleted'; path: string } }) => ({
+      ...res,
+      result: truncateToolResult(res.result || '', MAX_TOOL_RESULT_LENGTH),
+    });
+
     try {
       switch (name) {
         case 'read_file': {
           if (!args?.path) return { result: 'ERROR: No file path provided.' };
           const content = getFileContent(args.path);
           if (content === null) return { result: 'ERROR: File "' + args.path + '" not found.' };
-          return { result: content };
+          return wrapResult({ result: content });
         }
         case 'read_lines': {
           if (!args?.path) return { result: 'ERROR: No file path provided.' };
@@ -135,7 +189,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           const lines = content.split('\n');
           const start = Math.max(0, (args.start_line || 1) - 1);
           const end = Math.min(lines.length, args.end_line || lines.length);
-          return { result: lines.slice(start, end).map((l: string, i: number) => (start + i + 1) + ': ' + l).join('\n') };
+          return wrapResult({ result: lines.slice(start, end).map((l: string, i: number) => (start + i + 1) + ': ' + l).join('\n') });
         }
         case 'write_file': {
           if (!args?.path) return { result: 'ERROR: No file path provided.' };
@@ -173,11 +227,11 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           return { result: 'File renamed to "' + args.new_path + '".', fileAction: { type: 'modified', path: args.new_path } };
         }
         case 'list_directory': {
-          return { result: listDirectory(args?.path || '') };
+          return wrapResult({ result: listDirectory(args?.path || '') });
         }
         case 'search_files': {
           if (!args?.query) return { result: 'ERROR: No search query provided.' };
-          return { result: searchFilesInProject(args.query, args.path) };
+          return wrapResult({ result: searchFilesInProject(args.query, args.path) });
         }
         case 'find_replace': {
           if (args?.find === undefined || args?.find === null || args.find === '') return { result: 'ERROR: Search text (find) is missing.' };
@@ -201,11 +255,11 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           return { result: 'Directory "' + args.path + '" created.' };
         }
         case 'get_project_tree': {
-          return { result: getProjectTree() };
+          return wrapResult({ result: getProjectTree() });
         }
         case 'get_file_info': {
           if (!args?.path) return { result: 'ERROR: No file path provided.' };
-          return { result: getFileInfo(args.path) };
+          return wrapResult({ result: getFileInfo(args.path) });
         }
         case 'create_todo': {
           if (!args?.text) return { result: 'ERROR: Todo text is missing.' };
@@ -218,6 +272,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           return { result: 'Todo "' + args.id + '" updated.' };
         }
         case 'add_memo': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and memo tools are disabled.' };
           if (!args?.content) return { result: 'ERROR: Memo content is missing.' };
           addMemo(args.content);
           return { result: 'Memo saved: "' + args.content + '"' };
@@ -226,39 +281,49 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           return { result: 'Thought process recorded.' };
         }
         case 'read_identity_files': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and identity tools are disabled.' };
           let output = '';
           output += '## SOUL.md\n' + (soulMd || '(empty)') + '\n\n';
           output += '## AGENTS.md\n' + (agentMd || '(empty)') + '\n\n';
           output += '## IDENTITY.md\n' + (identityMd || '(empty)') + '\n\n';
           output += '## USER.md\n' + (userMd || '(empty)') + '\n\n';
           output += '## MEMORY.md\n' + (memoryMd || '(empty)');
-          return { result: output };
+          return wrapResult({ result: output });
         }
         case 'get_active_tools': {
-          const activeTools = TOOL_DEFINITIONS.filter(t => getToolPermission(t.name) !== 'removed').map(t => t.name);
-          return { result: 'Available active tools: ' + activeTools.join(', ') };
+          const activeLearning = isLearningEnabled(settings);
+          const activeTools = TOOL_DEFINITIONS.filter(t => {
+            if (!activeLearning && isLearningTool(t.name)) return false;
+            return getToolPermission(t.name) !== 'removed';
+          }).map(t => t.name);
+          return wrapResult({ result: 'Available active tools: ' + activeTools.join(', ') });
         }
         case 'update_soul_md': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and identity tools are disabled.' };
           if (!args?.content) return { result: 'ERROR: No content provided.' };
           setSoulMd(args.content);
           return { result: 'SOUL.md updated (' + args.content.split('\n').length + ' lines).' };
         }
         case 'update_agents_md': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and identity tools are disabled.' };
           if (!args?.content) return { result: 'ERROR: No content provided.' };
           setAgentMd(args.content);
           return { result: 'AGENTS.md updated (' + args.content.split('\n').length + ' lines).' };
         }
         case 'update_identity_md': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and identity tools are disabled.' };
           if (!args?.content) return { result: 'ERROR: No content provided.' };
           setIdentityMd(args.content);
           return { result: 'IDENTITY.md updated (' + args.content.split('\n').length + ' lines).' };
         }
         case 'update_user_md': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and identity tools are disabled.' };
           if (!args?.content) return { result: 'ERROR: No content provided.' };
           setUserMd(args.content);
           return { result: 'USER.md updated (' + args.content.split('\n').length + ' lines).' };
         }
         case 'update_memory_md': {
+          if (!isLearningEnabled(settings)) return { result: 'ERROR: Learning and identity tools are disabled.' };
           if (!args?.content) return { result: 'ERROR: No content provided.' };
           setMemoryMd(args.content);
           return { result: 'MEMORY.md updated (' + args.content.split('\n').length + ' lines).' };
@@ -267,7 +332,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           if (!args?.query) return { result: 'ERROR: Search term is missing.' };
           try {
             const result = await performWebSearch(args.query);
-            return { result };
+            return wrapResult({ result });
           } catch (e: any) {
             return { result: 'ERROR during web search: ' + (e?.message || 'Network error') };
           }
@@ -275,18 +340,8 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
         case 'web_fetch': {
           if (!args?.url) return { result: 'ERROR: URL is missing.' };
           try {
-            const resp = await fetch(args.url, {
-              headers: { 'Accept': 'text/html,text/plain,application/json' },
-            });
-            if (!resp.ok) return { result: 'Fetch failed (Status ' + resp.status + ').' };
-            const text = await resp.text();
-            const maxLen = args.max_length || 5000;
-            const cleaned = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-            return { result: cleaned.length > maxLen ? cleaned.slice(0, maxLen) + '... (truncated)' : cleaned };
+            const result = await performWebFetch(args.url, Math.min(args.max_length || MAX_TOOL_RESULT_LENGTH, MAX_TOOL_RESULT_LENGTH));
+            return wrapResult({ result });
           } catch (e: any) {
             return { result: 'ERROR during web fetch: ' + (e?.message || 'Network error') };
           }
@@ -309,20 +364,44 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       console.log('[Agent] Tool error:', name, e);
       return { result: 'ERROR in ' + name + ': ' + (e?.message || 'Unknown error') };
     }
-  }, [getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, checkAgentToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
+  }, [settings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
 
-  const createPlan = useCallback(async (userRequest: string): Promise<string | null> => {
+  const createPlan = useCallback(async (
+    userRequest: string,
+    options?: { skipQuestions?: boolean }
+  ): Promise<string | null> => {
     setIsPlanning(true);
     try {
       const apiKey = getApiKey();
-      if (!apiKey) throw new Error('No API key configured.');
+      const effectiveProvider = settings.selectedProvider as AIProviderType;
+      if (!apiKey && effectiveProvider !== 'rork' && effectiveProvider !== 'custom') {
+        throw new Error('No API key configured.');
+      }
 
-      // CHECK: SuperAgent + AgentMode -> Questions phase (with Null Safety)
-      if (settings.betaSuperAgent && settings.agentMode) {
-        console.log('[Agent] SuperAgent + AgentMode: Starting clarification phase');
-        // AI generates clarification questions first
+      const safeModel = resolveDefaultModel(effectiveProvider, settings.selectedModel);
+      const cleanRequest = typeof userRequest === 'string' && userRequest.trim()
+        ? userRequest.trim()
+        : lastUserRequestRef.current || 'Execute user task';
+
+      if (
+        !options?.skipQuestions &&
+        !cleanRequest.includes(SKIP_QUESTIONS_INSTRUCTION) &&
+        !cleanRequest.includes('Zusätzlicher Kontext (Antworten):')
+      ) {
+        lastUserRequestRef.current = cleanRequest;
+      }
+
+      const shouldAskQuestions =
+        Boolean(settings.betaSuperAgent || settings.agentMode) &&
+        !options?.skipQuestions &&
+        !cleanRequest.includes(SKIP_QUESTIONS_INSTRUCTION) &&
+        !cleanRequest.includes('Zusätzlicher Kontext (Antworten):');
+
+      // CHECK: SuperAgent / AgentMode -> Questions phase (with Null Safety & Skip Support)
+      if (shouldAskQuestions) {
+        console.log('[Agent] SuperAgent / AgentMode: Starting clarification phase');
         const questionPrompt = 'You are an experienced project planner. Before creating a plan, ask CLARIFICATION QUESTIONS to fully understand the requirements.\n\n' +
-          'User request: ' + userRequest + '\n\n' +
+          'User request: ' + cleanRequest + '\n\n' +
           'Ask 2-5 precise questions that will help you create the best plan.\n' +
           'Think about:\n' +
           '- Which files are affected?\n' +
@@ -333,14 +412,14 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
         
         const fallbackSettings = settings.autoFallback ? getFallbackSettings() : undefined;
         const questionMessages: ChatMessage[] = [{
-          id: genId(), role: 'user', content: typeof userRequest === 'string' ? userRequest : '', timestamp: Date.now(),
+          id: genId(), role: 'user', content: questionPrompt, timestamp: Date.now(),
         }];
         
         try {
           const questionsResponse = await callAI(
-            settings.selectedProvider as AIProviderType,
-            apiKey,
-            settings.selectedModel,
+            effectiveProvider,
+            apiKey || 'rork_builtin',
+            safeModel,
             questionMessages,
             [],
             'Always reply in English. Ask clear, precise questions.',
@@ -348,7 +427,6 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             fallbackSettings,
           );
           
-          // Extract and store questions
           const questionsText = typeof questionsResponse.content === 'string' ? questionsResponse.content : '';
           if (!questionsText.trim()) throw new Error('No questions received');
           
@@ -366,35 +444,50 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             if (validQuestions.length > 0) {
               setClarificationQuestions(validQuestions);
               console.log('[Agent] Clarification questions:', validQuestions.map(q => q.question));
-              // We generated questions, but continue with plan creation
-              // so agent mode is not blocked
+              const clarifyingPlan: AgentPlan = {
+                id: genId(),
+                userRequest: cleanRequest,
+                tasks: [],
+                status: 'clarifying',
+                createdAt: Date.now(),
+              };
+              setPlans(prev => {
+                const cleaned = prev.filter(p => !(p.status === 'clarifying' && (!p.tasks || p.tasks.length === 0)));
+                const next = [...cleaned, clarifyingPlan];
+                plansRef.current = next;
+                return next;
+              });
+              activePlanIdRef.current = clarifyingPlan.id;
+              setActivePlanId(clarifyingPlan.id);
+              return clarifyingPlan.id;
             }
           }
         } catch (e) {
           console.log('[Agent] Error generating questions:', e);
-          // Fallback: normal plan without questions
         }
       }
 
+      const activeLearning = isLearningEnabled(settings);
       const plannerPrompt = buildPlannerPrompt({
         projectTree: getProjectTree(),
-        memos,
+        memos: activeLearning ? memos : [],
         todos,
+        learningEnabled: activeLearning,
       });
 
       const planMsg: ChatMessage[] = [{
         id: genId(),
         role: 'user',
-        content: userRequest,
+        content: cleanRequest,
         timestamp: Date.now(),
       }];
 
       const fallbackSettings = settings.autoFallback ? getFallbackSettings() : undefined;
 
       const response = await callAI(
-        settings.selectedProvider as AIProviderType,
-        apiKey,
-        settings.selectedModel,
+        effectiveProvider,
+        apiKey || 'rork_builtin',
+        safeModel,
         planMsg,
         [],
         plannerPrompt,
@@ -402,13 +495,11 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
         fallbackSettings,
       );
 
-      // parsePlanFromAI Ergebnis validieren
       const parsedTasks = parsePlanFromAI(response.content);
       if (!parsedTasks || !Array.isArray(parsedTasks) || parsedTasks.length === 0) {
         throw new Error('Ungültige Plan-Antwort von KI erhalten');
       }
 
-      // FIX 1: Thinking-Task automatisch einfügen wenn komplexer Plan (>2 Tasks) - mit Validation
       const hasThinkingTask = parsedTasks.some(t => t && (t.taskType === 'thinking' || t.taskType === 'brainstorm'));
       if (!hasThinkingTask && parsedTasks.length > 2) {
         parsedTasks.unshift({
@@ -421,7 +512,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
 
       const plan: AgentPlan = {
         id: genId(),
-        userRequest: typeof userRequest === 'string' ? userRequest : '',
+        userRequest: cleanRequest,
         tasks: parsedTasks
           .filter((t) => t !== null && t !== undefined && typeof t.title === 'string' && t.title.trim().length > 0)
           .map((t, i) => ({
@@ -439,7 +530,13 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
         createdAt: Date.now(),
       };
 
-      setPlans(prev => [...prev, plan]);
+      setPlans(prev => {
+        const cleaned = prev.filter(p => !(p.status === 'clarifying' && (!p.tasks || p.tasks.length === 0)));
+        const next = [...cleaned, plan];
+        plansRef.current = next;
+        return next;
+      });
+      activePlanIdRef.current = plan.id;
       setActivePlanId(plan.id);
       return plan.id;
     } catch (e: any) {
@@ -459,56 +556,68 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
   }, [updateTaskInPlan]);
 
   const addTaskToPlan = useCallback((planId: string, title: string, description: string, taskType: AgentTaskType = 'task') => {
-    setPlans(prev => prev.map(p => {
-      if (p.id !== planId) return p;
-      const newTask: AgentTask = {
-        id: genId(),
-        title,
-        description,
-        taskType,
-        status: 'draft',
-        subAgentMessages: [],
-        filesCreated: [],
-        filesModified: [],
-        filesDeleted: [],
-      };
-      return { ...p, tasks: [...p.tasks, newTask] };
-    }));
+    setPlans(prev => {
+      const next = prev.map(p => {
+        if (p.id !== planId) return p;
+        const newTask: AgentTask = {
+          id: genId(),
+          title,
+          description,
+          taskType,
+          status: 'draft',
+          subAgentMessages: [],
+          filesCreated: [],
+          filesModified: [],
+          filesDeleted: [],
+        };
+        return { ...p, tasks: [...p.tasks, newTask] };
+      });
+      plansRef.current = next;
+      return next;
+    });
   }, []);
 
   const removeTaskFromPlan = useCallback((planId: string, taskId: string) => {
-    setPlans(prev => prev.map(p => {
-      if (p.id !== planId) return p;
-      return { ...p, tasks: p.tasks.filter(t => t.id !== taskId) };
-    }));
+    setPlans(prev => {
+      const next = prev.map(p => {
+        if (p.id !== planId) return p;
+        return { ...p, tasks: p.tasks.filter(t => t.id !== taskId) };
+      });
+      plansRef.current = next;
+      return next;
+    });
   }, []);
 
   const reorderTasksInPlan = useCallback((planId: string, fromIndex: number, toIndex: number) => {
-    setPlans(prev => prev.map(p => {
-      if (p.id !== planId) return p;
-      const newTasks = [...p.tasks];
-      if (fromIndex < 0 || fromIndex >= newTasks.length || toIndex < 0 || toIndex >= newTasks.length) return p;
-      const [moved] = newTasks.splice(fromIndex, 1);
-      newTasks.splice(toIndex, 0, moved);
-      return { ...p, tasks: newTasks };
-    }));
+    setPlans(prev => {
+      const next = prev.map(p => {
+        if (p.id !== planId) return p;
+        const newTasks = [...p.tasks];
+        if (fromIndex < 0 || fromIndex >= newTasks.length || toIndex < 0 || toIndex >= newTasks.length) return p;
+        const [moved] = newTasks.splice(fromIndex, 1);
+        newTasks.splice(toIndex, 0, moved);
+        return { ...p, tasks: newTasks };
+      });
+      plansRef.current = next;
+      return next;
+    });
   }, []);
 
   const executeSubAgent = useCallback(async (planId: string, task: AgentTask): Promise<void> => {
+    const activeLearning = isLearningEnabled(settings);
+    const effectiveProvider: AIProviderType = (settings.selectedProvider as AIProviderType) || 'rork';
+    const safeModel = resolveDefaultModel(effectiveProvider, settings.selectedModel);
+
     if (task.taskType === 'web_search') {
       updateTaskInPlan(planId, task.id, t => ({ ...t, status: 'running', startedAt: Date.now() }));
-      
-      const apiKey = getApiKey();
-      if (!apiKey) {
-        updateTaskInPlan(planId, task.id, t => ({
-          ...t, status: 'error', completedAt: Date.now(),
-          error: 'Kein API-Schlüssel für Web-Suche verfügbar.',
-        }));
-        return;
-      }
+
+      const apiKey = getApiKey() || 'rork_builtin';
 
       try {
-        const webTools = TOOL_DEFINITIONS.filter(t => ['web_search', 'web_fetch', 'think', 'add_memo'].includes(t.name));
+        const allowedWebToolNames = activeLearning
+          ? ['web_search', 'web_fetch', 'think', 'add_memo']
+          : ['web_search', 'web_fetch', 'think'];
+        const webTools = TOOL_DEFINITIONS.filter(t => allowedWebToolNames.includes(t.name));
         webTools.push({
           name: 'task_complete',
           description: 'Rufe dieses Tool auf wenn die Web-Recherche abgeschlossen ist.',
@@ -533,9 +642,10 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
 
         while (iterations < 10 && !abortRef.current && !taskDone) {
           iterations++;
+          const compressedMsgs = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
           const response = await callAI(
-            settings.selectedProvider as AIProviderType, apiKey, settings.selectedModel,
-            messages, webTools, searchPrompt,
+            effectiveProvider, apiKey, safeModel,
+            compressedMsgs, webTools, searchPrompt,
             settings.customEndpoint || undefined, fallbackSettings,
           );
 
@@ -545,9 +655,11 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             break;
           }
 
-          const toolCalls: ToolCall[] = response.toolCalls.map(tc => ({
-            id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
-          }));
+          const toolCalls: ToolCall[] = response.toolCalls
+            .filter(tc => activeLearning || !isLearningTool(tc.name))
+            .map(tc => ({
+              id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
+            }));
 
           messages = [...messages, { id: genId(), role: 'assistant', content: response.content || '', toolCalls, timestamp: Date.now() }];
 
@@ -559,7 +671,8 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
               messages = [...messages, { id: genId(), role: 'tool', content: tc.result, toolCallId: tc.id, toolName: tc.name, timestamp: Date.now() }];
               break;
             }
-            const { result } = await executeTool(tc.name, tc.arguments);
+            const { result: rawResult } = await executeTool(tc.name, tc.arguments);
+            const result = truncateToolResult(rawResult, MAX_TOOL_RESULT_LENGTH);
             tc.result = result;
             tc.status = result.startsWith('FEHLER') ? 'error' : 'completed';
             messages = [...messages, { id: genId(), role: 'tool', content: result, toolCallId: tc.id, toolName: tc.name, timestamp: Date.now() }];
@@ -587,16 +700,8 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
 
     if (task.taskType === 'thinking' || task.taskType === 'brainstorm') {
       updateTaskInPlan(planId, task.id, t => ({ ...t, status: 'running', startedAt: Date.now() }));
-      
-      const apiKey = getApiKey();
-      if (!apiKey) {
-        updateTaskInPlan(planId, task.id, t => ({
-          ...t, status: 'completed', completedAt: Date.now(),
-          thinkingContent: task.description,
-          result: task.taskType === 'thinking' ? 'Analyse abgeschlossen: ' + task.title : 'Brainstorming abgeschlossen: ' + task.title,
-        }));
-        return;
-      }
+
+      const apiKey = getApiKey() || 'rork_builtin';
 
       try {
         const baseThinkPrompt = task.taskType === 'thinking'
@@ -640,7 +745,7 @@ Investigate all options thoroughly.`;
         const fallbackSettings = settings.autoFallback ? getFallbackSettings() : undefined;
 
         const response = await callAI(
-          settings.selectedProvider as AIProviderType, apiKey, settings.selectedModel,
+          effectiveProvider, apiKey, safeModel,
           thinkMsgs, readOnlyTools, 'Always answer in English. Be VERY analytical, thorough, and deep. Think slowly and systematically. Use only read-only tools for analysis.',
           settings.customEndpoint || undefined, fallbackSettings,
         );
@@ -660,29 +765,20 @@ Investigate all options thoroughly.`;
       return;
     }
 
-    const apiKey = getApiKey();
-    if (!apiKey) throw new Error('Kein API-Schlüssel.');
+    const apiKey = getApiKey() || 'rork_builtin';
 
     updateTaskInPlan(planId, task.id, t => ({ ...t, status: 'running', startedAt: Date.now() }));
 
     const filteredBaseTools = TOOL_DEFINITIONS.filter(t => {
+      if (isLearningTool(t.name) && !activeLearning) return false;
       if (!settings.yoloMode) {
         if (t.name === 'web_search' && !settings.betaWebSearch) return false;
         if (t.name === 'web_fetch' && !settings.betaWebFetch) return false;
       }
-      const learningTools = ['read_identity_files', 'update_soul_md', 'update_agents_md', 'update_identity_md', 'update_user_md', 'update_memory_md'];
-      if (learningTools.includes(t.name) && !settings.betaAgentLearning) return false;
       const perm = getToolPermission(t.name);
       if (perm === 'removed') return false;
       return true;
     });
-
-    // sub_agent tool is removed because it is not implemented in executeTool
-    /* if (!filteredBaseTools.find(t => t.name === 'sub_agent') && (settings.yoloMode || getToolPermission('sub_agent') !== 'removed')) {
-      const subAgentTool = TOOL_DEFINITIONS.find(t => t.name === 'sub_agent');
-      if (subAgentTool) filteredBaseTools.push(subAgentTool);
-    } */
-
 
     const subAgentTools = [...filteredBaseTools, {
       name: 'task_complete',
@@ -697,16 +793,17 @@ Investigate all options thoroughly.`;
     const systemPrompt = buildSystemPrompt({
       persona: settings.persona,
       projectTree: getProjectTree(),
-      memos,
+      memos: activeLearning ? memos : [],
       todos,
       mentionedFiles: [],
       yoloMode: settings.yoloMode,
-      agentMd: settings.betaAgentLearning ? (getFileContent('.agents/AGENT.md') || agentMd) : undefined,
-      soulMd: settings.betaAgentLearning ? (getFileContent('.agents/SOUL.md') || soulMd) : undefined,
-      identityMd: settings.betaAgentLearning ? (getFileContent('.agents/IDENTITY.md') || identityMd) : undefined,
-      userMd: settings.betaAgentLearning ? (getFileContent('.agents/USER.md') || userMd) : undefined,
-      memoryMd: settings.betaAgentLearning ? (getFileContent('.agents/MEMORY.md') || memoryMd) : undefined,
-      betaAgentLearning: settings.betaAgentLearning,
+      agentMd: activeLearning ? (getFileContent('.agents/AGENT.md') || agentMd) : undefined,
+      soulMd: activeLearning ? (getFileContent('.agents/SOUL.md') || soulMd) : undefined,
+      identityMd: activeLearning ? (getFileContent('.agents/IDENTITY.md') || identityMd) : undefined,
+      userMd: activeLearning ? (getFileContent('.agents/USER.md') || userMd) : undefined,
+      memoryMd: activeLearning ? (getFileContent('.agents/MEMORY.md') || memoryMd) : undefined,
+      betaAgentLearning: activeLearning,
+      learningEnabled: activeLearning,
       toolPermissions: settings.yoloMode ? undefined : settings.toolPermissions,
     });
 
@@ -740,11 +837,12 @@ Investigate all options thoroughly.`;
       console.log('[Agent] Sub-agent iteration', iterations, 'for task:', task.title);
 
       try {
+        const compressedMsgs = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
         const response = await callAI(
-          settings.selectedProvider as AIProviderType,
+          effectiveProvider,
           apiKey,
-          settings.selectedModel,
-          messages,
+          safeModel,
+          compressedMsgs,
           subAgentTools,
           taskPrompt,
           settings.customEndpoint || undefined,
@@ -759,7 +857,6 @@ Investigate all options thoroughly.`;
           updateTaskInPlan(planId, task.id, t => ({ ...t, subAgentMessages: [...messages] }));
 
           if (iterations >= 3) {
-            // Task is NOT done just because of text, but we stop looping after 3 iterations to prevent infinite loops.
             break;
           }
 
@@ -774,9 +871,11 @@ Investigate all options thoroughly.`;
           continue;
         }
 
-        const toolCalls: ToolCall[] = response.toolCalls.map(tc => ({
-          id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
-        }));
+        const toolCalls: ToolCall[] = response.toolCalls
+          .filter(tc => activeLearning || !isLearningTool(tc.name))
+          .map(tc => ({
+            id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
+          }));
 
         const assistantMsg: ChatMessage = {
           id: genId(), role: 'assistant', content: response.content || '', toolCalls, timestamp: Date.now(),
@@ -797,7 +896,8 @@ Investigate all options thoroughly.`;
             break;
           }
 
-          const { result, fileAction } = await executeTool(tc.name, tc.arguments);
+          const { result: rawResult, fileAction } = await executeTool(tc.name, tc.arguments);
+          const result = truncateToolResult(rawResult, MAX_TOOL_RESULT_LENGTH);
           tc.result = result;
           const isError = result.startsWith('ERROR') || result.startsWith('FEHLER');
           tc.status = isError ? 'error' : 'completed';
@@ -869,7 +969,7 @@ Investigate all options thoroughly.`;
       filesDeleted: [...filesDeleted],
       error: errorDetail,
     }));
-  }, [settings, getApiKey, getFallbackSettings, getProjectTree, memos, todos, executeTool, updateTaskInPlan]);
+  }, [settings, getApiKey, getFallbackSettings, getProjectTree, memos, todos, executeTool, updateTaskInPlan, getFileContent, agentMd, soulMd, identityMd, userMd, memoryMd, getToolPermission]);
 
   const executePlan = useCallback(async (planId: string) => {
     abortRef.current = false;
@@ -956,8 +1056,7 @@ Investigate all options thoroughly.`;
       let criticPassed = false;
       while (criticRounds < 4 && !abortRef.current && !hadFatalError && !criticPassed) {
         criticRounds++;
-        
-        // 1. Critic Task
+
         const criticTaskId = genId();
         const criticTask: AgentTask = {
           id: criticTaskId,
@@ -967,29 +1066,28 @@ Investigate all options thoroughly.`;
           status: 'draft',
           subAgentMessages: [], filesCreated: [], filesModified: [], filesDeleted: []
         };
-        
+
         addTaskToPlan(planId, criticTask.title, criticTask.description, criticTask.taskType);
-        
+
         const latestPlanWithCritic = plansRef.current.find(p => p.id === planId);
         const actualCriticTask = latestPlanWithCritic?.tasks.find(t => t.title === criticTask.title);
-        
+
         if (actualCriticTask) {
           await executeSubAgent(planId, actualCriticTask);
-          
+
           const postCriticPlan = plansRef.current.find(p => p.id === planId);
           const finishedCriticTask = postCriticPlan?.tasks.find(t => t.id === actualCriticTask.id);
-          
+
           const criticResult = finishedCriticTask?.thinkingContent || finishedCriticTask?.result || '';
           const scoreMatch = criticResult.match(/(?:(?:Score|Rating):?\s*)?(10|10\.0|[0-9](?:\.[0-9]+)?)\s*(?:\/|out of)\s*10/i);
           let score = 0;
           if (scoreMatch && scoreMatch[1]) {
             score = parseFloat(scoreMatch[1]);
           }
-          
+
           if (score >= 8.5) {
             criticPassed = true;
           } else {
-            // Add a Fix Task
             const fixTask: AgentTask = {
               id: genId(),
               title: 'Fix issues from Critic Round ' + criticRounds,
@@ -999,7 +1097,7 @@ Investigate all options thoroughly.`;
               subAgentMessages: [], filesCreated: [], filesModified: [], filesDeleted: []
             };
             addTaskToPlan(planId, fixTask.title, fixTask.description, fixTask.taskType);
-            
+
             const planWithFix = plansRef.current.find(p => p.id === planId);
             const actualFixTask = planWithFix?.tasks.find(t => t.title === fixTask.title);
             if (actualFixTask) {
@@ -1014,7 +1112,7 @@ Investigate all options thoroughly.`;
 
       const finishedPlan = plansRef.current.find(p => p.id === planId);
       const pTasks = finishedPlan?.tasks ?? currentPlan.tasks;
-      
+
       const completedCount = pTasks.filter(t => t.status === 'completed').length;
       const errorCount = pTasks.filter(t => t.status === 'error').length;
       const cancelledCount = pTasks.filter(t => t.status === 'cancelled').length;
@@ -1022,7 +1120,7 @@ Investigate all options thoroughly.`;
       const allDone = pTasks.every(t => t.status === 'completed' || t.status === 'error' || t.status === 'cancelled');
       const hasRealErrors = errorCount > 0;
       const allSucceeded = completedCount === totalTaskCount;
-      
+
       const allCreated = pTasks.flatMap(t => t.filesCreated || []);
       const allModified = pTasks.flatMap(t => t.filesModified || []);
       const allDeleted = pTasks.flatMap(t => t.filesDeleted || []);
@@ -1048,13 +1146,15 @@ Investigate all options thoroughly.`;
 
       let finalResponse = '';
       try {
-        const apiKey = getApiKey();
+        const apiKey = getApiKey() || 'rork_builtin';
+        const effectiveProvider: AIProviderType = (settings.selectedProvider as AIProviderType) || 'rork';
+        const safeModel = resolveDefaultModel(effectiveProvider, settings.selectedModel);
         const summaryContext = buildFinalSummaryContext(currentPlan.userRequest, pTasks, allCreated, allModified, allDeleted, hasRealErrors);
         const fallbackSettings = settings.autoFallback ? getFallbackSettings() : undefined;
         const aiResponse = await generateFinalResponse(
-          settings.selectedProvider as AIProviderType,
+          effectiveProvider,
           apiKey,
-          settings.selectedModel,
+          safeModel,
           summaryContext,
           settings.customEndpoint || undefined,
           fallbackSettings,
@@ -1104,8 +1204,8 @@ Investigate all options thoroughly.`;
         };
       });
 
-      // User-Info Extraction nach Job-Abschluss (wenn Lernmodus aktiv)
-      if (settings.betaAgentLearning) {
+      // User-Info Extraction nach Job-Abschluss (nur wenn Lernmodus aktiv)
+      if (isLearningEnabled(settings)) {
         const allMessages = pTasks.flatMap(t => t.subAgentMessages || []);
         await extractUserInfoIfEnabled(allMessages);
       }
@@ -1115,17 +1215,83 @@ Investigate all options thoroughly.`;
     } finally {
       setIsExecuting(false);
     }
-  }, [updatePlan, updateTaskInPlan, executeSubAgent]);
+  }, [updatePlan, updateTaskInPlan, executeSubAgent, addTaskToPlan, getApiKey, settings, getFallbackSettings]);
 
   const stopExecution = useCallback(() => {
     abortRef.current = true;
     setIsExecuting(false);
-  }, []);
+    if (pendingToolApproval) {
+      pendingToolApproval.resolve(false);
+      setPendingToolApproval(null);
+    }
+  }, [pendingToolApproval]);
 
   const dismissPlan = useCallback((planId: string) => {
     updatePlan(planId, p => ({ ...p, dismissed: true }));
     if (activePlanId === planId) setActivePlanId(null);
   }, [activePlanId, updatePlan]);
+
+  const skipClarificationQuestions = useCallback(async (planId?: string, autoExecute = true): Promise<string | null> => {
+    setClarificationQuestions([]);
+    const targetPlan = planId
+      ? plansRef.current.find(p => p.id === planId)
+      : (plansRef.current.find(p => p.id === activePlanIdRef.current) || plansRef.current.find(p => p.status === 'clarifying'));
+
+    const baseRequest = targetPlan?.userRequest || lastUserRequestRef.current;
+    if (!baseRequest) {
+      return null;
+    }
+
+    if (targetPlan && targetPlan.tasks && targetPlan.tasks.length > 0) {
+      updatePlan(targetPlan.id, p => ({
+        ...p,
+        userRequest: `${p.userRequest}\n\n[Hinweis zur Ausführung]: ${SKIP_QUESTIONS_INSTRUCTION}`,
+        status: autoExecute ? 'executing' : 'review',
+      }));
+      if (autoExecute) {
+        await executePlan(targetPlan.id);
+      }
+      return targetPlan.id;
+    }
+
+    if (targetPlan) {
+      updatePlan(targetPlan.id, p => ({ ...p, dismissed: true }));
+    }
+
+    const newPlanId = await createPlan(
+      `${baseRequest}\n\n[System-Anweisung]: ${SKIP_QUESTIONS_INSTRUCTION}`,
+      { skipQuestions: true },
+    );
+
+    if (newPlanId && autoExecute) {
+      await executePlan(newPlanId);
+    }
+    return newPlanId;
+  }, [createPlan, executePlan, updatePlan]);
+
+  const submitClarificationAnswers = useCallback(async (answersText: string, planId?: string, autoExecute = false): Promise<string | null> => {
+    setClarificationQuestions([]);
+    const targetPlan = planId
+      ? plansRef.current.find(p => p.id === planId)
+      : (plansRef.current.find(p => p.id === activePlanIdRef.current) || plansRef.current.find(p => p.status === 'clarifying'));
+
+    const baseRequest = targetPlan?.userRequest || lastUserRequestRef.current;
+    if (!baseRequest) return null;
+
+    if (targetPlan) {
+      updatePlan(targetPlan.id, p => ({ ...p, dismissed: true }));
+    }
+
+    const effectiveAnswers = answersText.trim() || SKIP_QUESTIONS_INSTRUCTION;
+    const newPlanId = await createPlan(
+      `${baseRequest}\n\nZusätzlicher Kontext (Antworten):\n${effectiveAnswers}`,
+      { skipQuestions: true },
+    );
+    if (newPlanId && autoExecute) {
+      await executePlan(newPlanId);
+    }
+    return newPlanId;
+  }, [createPlan, executePlan, updatePlan]);
 
   const retryTask = useCallback(async (planId: string, taskId: string) => {
     const plan = plansRef.current.find(p => p.id === planId);
@@ -1166,27 +1332,25 @@ Investigate all options thoroughly.`;
     }
   }, [updatePlan, updateTaskInPlan, executeSubAgent]);
 
-  // User-Info Auto-Extraction im Lernmodus (mit Null Safety)
+  // User-Info Auto-Extraction im Lernmodus (mit Null Safety & striktem Guard)
   const extractUserInfoIfEnabled = useCallback(async (messages: ChatMessage[]) => {
-    if (!settings.betaAgentLearning) return;
-    
+    if (!isLearningEnabled(settings)) return;
+
     const lastUserMessages = messages
       .filter((m): m is ChatMessage => m !== null && m !== undefined)
       .filter(m => m.role === 'user')
       .slice(-5);
-    
+
     const userContent = lastUserMessages.map(m => typeof m.content === 'string' ? m.content : '').join('\n');
     if (!userContent.trim()) return;
-    
-    // Prüfe auf persönliche Informationen (Name, Rolle, etc.) - mit Null Safety
+
     const nameMatch = userContent.match(/\bich (?:heiße|bin)\s+(?:der |die )?([A-Z][a-zäöüß]+)/i);
     const roleMatch = userContent.match(/\b(?:ich bin|als|beruf(?:lich)?|entwickler|programmierer)\s+([^.,\n!]+)/i);
     const companyMatch = userContent.match(/\b(?:arbeite bei|firma|unternehmen|in\s+firma)\s+([A-Z][a-zA-Zäöüß\s]+)/i);
-    
+
     let userInfoUpdated = false;
     let newUserInfo = typeof userMd === 'string' ? userMd : '';
-    
-    // Name extrahieren - nur wenn nicht bereits vorhanden und Match existiert
+
     if (nameMatch && nameMatch[1] && !newUserInfo.toLowerCase().includes('name')) {
       const extractedName = nameMatch[1].trim();
       if (extractedName.length > 0 && extractedName.length < 50) {
@@ -1195,8 +1359,7 @@ Investigate all options thoroughly.`;
         console.log('[Agent] Extracted name:', extractedName);
       }
     }
-    
-    // Rolle extrahieren - nur wenn nicht bereits vorhanden und Match existiert
+
     if (roleMatch && roleMatch[0] && !newUserInfo.toLowerCase().includes('rolle') && !newUserInfo.toLowerCase().includes('beruf')) {
       const roleText = roleMatch[0].trim();
       if (roleText.length > 5 && roleText.length < 200) {
@@ -1206,8 +1369,7 @@ Investigate all options thoroughly.`;
         console.log('[Agent] Extracted role:', roleText);
       }
     }
-    
-    // Firma extrahieren - nur wenn nicht bereits vorhanden und Match existiert
+
     if (companyMatch && companyMatch[1] && !newUserInfo.toLowerCase().includes('firma') && !newUserInfo.toLowerCase().includes('unternehmen')) {
       const extractedCompany = companyMatch[1].trim();
       if (extractedCompany.length > 2 && extractedCompany.length < 100) {
@@ -1216,8 +1378,7 @@ Investigate all options thoroughly.`;
         console.log('[Agent] Extracted company:', extractedCompany);
       }
     }
-    
-    // Nur aktualisieren wenn valide Infos vorhanden
+
     if (userInfoUpdated && newUserInfo.trim().length > 0) {
       setUserMd(newUserInfo);
       const memoParts = [];
@@ -1227,7 +1388,7 @@ Investigate all options thoroughly.`;
       addMemo('User-Info aktualisiert: ' + memoParts.join(', '));
       console.log('[Agent] USER.MD updated successfully');
     }
-  }, [settings.betaAgentLearning, userMd, setUserMd, addMemo]);
+  }, [settings, userMd, setUserMd, addMemo]);
 
   const visiblePlans = plans.filter(p => !p.dismissed);
 
@@ -1238,5 +1399,6 @@ Investigate all options thoroughly.`;
     setActivePlanId,
     pendingToolApproval, approveAgentTool,
     clarificationQuestions, setClarificationQuestions,
+    skipClarificationQuestions, submitClarificationAnswers,
   };
 });

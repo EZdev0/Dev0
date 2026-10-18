@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IDE } from '@/constants/colors';
 import { SubAgent, SubAgentType } from '@/utils/multi-agent-system';
@@ -22,6 +22,8 @@ interface AgentDashboardProps {
   onDeploySubAgent: (type: SubAgentType) => void;
   onViewSubAgentResult: (agentId: string) => void;
   currentTask?: string;
+  hasClarificationQuestions?: boolean;
+  onSkipClarificationQuestions?: () => void;
 }
 
 export const AgentDashboard: React.FC<AgentDashboardProps> = ({
@@ -29,7 +31,9 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
   subAgents,
   onDeploySubAgent,
   onViewSubAgentResult,
-  currentTask
+  currentTask,
+  hasClarificationQuestions,
+  onSkipClarificationQuestions,
 }) => {
   const [deployModalVisible, setDeployModalVisible] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<SubAgent | null>(null);
@@ -63,6 +67,33 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
           <Text style={{ color: IDE.muted, fontSize: 13, marginTop: 4 }}>
             System ready. The Main Agent plans tasks and delegates to sub-agents.
           </Text>
+        )}
+
+        {hasClarificationQuestions && onSkipClarificationQuestions && (
+          <View pointerEvents="auto">
+            <TouchableOpacity
+              onPress={onSkipClarificationQuestions}
+              style={{
+                marginTop: 12,
+                backgroundColor: IDE.accent,
+                paddingVertical: 11,
+                paddingHorizontal: 14,
+                borderRadius: 8,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                zIndex: 9999,
+                elevation: 20,
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="play-skip-forward" size={16} color="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
+                Überspringen & Direkt starten (Skip)
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
 
@@ -424,13 +455,13 @@ export const MemoSection: React.FC<MemoSectionProps> = ({
       {/* Search */}
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={18} color={IDE.muted} />
-        <input
-          type="text"
+        <TextInput
           placeholder="Search memos..."
+          placeholderTextColor={IDE.muted}
           value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
-            onSearchMemo(e.target.value);
+          onChangeText={(text) => {
+            setSearchQuery(text);
+            onSearchMemo(text);
           }}
           style={styles.searchInput}
         />

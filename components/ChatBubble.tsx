@@ -4,7 +4,7 @@ import { Copy, Bot, User, CheckSquare, Square, ChevronDown, ChevronUp } from 'lu
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
 import { IDE } from '@/constants/colors';
-import { ChatMessage } from '@/types';
+import { ChatMessage, isLearningTool, isLearningEnabled } from '@/types';
 import { highlightLine, parseMarkdownSegments } from '@/utils/syntax';
 import { useApp } from '@/providers/AppProvider';
 import ToolCallView from './ToolCallView';
@@ -19,15 +19,17 @@ const ChatBubble = React.memo(({ message }: Props) => {
   const appContext = useApp();
   const appTodos = appContext.todos;
   const updateTodoItem = appContext.updateTodoItem;
+  const learningActive = isLearningEnabled(appContext.settings);
 
   const visibleToolCalls = useMemo(
     () => (message.toolCalls ?? []).filter(tc => {
       if (!tc) return false;
       if (tc.name === 'think') return false;
+      if (isLearningTool(tc.name) && !learningActive) return false;
       if (message.todos && message.todos.length > 0 && (tc.name === 'create_todo' || tc.name === 'update_todo')) return false;
       return true;
     }),
-    [message.toolCalls, message.todos]
+    [message.toolCalls, message.todos, learningActive]
   );
 
   const segments = useMemo(() => {

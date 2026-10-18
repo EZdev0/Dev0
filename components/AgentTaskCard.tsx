@@ -7,7 +7,8 @@ import {
   FileText, FilePlus, FileX, RefreshCw, AlertCircle, Brain, Lightbulb, Wrench, Globe, ExternalLink, Zap,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
-import { AgentTask, AgentTaskStatus, AgentTaskType, ToolCall } from '@/types';
+import { AgentTask, AgentTaskStatus, AgentTaskType, ToolCall, isLearningTool, isLearningEnabled } from '@/types';
+import { useApp } from '@/providers/AppProvider';
 import ToolCallView from './ToolCallView';
 
 interface Props {
@@ -62,6 +63,8 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, onRetry }: Props) => {
+  const { settings } = useApp();
+  const learningActive = isLearningEnabled(settings);
   const [expanded, setExpanded] = useState<boolean>(false);
   const [editing, setEditing] = useState<boolean>(false);
   const [editTitle, setEditTitle] = useState<string>(task.title);
@@ -160,7 +163,13 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
   for (const msg of (task.subAgentMessages ?? [])) {
     if (msg?.role === 'assistant' && msg.toolCalls) {
       for (const tc of msg.toolCalls) {
-        if (tc && tc.name !== 'task_complete' && tc.name !== 'think' && tc.name !== 'get_active_tools') {
+        if (
+          tc &&
+          tc.name !== 'task_complete' &&
+          tc.name !== 'think' &&
+          tc.name !== 'get_active_tools' &&
+          (learningActive || !isLearningTool(tc.name))
+        ) {
           allToolCalls.push(tc);
         }
       }

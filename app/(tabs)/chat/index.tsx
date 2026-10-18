@@ -24,16 +24,22 @@ import ThinkingBlock from '@/components/ThinkingBlock';
 
 export default function ChatScreen() {
   const router = useRouter();
-  const { messages, isLoading, isThinking, thinkingPhase, sendMessage, stopGeneration, clearChat, lastFallbackInfo, pendingApproval, approvePendingTool } = useChat();
+  const {
+    messages, isLoading, isThinking, thinkingPhase,
+    sendMessage, stopGeneration, clearChat, lastFallbackInfo,
+    pendingApproval, approvePendingTool,
+    hasPendingChatQuestions, skipClarificationQuestions: skipChatClarification,
+  } = useChat();
   const {
     activePlan, isPlanning, isExecuting,
     createPlan, executePlan, stopExecution, dismissPlan,
     updateTaskDetails, addTaskToPlan, removeTaskFromPlan, reorderTasksInPlan, retryTask,
     plans, pendingToolApproval, approveAgentTool,
     clarificationQuestions, setClarificationQuestions,
+    skipClarificationQuestions, submitClarificationAnswers,
   } = useAgent();
   const { allFilePaths, currentProject } = useProject();
-  const { settings } = useApp();
+  const { settings, updateSettings } = useApp();
 
   const [input, setInput] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
@@ -41,7 +47,20 @@ export default function ChatScreen() {
   const [fileSearch, setFileSearch] = useState<string>('');
   const [showAtSuggestions, setShowAtSuggestions] = useState<boolean>(false);
   const [atQuery, setAtQuery] = useState<string>('');
-  const [agentMode, setAgentMode] = useState<boolean>(false);
+  const [agentMode, setAgentModeState] = useState<boolean>(Boolean(settings?.agentMode));
+
+  const setAgentMode = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setAgentModeState(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      updateSettings({ agentMode: next });
+      return next;
+    });
+  }, [updateSettings]);
+
+  useEffect(() => {
+    setAgentModeState(Boolean(settings?.agentMode));
+  }, [settings?.agentMode]);
+
   const [showAttachMenu, setShowAttachMenu] = useState<boolean>(false);
   const flatListRef = useRef<FlatList<ChatMessage>>(null);
   const breatheAnim = useRef(new Animated.Value(0)).current;
@@ -158,20 +177,28 @@ export default function ChatScreen() {
     if (activePlan) reorderTasksInPlan(activePlan.id, fromIndex, toIndex);
   }, [activePlan, reorderTasksInPlan]);
 
+  const handleSkipQuestions = useCallback(async () => {
+    console.log('[Chat] Skipping clarification questions -> executing directly with best-practice assumptions');
+    if ((clarificationQuestions && clarificationQuestions.length > 0) || activePlan?.status === 'clarifying') {
+      await skipClarificationQuestions(activePlan?.id, true);
+    } else if (hasPendingChatQuestions) {
+      skipChatClarification();
+    } else {
+      await skipClarificationQuestions(activePlan?.id, true);
+    }
+  }, [activePlan?.id, activePlan?.status, clarificationQuestions, hasPendingChatQuestions, skipChatClarification, skipClarificationQuestions]);
+
   const handleAnswerQuestions = useCallback(async (answers: {question: string; answer: string}[]) => {
     console.log('[Chat] Questions answered:', answers);
-    // Reset questions to close modal
-    setClarificationQuestions([]);
-    // Recreate plan with answers as context
-    if (activePlan) {
-      // User has answered questions, now the final plan is created
-      dismissPlan(activePlan.id);
+    if (!answers || answers.length === 0 || answers.every(a => !a.answer || !a.answer.trim())) {
+      await skipClarificationQuestions(activePlan?.id, true);
+      return;
     }
-    // Call AI again with answers for final plan
-    const enhancedRequest = input + '\n\n## Clarification questions answered:\n' +
-      answers.map((qa, i) => `${i + 1}. ${qa.question}\n   Answer: ${qa.answer}`).join('\n');
-    await createPlan(enhancedRequest);
-  }, [activePlan, dismissPlan, createPlan, setClarificationQuestions, input]);
+    const formattedAnswers = answers
+      .map((qa, i) => `${i + 1}. ${qa.question}\n   Antwort: ${qa.answer?.trim() || 'Übersprungen – bitte sinnvollste Best-Practice-Annahme treffen.'}`)
+      .join('\n');
+    await submitClarificationAnswers(formattedAnswers, activePlan?.id, false);
+  }, [activePlan?.id, skipClarificationQuestions, submitClarificationAnswers]);
 
   const handleOpenFilePicker = useCallback(() => {
     setShowAttachMenu(false);
@@ -207,6 +234,7 @@ export default function ChatScreen() {
       case 'gemini': return !!settings.geminiKey;
       case 'groq': return !!settings.groqKey;
       case 'openrouter': return !!settings.openrouterKey;
+      case 'nvidia': return !!settings.nvidiaKey;
       case 'custom': return !!settings.customKey;
       default: return false;
     }
@@ -338,6 +366,7 @@ export default function ChatScreen() {
       onReorderTasks={handleReorderTasks}
       clarificationQuestions={clarificationQuestions || []}
       onAnswerQuestions={handleAnswerQuestions}
+      onSkipQuestions={handleSkipQuestions}
     />
   ) : null;
 
@@ -593,6 +622,50 @@ export default function ChatScreen() {
               <Text style={styles.approvalAcceptText}>Allow</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      )}
+
+      {((clarificationQuestions && clarificationQuestions.length > 0) || activePlan?.status === 'clarifying' || hasPendingChatQuestions) && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          backgroundColor: IDE.surface,
+          borderTopWidth: 1,
+          borderTopColor: IDE.accent + '60',
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          gap: 10,
+          zIndex: 9999,
+          elevation: 20,
+        }} pointerEvents="auto">
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+            <MessageSquare size={15} color={IDE.warning} />
+            <Text style={{ fontSize: 12, color: IDE.text, fontWeight: '600', flex: 1 }} numberOfLines={2}>
+              KI-Rückfragen offen ({clarificationQuestions?.length || 1})
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={handleSkipQuestions}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: IDE.accent,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 8,
+              zIndex: 9999,
+              elevation: 20,
+            }}
+            activeOpacity={0.75}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Zap size={13} color="#fff" />
+            <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+              Überspringen & Direkt starten (Skip)
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 

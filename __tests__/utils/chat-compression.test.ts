@@ -1,4 +1,12 @@
-import { compressChat, analyzeChat, prepareCompressionPreview, extractKeyMessages } from '../../utils/chat-compression';
+import {
+  compressChat,
+  analyzeChat,
+  prepareCompressionPreview,
+  extractKeyMessages,
+  MAX_TOOL_RESULT_LENGTH,
+  truncateToolResult,
+  compressAndSanitizeMessagesForAPI,
+} from '../../utils/chat-compression';
 import { ChatMessage } from '../../types';
 
 describe('chat-compression utils', () => {
@@ -45,8 +53,6 @@ describe('chat-compression utils', () => {
     });
 
     it('should correctly identify code snippets', () => {
-      // "hi" is considered a greeting in `isGreeting` if the content starts with it. "hier" starts with "hi".
-      // Use something else.
       const analysis = analyzeChat([{ id: '1', role: 'user', content: 'Schau mal, das ist der Code: ```javascript\nconsole.log("hello");\n```', timestamp: t }]);
       expect(analysis.codeSnippets.length).toBe(1);
     });
@@ -58,35 +64,27 @@ describe('chat-compression utils', () => {
       ]);
       expect(analysis.repetitions.length).toBe(1);
     });
+
+    it('should safely handle null/undefined entries and missing content', () => {
+      const analysis = analyzeChat([null as any, undefined as any, { id: 'x', role: 'user', content: undefined as any, timestamp: t }]);
+      expect(analysis.greetings.length).toBe(0);
+    });
   });
 
   describe('compressChat', () => {
     it('should compress chat based on keepLastN', () => {
       const result = compressChat(mockMessages, { keepLastN: 5, includeSummary: false });
-
-      // Should keep at least 5 last messages
       expect(result.messages.length).toBeGreaterThanOrEqual(5);
-
-      // Check if last message is kept
       expect(result.messages[result.messages.length - 1].id).toBe('22');
     });
 
     it('should keep important messages', () => {
       const result = compressChat(mockMessages, { keepLastN: 2, includeSummary: false });
-
       const keptIds = result.messages.map(m => m.id);
-
-      // Should keep bug report (error)
       expect(keptIds).toContain('3');
-      expect(keptIds).toContain('4'); // error keyword 'fehler'
-
-      // Should keep code snippet
+      expect(keptIds).toContain('4');
       expect(keptIds).toContain('5');
-
-      // Should keep decision
       expect(keptIds).toContain('6');
-
-      // Should keep question
       expect(keptIds).toContain('7');
     });
 
@@ -97,19 +95,46 @@ describe('chat-compression utils', () => {
     });
   });
 
-  describe('prepareCompressionPreview', () => {
+  describe('prepareCompressionPreview & extractKeyMessages', () => {
     it('should return preview info', () => {
       const preview = prepareCompressionPreview(mockMessages);
       expect(preview.canCompress).toBeDefined();
       expect(preview.recommendation).toBeDefined();
       expect(preview.preview.compressionRatio).toBeDefined();
     });
-  });
 
-  describe('extractKeyMessages', () => {
     it('should extract the most important messages up to limit', () => {
       const keyMessages = extractKeyMessages(mockMessages, 3);
       expect(keyMessages.length).toBeLessThanOrEqual(3);
+    });
+  });
+
+  describe('truncateToolResult & compressAndSanitizeMessagesForAPI', () => {
+    it('should enforce MAX_TOOL_RESULT_LENGTH = 6000', () => {
+      expect(MAX_TOOL_RESULT_LENGTH).toBe(6000);
+      const huge = 'X'.repeat(10000);
+      const truncated = truncateToolResult(huge);
+      expect(truncated.length).toBeLessThanOrEqual(6000);
+      expect(truncated).toContain('[... Tool-Output gekürzt');
+    });
+
+    it('should truncate oversized tool messages and nested toolCall results before API calls', () => {
+      const msgs: ChatMessage[] = [
+        { id: 'u1', role: 'user', content: 'Bitte prüfe Datei', timestamp: t },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'Ich lese die Datei',
+          toolCalls: [{ id: 'tc1', name: 'read_file', arguments: { path: 'a.ts' }, status: 'completed', result: 'R'.repeat(9000) }],
+          timestamp: t + 100,
+        },
+        { id: 't1', role: 'tool', content: 'T'.repeat(9000), toolCallId: 'tc1', toolName: 'read_file', timestamp: t + 200 },
+      ];
+      const sanitized = compressAndSanitizeMessagesForAPI(msgs);
+      const toolMsg = sanitized.find(m => m.role === 'tool');
+      const assistantMsg = sanitized.find(m => m.role === 'assistant');
+      expect(toolMsg?.content.length).toBeLessThanOrEqual(6000);
+      expect(assistantMsg?.toolCalls?.[0]?.result?.length).toBeLessThanOrEqual(6000);
     });
   });
 });

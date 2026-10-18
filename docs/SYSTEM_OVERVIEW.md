@@ -555,6 +555,24 @@ All critical functions have been successfully tested:
 
 ---
 
-**Last update:** 2026-03-02
-**Verified by:** QCoder Agent
+## 🛡️ 2026-10-18 Resilience & Privacy Architecture Additions
+
+### 1. Resilient AI Pipeline (`utils/ai-service.ts` & `app/api/chat+api.ts`)
+- **Default Model Guard (`resolveDefaultModel`):** Guarantees a valid model identifier (`rork-default` / `gpt-4o-mini`) on every request.
+- **Pre-API Context Compression (`compressAndSanitizeMessagesForAPI`):** Automatically compresses long chat histories and truncates tool outputs to `MAX_TOOL_RESULT_LENGTH = 6000` characters.
+- **2x Exponential Backoff + Keyless Pollinations Fallback:** Retries transient Rork errors twice (`500ms`, `1000ms`) and seamlessly falls back to `https://text.pollinations.ai/openai` (`model: 'openai'`) within the same request cycle.
+
+### 2. Keyless Multi-Stage Web Search & Fetch (`utils/web-tools.ts`)
+- **Sub-AI Search Agent (`runSubAISearchAgent`):** Optimizes queries (`optimizeSearchQuery`), runs a 4-stage keyless search cascade (Jina Reader + DDG Lite → Pollinations `searchgpt` → Wikipedia DE/EN + DDG Instant Answer JSON → AllOrigins/CodeTabs CORS proxies), and optionally summarizes results with citations (`summarizeSearchWithSubAI`).
+- **3-Stage Keyless `performWebFetch`:** Uses Jina AI Reader (`r.jina.ai`), `/api/fetch` + direct fetch, and rotating CORS proxies with `cleanHtml()` and a strict 6,000-character cap.
+
+### 3. Skip Clarification Workflow & 3-Layer Learn/Memo Guard
+- **Skip Clarification (`skipClarificationQuestions`):** High-z-index **"Überspringen & Direkt starten (Skip)"** button in `AgentPlanView`, `MultiAgentUI`, and `ChatScreen` bypasses AI clarification questions and executes immediately with best-practice assumptions (`SKIP_QUESTIONS_INSTRUCTION`).
+- **3-Layer Learn/Memo Guard (`isLearningEnabled` / `LEARNING_TOOL_NAMES`):** Synchronizes `betaAgentLearning`, `learningEnabled`, and `memoEnabled` across UI visibility, prompt/tool-schema generation, and runtime tool execution (`memo-system.ts`, `ChatProvider.tsx`, `AgentProvider.tsx`).
+
+---
+
+**Last update:** 2026-10-18
+**Verified by:** Antigravity Agent
 **Status:** ✅ All systems operational
+

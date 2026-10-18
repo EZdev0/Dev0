@@ -228,3 +228,41 @@ continue;
 ## ✅ STATUS: ALL CRITICAL FIXES IMPLEMENTED
 
 **Ready to test!** 🚀
+
+---
+
+## 🚀 2026-10-18 ARCHITECTURE UPGRADE & BUG AUDIT COMPLETION
+
+### 1. Rork API Resilience & 100% Free Keyless Pollinations Fallback (`utils/ai-service.ts`, `app/api/chat+api.ts`, `utils/chat-compression.ts`)
+- **Root Cause Analysis of Rork Aborts:**
+  1. Empty or `undefined` `model` strings (`""`) were occasionally sent to `https://toolkit.rork.com/llm/text`.
+  2. Uncompressed chat histories and oversized `read_file` / `web_fetch` tool outputs exceeded payload limits, triggering HTTP `413` / `500` or timeouts.
+  3. Single-attempt failures on `callRork` aborted the entire assistant turn without retry or free fallback.
+- **Implemented Fixes:**
+  - Added `resolveDefaultModel(provider, model)` in `utils/ai-service.ts` and `DEFAULT_RORK_MODEL = 'gpt-4o-mini'` in `app/api/chat+api.ts` so `model` is never empty.
+  - Added `MAX_TOOL_RESULT_LENGTH = 6000`, `truncateToolResult()`, and `compressAndSanitizeMessagesForAPI()` in `utils/chat-compression.ts` to enforce context compression and truncate oversized tool outputs before every API call.
+  - Added automatic **2x Exponential Backoff Retry** (`500ms`, `1000ms`) in `callRork` plus seamless, in-place fallback to **`https://text.pollinations.ai/openai`** (`POST`, `model: 'openai'`, 100% free & keyless) in both `utils/ai-service.ts` (`callPollinationsFallback`) and `app/api/chat+api.ts` (`fetchPollinationsFallback`).
+
+### 2. Keyless 4-Stage `web_search`, 3-Stage `web_fetch` & Sub-AI Search Agent (`utils/web-tools.ts`, `app/api/search+api.ts`, `app/api/fetch+api.ts`)
+- **Sub-AI Search Agent (`runSubAISearchAgent` / `runSearchSubAgent`):**
+  - Optimizes conversational queries via `optimizeSearchQuery()`, executes the multi-stage search cascade, and optionally synthesizes findings with source URLs via `summarizeSearchWithSubAI()`.
+- **4-Stage Keyless `web_search` Fallback Chain:**
+  1. **Stage 1:** Jina AI Reader + DuckDuckGo Lite (`https://r.jina.ai/https://lite.duckduckgo.com/lite/?q=...`) — CORS-friendly Markdown extraction.
+  2. **Stage 2:** Pollinations SearchGPT (`https://text.pollinations.ai/...?model=searchgpt`) — keyless AI web search fallback.
+  3. **Stage 3:** Native CORS JSON APIs — Wikipedia Search API (`de.wikipedia.org` + `en.wikipedia.org` with `origin=*`) and DuckDuckGo Instant Answer API.
+  4. **Stage 4:** Rotating CORS proxies (`api.allorigins.win/raw` and `api.codetabs.com/v1/proxy`) parsing DuckDuckGo HTML results.
+- **3-Stage Keyless `web_fetch` Fallback Chain:**
+  1. **Stage 1:** `https://r.jina.ai/${targetUrl}` for clean Markdown/text extraction (including JS-rendered pages).
+  2. **Stage 2:** Local Expo API route `/api/fetch` (`app/api/fetch+api.ts`) and direct `fetch`.
+  3. **Stage 3:** Rotating CORS proxies (`allorigins` + `codetabs`) with `cleanHtml()` and strict 6,000-character truncation.
+
+### 3. Prominent "Skip" Button for AI Clarification Questions (`components/AgentPlanView.tsx`, `components/MultiAgentUI.tsx`, `app/(tabs)/chat/index.tsx`, `providers/AgentProvider.tsx`, `providers/ChatProvider.tsx`)
+- Added a prominent, high-priority **"Überspringen & Direkt starten (Skip)"** button (`zIndex: 9999`, `elevation: 20`, safe-area padding) whenever the agent or chat asks clarification questions (`status === 'clarifying'` or `pendingQuestions.length > 0`).
+- Added per-question skip buttons and fixed missing `<TextInput>` import in `components/MultiAgentUI.tsx`.
+- Clicking Skip immediately ends the clarification phase and executes the task using `SKIP_QUESTIONS_INSTRUCTION`: *"Fragen wurden vom Nutzer übersprungen. Triff eigenständig die sinnvollsten Best-Practice-Annahmen und führe die Aufgabe direkt vollständig aus."*
+
+### 4. Strict 3-Layer Guard for Learn / Memo System (`types/index.ts`, `providers/AppProvider.tsx`, `providers/ChatProvider.tsx`, `providers/AgentProvider.tsx`, `utils/ai-service.ts`, `utils/memo-system.ts`, `app/(tabs)/tools/index.tsx`, `components/ToolCallView.tsx`, `components/ChatBubble.tsx`)
+- **Layer 1 (UI Hiding):** Hidden from the Tools/Skills tab, `ChatBubble`, and `ToolCallView` whenever `!isLearningEnabled(settings)`.
+- **Layer 2 (Prompt & Tool-Array Stripping):** `getAvailableTools()`, `buildSystemPrompt()`, and `buildPlannerPrompt()` strip all 7 learning/identity tools (`add_memo`, `read_identity_files`, `update_soul_md`, `update_agents_md`, `update_identity_md`, `update_user_md`, `update_memory_md`) and omit memo/identity prompt sections when disabled.
+- **Layer 3 (Hard Execution & Parser Block):** `callRork`, `callPollinationsFallback`, `callAI`, `ChatProvider`, `AgentProvider`, and `memo-system.ts` (`setMemoSystemEnabled(false)`) strictly block any hallucinated or direct invocation of learning/memo tools when disabled.
+

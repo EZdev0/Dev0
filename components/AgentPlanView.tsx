@@ -2,14 +2,16 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, ActivityIndicator,
   Animated, LayoutAnimation, Platform, UIManager, Modal, Pressable, ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import {
   Play, Square, Plus, CheckCircle, AlertTriangle, X, Brain,
   ChevronDown, ChevronUp, Zap, Lightbulb, Sparkles, Wrench, Globe,
-  ArrowUp, ArrowDown, GripVertical, MessageSquare,
+  ArrowUp, ArrowDown, GripVertical, MessageSquare, FastForward,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
-import { AgentPlan, AgentTask, AgentTaskType, AgentToolUsage } from '@/types';
+import { AgentPlan, AgentTask, AgentTaskType, AgentToolUsage, isLearningTool, isLearningEnabled } from '@/types';
+import { useApp } from '@/providers/AppProvider';
 import AgentTaskCard from './AgentTaskCard';
 
 interface Props {
@@ -25,6 +27,7 @@ interface Props {
   onReorderTasks?: (fromIndex: number, toIndex: number) => void;
   clarificationQuestions?: ClarificationQuestion[];
   onAnswerQuestions?: (answers: ClarificationQuestion[]) => void;
+  onSkipQuestions?: () => void;
 }
 
 interface SwapModalState {
@@ -64,13 +67,22 @@ const TOOL_LABELS: Record<string, string> = {
   web_search: 'Web Search',
   web_fetch: 'Web Fetch',
   verify_file: 'Verify File',
+  read_identity_files: 'Read Identity Files',
+  update_soul_md: 'Update SOUL.md',
+  update_agents_md: 'Update AGENT.md',
+  update_identity_md: 'Update IDENTITY.md',
+  update_user_md: 'Update USER.md',
+  update_memory_md: 'Update MEMORY.md',
+  get_active_tools: 'Get Active Tools',
 };
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDismiss, onUpdateTask, onRemoveTask, onAddTask, onRetryTask, onReorderTasks, clarificationQuestions, onAnswerQuestions }: Props) => {
+const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDismiss, onUpdateTask, onRemoveTask, onAddTask, onRetryTask, onReorderTasks, clarificationQuestions, onAnswerQuestions, onSkipQuestions }: Props) => {
+  const { settings } = useApp();
+  const learningActive = isLearningEnabled(settings);
   const [showAddTask, setShowAddTask] = useState<boolean>(false);
   const [addType, setAddType] = useState<AgentTaskType>('task');
   const [newTitle, setNewTitle] = useState<string>('');
@@ -82,12 +94,17 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
   const [localQuestions, setLocalQuestions] = useState<ClarificationQuestion[]>(clarificationQuestions || []);
   const swapHighlightAnim = useRef(new Animated.Value(0)).current;
 
+  const isClarifying = plan?.status === 'clarifying';
   const isEditable = plan?.status === 'review';
   const isRunning = plan?.status === 'executing';
   const isDone = plan?.status === 'completed' || plan?.status === 'error';
 
   const tasks = plan?.tasks ?? [];
   const totalCount = tasks.length;
+
+  useEffect(() => {
+    setLocalQuestions(clarificationQuestions || []);
+  }, [clarificationQuestions]);
 
   useEffect(() => {
     if (isDone && !collapsed) {
@@ -179,10 +196,36 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
   }, [deleteConfirm.taskId, onRemoveTask]);
 
   const handleAnswerQuestion = useCallback((index: number, answer: string) => {
-    const updated = [...localQuestions];
-    updated[index] = { ...updated[index], answer };
-    setLocalQuestions(updated);
-  }, [localQuestions]);
+    setLocalQuestions(prev => {
+      const updated = [...prev];
+      if (updated[index]) {
+        updated[index] = { ...updated[index], answer };
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleSkipSingleQuestion = useCallback((index: number) => {
+    setLocalQuestions(prev => {
+      const updated = [...prev];
+      if (updated[index]) {
+        updated[index] = {
+          ...updated[index],
+          answer: 'Übersprungen – bitte sinnvollste Best-Practice-Annahme treffen.',
+        };
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleSkipAllQuestions = useCallback(() => {
+    setLocalQuestions([]);
+    if (onSkipQuestions) {
+      onSkipQuestions();
+    } else if (onAnswerQuestions) {
+      onAnswerQuestions([]);
+    }
+  }, [onSkipQuestions, onAnswerQuestions]);
 
   const handleSubmitAnswers = useCallback(() => {
     if (onAnswerQuestions && localQuestions.length > 0) {
@@ -230,7 +273,10 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
     swapHighlightAnim.stopAnimation();
   }, [swapHighlightAnim]);
 
-  const totalToolsUsed = plan?.totalToolsUsed ?? [];
+  const totalToolsUsed = useMemo(
+    () => (plan?.totalToolsUsed ?? []).filter(t => learningActive || !isLearningTool(t.name)),
+    [plan?.totalToolsUsed, learningActive]
+  );
   const totalToolCount = totalToolsUsed.reduce((sum, t) => sum + t.count, 0);
 
   return (
@@ -251,13 +297,23 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 <CheckCircle size={14} color="#fff" />
               ) : isDone && stats.error > 0 ? (
                 <AlertTriangle size={14} color="#fff" />
+              ) : isClarifying ? (
+                <MessageSquare size={14} color="#fff" />
               ) : (
                 <Brain size={14} color="#fff" />
               )}
             </View>
             <View style={styles.planHeaderInfo}>
               <Text style={styles.planTitle} numberOfLines={1}>
-                {isRunning ? 'Agent working...' : isDone && stats.error === 0 ? 'Task completed' : isDone && stats.error > 0 ? ('Task: ' + stats.error + ' errors, ' + stats.completed + ' successful') : 'Review task plan'}
+                {isRunning
+                  ? 'Agent working...'
+                  : isClarifying
+                  ? 'Rückfragen vor dem Start'
+                  : isDone && stats.error === 0
+                  ? 'Task completed'
+                  : isDone && stats.error > 0
+                  ? ('Task: ' + stats.error + ' errors, ' + stats.completed + ' successful')
+                  : 'Review task plan'}
               </Text>
               <Text style={styles.planSubtitle} numberOfLines={1}>{plan?.userRequest ?? ''}</Text>
             </View>
@@ -265,7 +321,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
           <View style={styles.planHeaderRight}>
             <View style={[styles.counterBadge, stats.error > 0 && styles.counterBadgeError, isDone && stats.error === 0 && styles.counterBadgeSuccess]}>
               <Text style={[styles.counterText, stats.error > 0 && styles.counterTextError, isDone && stats.error === 0 && styles.counterTextSuccess]}>
-                {stats.error > 0 ? (stats.completed + '/' + totalCount + ' · ' + stats.error + '✗') : (stats.completed + '/' + totalCount)}
+                {isClarifying ? 'Fragen' : stats.error > 0 ? (stats.completed + '/' + totalCount + ' · ' + stats.error + '✗') : (stats.completed + '/' + totalCount)}
               </Text>
             </View>
             {collapsed ? <ChevronDown size={16} color={IDE.muted} /> : <ChevronUp size={16} color={IDE.muted} />}
@@ -274,6 +330,28 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
 
         {!collapsed && (
           <View style={styles.planBody}>
+            {(isClarifying || localQuestions.length > 0) && (
+              <View style={styles.clarifyingBanner} pointerEvents="auto">
+                <View style={styles.clarifyingBannerTop}>
+                  <MessageSquare size={15} color={IDE.warning} />
+                  <Text style={styles.clarifyingBannerText}>
+                    Die KI hat {localQuestions.length || 'einige'} Rückfrage(n) zur Präzisierung. Du kannst sie beantworten oder direkt mit Best-Practice-Annahmen starten.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={handleSkipAllQuestions}
+                  style={styles.skipInlineButton}
+                  activeOpacity={0.75}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <FastForward size={14} color="#fff" />
+                  <Text style={styles.skipInlineButtonText}>
+                    Überspringen & Direkt starten (Skip)
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {(isRunning || isDone) && totalCount > 0 && (
               <View style={styles.progressSection}>
                 <View style={styles.progressBar}>
@@ -600,26 +678,53 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
 
       {/* Klärungsfragen Modal */}
       {localQuestions.length > 0 && (
-        <Modal visible={true} transparent animationType="slide">
-          <View style={styles.questionsOverlay}>
-            <View style={styles.questionsContainer}>
+        <Modal visible={true} transparent animationType="slide" onRequestClose={handleSkipAllQuestions}>
+          <KeyboardAvoidingView
+            style={styles.questionsOverlay}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            pointerEvents="auto"
+          >
+            <View style={styles.questionsContainer} pointerEvents="auto">
               <View style={styles.questionsHeader}>
-                <MessageSquare size={24} color={IDE.primary} />
+                <MessageSquare size={22} color={IDE.primary} />
                 <Text style={styles.questionsTitle}>Klärungsfragen</Text>
+                <TouchableOpacity
+                  onPress={handleSkipAllQuestions}
+                  style={styles.skipHeaderPill}
+                  activeOpacity={0.75}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <FastForward size={12} color={IDE.accent} />
+                  <Text style={styles.skipHeaderPillText}>Skip</Text>
+                </TouchableOpacity>
               </View>
               <Text style={styles.questionsSubtitle}>
-                Bevor ich den Plan erstelle, beantworte bitte diese Fragen:
+                Beantworte die Fragen für einen maßgeschneiderten Plan – oder überspringe sie für sofortige Ausführung mit Best-Practice-Annahmen:
               </Text>
-              <ScrollView style={styles.questionsScroll} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                style={styles.questionsScroll}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
                 {localQuestions.map((q, idx) => (
                   <View key={idx} style={styles.questionItem}>
-                    <View style={styles.questionNumberBadge}>
-                      <Text style={styles.questionNumberText}>{idx + 1}</Text>
+                    <View style={styles.questionHeaderRow}>
+                      <View style={styles.questionNumberBadge}>
+                        <Text style={styles.questionNumberText}>{idx + 1}</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => handleSkipSingleQuestion(idx)}
+                        style={styles.skipSingleQuestionBtn}
+                        activeOpacity={0.7}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Text style={styles.skipSingleQuestionText}>Überspringen</Text>
+                      </TouchableOpacity>
                     </View>
                     <Text style={styles.questionText}>{q.question}</Text>
                     <TextInput
                       style={styles.answerInput}
-                      placeholder="Deine Antwort..."
+                      placeholder="Deine Antwort (optional)..."
                       placeholderTextColor={IDE.muted}
                       value={q.answer}
                       onChangeText={(text) => handleAnswerQuestion(idx, text)}
@@ -629,15 +734,28 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   </View>
                 ))}
               </ScrollView>
-              <TouchableOpacity
-                onPress={handleSubmitAnswers}
-                style={styles.submitAnswersButton}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.submitAnswersButtonText}>Antworten & Plan erstellen</Text>
-              </TouchableOpacity>
+              <View style={styles.questionsFooterActions} pointerEvents="auto">
+                <TouchableOpacity
+                  onPress={handleSkipAllQuestions}
+                  style={styles.skipAllButton}
+                  activeOpacity={0.75}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <FastForward size={16} color="#fff" />
+                  <Text style={styles.skipAllButtonText}>
+                    Überspringen & Direkt starten (Skip)
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleSubmitAnswers}
+                  style={styles.submitAnswersButton}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.submitAnswersButtonText}>Antworten & Plan erstellen</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 
@@ -1595,22 +1713,64 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: '#fff',
   },
-  // Clarification Questions Modal Styles
+  // Clarification Questions Modal & Skip Styles
+  clarifyingBanner: {
+    backgroundColor: IDE.warning + '15',
+    borderWidth: 1,
+    borderColor: IDE.warning + '50',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+    gap: 10,
+    zIndex: 9999,
+    elevation: 15,
+  },
+  clarifyingBannerTop: {
+    flexDirection: 'row' as const,
+    alignItems: 'flex-start' as const,
+    gap: 8,
+  },
+  clarifyingBannerText: {
+    fontSize: 12,
+    color: IDE.text,
+    lineHeight: 18,
+    flex: 1,
+  },
+  skipInlineButton: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 8,
+    backgroundColor: IDE.accent,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    zIndex: 9999,
+    elevation: 20,
+  },
+  skipInlineButtonText: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: '#fff',
+  },
   questionsOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
     justifyContent: 'flex-end',
+    zIndex: 9999,
+    elevation: 20,
   },
   questionsContainer: {
     backgroundColor: IDE.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
     borderWidth: 1,
     borderColor: IDE.border,
-    maxHeight: '85%',
+    maxHeight: '88%',
+    paddingBottom: Platform.OS === 'ios' ? 28 : 18,
     overflow: 'hidden' as const,
+    zIndex: 9999,
+    elevation: 20,
   },
   questionsHeader: {
     flexDirection: 'row' as const,
@@ -1626,6 +1786,23 @@ const styles = StyleSheet.create({
     color: IDE.text,
     flex: 1,
   },
+  skipHeaderPill: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    backgroundColor: IDE.accent + '20',
+    borderWidth: 1,
+    borderColor: IDE.accent + '60',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    zIndex: 9999,
+  },
+  skipHeaderPillText: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    color: IDE.accent,
+  },
   questionsSubtitle: {
     fontSize: 13,
     color: IDE.muted,
@@ -1634,11 +1811,19 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   questionsScroll: {
+    flexShrink: 1,
+    maxHeight: 380,
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 8,
   },
   questionItem: {
     marginBottom: 16,
+  },
+  questionHeaderRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    marginBottom: 8,
   },
   questionNumberBadge: {
     width: 24,
@@ -1647,12 +1832,24 @@ const styles = StyleSheet.create({
     backgroundColor: IDE.primary + '20',
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    marginBottom: 8,
   },
   questionNumberText: {
     fontSize: 12,
     fontWeight: '700' as const,
     color: IDE.primary,
+  },
+  skipSingleQuestionBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: IDE.bg,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  skipSingleQuestionText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: IDE.muted,
   },
   questionText: {
     fontSize: 14,
@@ -1672,10 +1869,32 @@ const styles = StyleSheet.create({
     minHeight: 60,
     textAlignVertical: 'top' as const,
   },
+  questionsFooterActions: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    gap: 10,
+    zIndex: 9999,
+    elevation: 20,
+  },
+  skipAllButton: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 8,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: IDE.accent,
+    zIndex: 9999,
+    elevation: 20,
+  },
+  skipAllButtonText: {
+    fontSize: 14,
+    fontWeight: '700' as const,
+    color: '#fff',
+  },
   submitAnswersButton: {
-    margin: 16,
-    marginTop: 8,
-    paddingVertical: 14,
+    paddingVertical: 13,
     borderRadius: 10,
     backgroundColor: IDE.primary,
     alignItems: 'center' as const,
