@@ -11,11 +11,14 @@ updates:
     ignore:
       - dependency-name: "expo"
       - dependency-name: "expo-*"
+      - dependency-name: "babel-preset-expo"
       - dependency-name: "react"
       - dependency-name: "react-dom"
       - dependency-name: "react-native"
       - dependency-name: "react-native-*"
       - dependency-name: "node-forge"
+      - dependency-name: "braces"
+      - dependency-name: "sprintf-js"
       - dependency-name: "@babel/core"
         update-types: ["version-update:semver-major"]
       - dependency-name: "typescript"
