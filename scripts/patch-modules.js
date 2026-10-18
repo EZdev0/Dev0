@@ -273,12 +273,41 @@ function findAndPatchRouterServer(currentDir) {
         }
       }
     }
-  } catch (err) {
+  } catch (_err) {
     // Ignore permissions or directory errors
   }
 }
 const nodeModulesRoot = path.join(__dirname, '..', 'node_modules');
 findAndPatchRouterServer(nodeModulesRoot);
 
+// Security patch for braces <=3.0.3 (GHSA-vfj7-8cjw-p6xm: stack-exhaustion DoS via deeply nested patterns)
+const bracesParsePath = path.join(__dirname, '..', 'node_modules', 'braces', 'lib', 'parse.js');
+if (fs.existsSync(bracesParsePath)) {
+  let content = fs.readFileSync(bracesParsePath, 'utf8');
+  if (!content.includes('MAX_NESTING_DEPTH')) {
+    content = content.replace(
+      'let depth = 0;',
+      'let depth = 0;\n  const MAX_NESTING_DEPTH = typeof opts.maxDepth === "number" ? opts.maxDepth : 32;'
+    );
+    content = content.replace(
+      'depth++;',
+      'depth++;\n      if (depth > MAX_NESTING_DEPTH) { throw new SyntaxError("Brace nesting depth (" + depth + ") exceeds maximum (" + MAX_NESTING_DEPTH + ")"); }'
+    );
+    fs.writeFileSync(bracesParsePath, content, 'utf8');
+    console.log('Patched security guard in', bracesParsePath);
+  }
+}
 
-
+// Security patch for node-forge <=1.4.0 (GHSA-86w9-cpqp-85rv: RSA PKCS#1 v1.5 extra nested DigestAlgorithm elements)
+const nodeForgeRsaPath = path.join(__dirname, '..', 'node_modules', 'node-forge', 'lib', 'rsa.js');
+if (fs.existsSync(nodeForgeRsaPath)) {
+  let content = fs.readFileSync(nodeForgeRsaPath, 'utf8');
+  if (!content.includes('GHSA-86w9-cpqp-85rv')) {
+    content = content.replace(
+      "var oid = asn1.derToOid(capture.algorithmIdentifier);",
+      "// GHSA-86w9-cpqp-85rv: reject extra nested elements in DigestAlgorithm SEQUENCE\n          if (dinfo && dinfo.value && dinfo.value[0] && Array.isArray(dinfo.value[0].value) && dinfo.value[0].value.length > 2) {\n            throw new Error('ASN.1 RSASSA-PKCS1-v1_5 DigestAlgorithm contains extra unexpected elements.');\n          }\n          var oid = asn1.derToOid(capture.algorithmIdentifier);"
+    );
+    fs.writeFileSync(nodeForgeRsaPath, content, 'utf8');
+    console.log('Patched security guard in', nodeForgeRsaPath);
+  }
+}
