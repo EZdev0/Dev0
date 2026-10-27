@@ -29,6 +29,15 @@ import {
   buildActiveSkillsPromptBlock,
   isFileAllowedForSubAgent,
 } from '@/utils/skill-loader';
+import {
+  SubAgentQuestionRequest,
+  SubAgentQuestionResponse,
+  hasExplicitQuestionToolCall,
+  buildSubAgentQuestionRequestFromTool,
+  detectSubAgentQuestionFromTurn,
+  createSavedSubAgentFromQuestionResponse,
+  buildMainCreatorRelayPrompt,
+} from '@/utils/subagent-question-relay';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
@@ -47,6 +56,8 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   const [error, setError] = useState<string | null>(null);
   const [lastFallbackInfo, setLastFallbackInfo] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingToolApproval | null>(null);
+  const [pendingSubAgentQuestion, setPendingSubAgentQuestion] = useState<SubAgentQuestionRequest | null>(null);
+  const pendingQuestionResolverRef = useRef<((relayText: string) => void) | null>(null);
   const abortRef = useRef<boolean>(false);
   const manualMessagesRef = useRef<ChatMessage[]>([]);
   manualMessagesRef.current = manualMessages;
@@ -75,6 +86,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     setMemoryMd,
     getToolPermission,
     customSubAgents,
+    saveSubAgentTemplate,
     skillEnabledOverrides,
   } = useApp();
 
@@ -198,7 +210,14 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         }
       }
 
-      if (name !== 'think' && name !== 'get_active_tools' && name !== 'localize_code_graph') {
+      if (
+        name !== 'think' &&
+        name !== 'get_active_tools' &&
+        name !== 'localize_code_graph' &&
+        name !== 'ask_user_question' &&
+        name !== 'ask_question' &&
+        name !== 'ask_clarification'
+      ) {
         const permCheck = await checkToolPermission(name, args);
         if (!permCheck.allowed) {
           if (permCheck.reason === 'TOOL_HIDDEN') {
@@ -228,6 +247,16 @@ export const [ChatProvider, useChat] = createContextHook(() => {
 
       try {
         switch (name) {
+          case 'ask_user_question':
+          case 'ask_question':
+          case 'ask_clarification': {
+            const req = buildSubAgentQuestionRequestFromTool(args);
+            setPendingSubAgentQuestion(req);
+            const relayResult = await new Promise<string>((resolve) => {
+              pendingQuestionResolverRef.current = resolve;
+            });
+            return wrapResult({ result: relayResult });
+          }
           case 'get_active_tools': {
             const activeLearning = isLearningEnabled(settingsRef.current);
             const available = TOOL_DEFINITIONS.filter((t) => {
@@ -252,15 +281,50 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             const roleOrId = String(args?.role || 'developer').trim();
             const taskDesc = String(args?.task || '').trim();
             if (!taskDesc) {
-              return { result: 'ERROR: sub_agent requires a task description.' };
+              const req = buildSubAgentQuestionRequestFromTool(
+                {
+                  is_sub_agent: true,
+                  sub_agent_role: roleOrId,
+                  questions: [
+                    'Which role should the Sub-Agent take (developer, localizer, analyst, researcher, tester, critic)?',
+                    'What concrete task should be assigned to this Sub-Agent?',
+                  ],
+                },
+                undefined,
+                'sub_agent',
+              );
+              setPendingSubAgentQuestion(req);
+              const relayResult = await new Promise<string>((resolve) => {
+                pendingQuestionResolverRef.current = resolve;
+              });
+              return wrapResult({ result: relayResult });
             }
-            const matchedTemplate =
+            let matchedTemplate =
               customSubAgents.find(
                 (t) =>
                   t.id.toLowerCase() === roleOrId.toLowerCase() ||
                   t.name.toLowerCase() === roleOrId.toLowerCase() ||
                   t.role.toLowerCase() === roleOrId.toLowerCase(),
-              ) || customSubAgents[0];
+              );
+
+            if (!matchedTemplate) {
+              // Persist newly invoked Sub-Agent role into the saved Sub-Agent list automatically
+              const autoSaved: any = {
+                id: 'tpl_saved_' + roleOrId.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_' + Date.now().toString(36).slice(-4),
+                name: `${roleOrId.charAt(0).toUpperCase() + roleOrId.slice(1)} Sub-Agent`,
+                role: roleOrId.toLowerCase(),
+                description: taskDesc.slice(0, 140),
+                systemPrompt: `You are a specialized ${roleOrId} Sub-Agent. Complete the delegated task accurately.`,
+                rules: ['Always read files before modifying them.', 'Stay within allowed file scope.'],
+                allowedTools: ['read_file', 'read_lines', 'list_directory', 'search_files', 'get_project_tree', 'localize_code_graph', 'write_file', 'edit_file', 'think'],
+                allowedFiles: ['*'],
+                canBeCalledByAI: true,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+              };
+              saveSubAgentTemplate(autoSaved);
+              matchedTemplate = autoSaved;
+            }
 
             const resolvedAuth = resolveEffectiveProviderAndKey();
 
@@ -557,6 +621,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       currentProject,
       discoveredSkills,
       customSubAgents,
+      saveSubAgentTemplate,
       resolveEffectiveProviderAndKey,
       recordPoolTokenUsage,
       getFallbackSettings,
@@ -740,6 +805,13 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             conversationHistory = [...conversationHistory, assistantMsg];
             manualMessagesRef.current = conversationHistory;
             setManualMessages([...conversationHistory]);
+
+            // If the user asked to start/configure a Sub-Agent and the AI replied with Sub-Agent questions,
+            // launch the Floating Sub-Agent Window automatically so answers relay back to the Main Creator AI.
+            const detectedSubAgentQuestion = detectSubAgentQuestionFromTurn(userText, cleanContent);
+            if (detectedSubAgentQuestion) {
+              setPendingSubAgentQuestion(detectedSubAgentQuestion);
+            }
             break;
           }
 
@@ -997,23 +1069,84 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   const messages = manualMessages;
   const isLoading = manualLoading;
 
+  // Strictly true ONLY when the AI explicitly invoked the question tool (`ask_user_question`),
+  // NEVER from a normal plain-text message ending in `?`.
   const hasPendingChatQuestions = useMemo(() => {
-    if (isLoading || !Array.isArray(messages) || messages.length === 0) return false;
-    const lastMsg = messages[messages.length - 1];
-    if (!lastMsg || lastMsg.role !== 'assistant' || typeof lastMsg.content !== 'string')
-      return false;
-    const trimmed = lastMsg.content.trim();
-    if (!trimmed.includes('?')) return false;
-    const questionLines = trimmed
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 8 && l.endsWith('?'));
-    return questionLines.length >= 1;
-  }, [isLoading, messages]);
+    if (isLoading) return false;
+    return hasExplicitQuestionToolCall(messages, pendingSubAgentQuestion);
+  }, [isLoading, messages, pendingSubAgentQuestion]);
+
+  const openSubAgentFloatingLauncher = useCallback(
+    (preset?: { role?: string; name?: string; task?: string; questions?: string[] }) => {
+      const req = buildSubAgentQuestionRequestFromTool(
+        {
+          is_sub_agent: true,
+          sub_agent_role: preset?.role || 'developer',
+          sub_agent_name: preset?.name || '',
+          task: preset?.task || '',
+          questions: preset?.questions || [
+            'What role should the Sub-Agent have (e.g., localizer, developer, analyst, critic)?',
+            'What concrete task should be assigned to this Sub-Agent?',
+          ],
+        },
+        undefined,
+        'sub_agent',
+      );
+      setPendingSubAgentQuestion(req);
+    },
+    [],
+  );
+
+  const submitSubAgentQuestionResponse = useCallback(
+    (response: SubAgentQuestionResponse) => {
+      const currentReq = pendingSubAgentQuestion;
+      if (!currentReq) return;
+
+      let savedTemplate = null;
+      if (response.saveToSubAgentList) {
+        savedTemplate = createSavedSubAgentFromQuestionResponse(currentReq, response);
+        saveSubAgentTemplate(savedTemplate);
+      }
+
+      const relayPrompt = buildMainCreatorRelayPrompt(currentReq, response, savedTemplate);
+      setPendingSubAgentQuestion(null);
+
+      if (pendingQuestionResolverRef.current) {
+        const resolver = pendingQuestionResolverRef.current;
+        pendingQuestionResolverRef.current = null;
+        resolver(relayPrompt);
+      } else {
+        sendMessage(relayPrompt);
+      }
+    },
+    [pendingSubAgentQuestion, saveSubAgentTemplate, sendMessage],
+  );
+
+  const closeSubAgentQuestionModal = useCallback(() => {
+    setPendingSubAgentQuestion(null);
+    if (pendingQuestionResolverRef.current) {
+      const resolver = pendingQuestionResolverRef.current;
+      pendingQuestionResolverRef.current = null;
+      resolver('User closed the question window. Proceed with best-practice assumptions.');
+    }
+  }, []);
 
   const skipClarificationQuestions = useCallback(() => {
+    if (pendingSubAgentQuestion) {
+      submitSubAgentQuestionResponse({
+        requestId: pendingSubAgentQuestion.id,
+        subAgentName: pendingSubAgentQuestion.subAgentName,
+        subAgentRole: pendingSubAgentQuestion.subAgentRole,
+        taskInstruction: pendingSubAgentQuestion.suggestedTask,
+        allowedFiles: pendingSubAgentQuestion.allowedFiles,
+        answers: [],
+        saveToSubAgentList: pendingSubAgentQuestion.saveToSubAgentList,
+        skipped: true,
+      });
+      return;
+    }
     sendMessage(SKIP_QUESTIONS_INSTRUCTION);
-  }, [sendMessage]);
+  }, [pendingSubAgentQuestion, submitSubAgentQuestionResponse, sendMessage]);
 
   return {
     messages,
@@ -1032,5 +1165,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     approvePendingTool,
     hasPendingChatQuestions,
     skipClarificationQuestions,
+    pendingSubAgentQuestion,
+    openSubAgentFloatingLauncher,
+    submitSubAgentQuestionResponse,
+    closeSubAgentQuestionModal,
   };
 });

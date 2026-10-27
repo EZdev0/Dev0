@@ -1,7 +1,12 @@
 [build]
-  command = "bun install && node scripts/patch-modules.js && bun run export-web"
+  command = "(bun install || npm install --legacy-peer-deps) && node scripts/patch-modules.js && npx expo export -p web"
   functions = "netlify/functions"
   publish = "dist/client"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+  CI = "false"
 
 [[redirects]]
   from = "/api/nvidia/*"
@@ -17,7 +22,8 @@
 [[redirects]]
   from = "/*"
   to = "/.netlify/functions/server"
-  status = 404
+  status = 200
 
 [functions]
-  included_files = ["dist/server/**/*"]
+  node_bundler = "esbuild"
+  included_files = ["dist/server/**"]

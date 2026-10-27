@@ -108,6 +108,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
     setMemoryMd,
     getToolPermission,
     customSubAgents,
+    saveSubAgentTemplate,
     skillEnabledOverrides,
   } = useApp();
   const {
@@ -194,7 +195,15 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       return { result: 'ERROR: Unknown tool "' + name + '". Learning and memory tools are disabled in settings.' };
     }
 
-    if (name !== 'think' && name !== 'task_complete' && name !== 'verify_file' && name !== 'get_active_tools') {
+    if (
+      name !== 'think' &&
+      name !== 'task_complete' &&
+      name !== 'verify_file' &&
+      name !== 'get_active_tools' &&
+      name !== 'ask_user_question' &&
+      name !== 'ask_question' &&
+      name !== 'ask_clarification'
+    ) {
       const permCheck = await checkAgentToolPermission(name, args);
       if (!permCheck.allowed) {
         if (permCheck.reason === 'TOOL_HIDDEN') {
@@ -403,17 +412,50 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           const loc = localizeCodeSubgraph(graph, String(args.query), Number(args.max_nodes) || 12);
           return wrapResult({ result: loc.summaryMarkdown });
         }
+        case 'ask_user_question':
+        case 'ask_question':
+        case 'ask_clarification': {
+          const qs = Array.isArray(args?.questions)
+            ? args.questions.map((q: any) => String(q).trim()).filter(Boolean)
+            : typeof args?.question === 'string'
+              ? [args.question.trim()]
+              : [];
+          if (qs.length > 0) {
+            setClarificationQuestions(qs.map((q: string) => ({ question: q, answer: '' })));
+          }
+          return wrapResult({
+            result: 'Clarification questions registered via ask_user_question: ' + qs.join(' | '),
+          });
+        }
         case 'sub_agent': {
           const roleOrId = String(args?.role || 'developer').trim();
           const taskDesc = String(args?.task || '').trim();
           if (!taskDesc) return { result: 'ERROR: sub_agent requires a task description.' };
-          const matchedTemplate =
+          let matchedTemplate =
             customSubAgents.find(
               (t) =>
                 t.id.toLowerCase() === roleOrId.toLowerCase() ||
                 t.name.toLowerCase() === roleOrId.toLowerCase() ||
                 t.role.toLowerCase() === roleOrId.toLowerCase(),
-            ) || customSubAgents[0];
+            );
+
+          if (!matchedTemplate) {
+            const autoSaved: any = {
+              id: 'tpl_saved_' + roleOrId.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_' + Date.now().toString(36).slice(-4),
+              name: `${roleOrId.charAt(0).toUpperCase() + roleOrId.slice(1)} Sub-Agent`,
+              role: roleOrId.toLowerCase(),
+              description: taskDesc.slice(0, 140),
+              systemPrompt: `You are a specialized ${roleOrId} Sub-Agent. Complete the delegated task accurately.`,
+              rules: ['Always read files before modifying them.', 'Stay within allowed file scope.'],
+              allowedTools: ['read_file', 'read_lines', 'list_directory', 'search_files', 'get_project_tree', 'localize_code_graph', 'write_file', 'edit_file', 'think'],
+              allowedFiles: ['*'],
+              canBeCalledByAI: true,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
+            saveSubAgentTemplate(autoSaved);
+            matchedTemplate = autoSaved;
+          }
 
           const resolvedAuth = resolveEffectiveProviderAndKey();
 
@@ -421,7 +463,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             `You are a specialized Sub-Agent: ${matchedTemplate?.name || roleOrId}.\n` +
             `${matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.'}\n` +
             (matchedTemplate?.rules?.length
-              ? `Rules:\n${matchedTemplate.rules.map((r) => `- ${r}`).join('\n')}\n`
+              ? `Rules:\n${matchedTemplate.rules.map((r: string) => `- ${r}`).join('\n')}\n`
               : '') +
             `Allowed file patterns: ${(matchedTemplate?.allowedFiles || ['*']).join(', ')}`;
 
@@ -449,7 +491,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       console.log('[Agent] Tool error:', name, e);
       return { result: 'ERROR in ' + name + ': ' + (e?.message || 'Unknown error') };
     }
-  }, [settings, currentProject, discoveredSkills, customSubAgents, resolveEffectiveProviderAndKey, recordPoolTokenUsage, getFallbackSettings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, memos, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
+  }, [settings, currentProject, discoveredSkills, customSubAgents, saveSubAgentTemplate, resolveEffectiveProviderAndKey, recordPoolTokenUsage, getFallbackSettings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, memos, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
 
   const createPlan = useCallback(async (
     userRequest: string,

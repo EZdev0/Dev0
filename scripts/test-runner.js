@@ -155,6 +155,9 @@ require('../__tests__/utils/multi-agent.test.ts');
 // 4. Load Synapse Graph, YAML Skill Loader, Free AI Key Pool & 3-Tier Tool Parser test
 require('../__tests__/utils/synapse-and-pool.test.ts');
 
+// 5. Load Strict Question Tool, Sub-Agent Floating Window Relay & Extended Free Pool test
+require('../__tests__/utils/subagent-question-and-pool.test.ts');
+
 (async () => {
   for (const item of testQueue) {
     if (item.type === 'suite') {

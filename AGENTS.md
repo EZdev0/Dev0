@@ -120,3 +120,14 @@ Every code or rule change must be validated against the following checks:
 - **Root-Cause Bug Documentation (`bugs/*.md`) & CORS-Safe `/api/models` Proxy (`app/api/models+api.ts`, `components/HTMLPreview.tsx`):**
   - Eliminates `@rork-ai/toolkit-sdk` deprecation warnings, proxies custom `/v1/models` requests server-side, and enables WebAssembly (`window.runWasmBytes`) inside `HTMLPreview.tsx`.
 
+---
+
+## Sub-Agent Floating Question Relay, Strict Question Tool Guard & Netlify Hardening (v1.3.0)
+- **Strict Question Tool Guard (`utils/subagent-question-relay.ts`, `providers/ChatProvider.tsx`):**
+  - `hasPendingChatQuestions` uses `hasExplicitQuestionToolCall` so the `KI-Rückfragen offen / Überspringen & Direkt starten (Skip)` banner is strictly shown **only** when the AI invokes the `ask_user_question` tool (or during an active `clarifying` plan), never from plain-text `?` characters in normal chat messages.
+- **Sub-Agent Floating Window -> Main Creator Relay -> Saved Sub-Agent List (`components/SubAgentFloatingQuestionModal.tsx`, `app/(tabs)/chat/index.tsx`, `components/MultiAgentUI.tsx`):**
+  - Launches a floating configuration and Q&A modal when Sub-Agent questions arise, relays structured answers directly to the Main Creator Agent (`buildMainCreatorRelayPrompt`), and persists the configured Sub-Agent into `customSubAgents` (`createSavedSubAgentFromQuestionResponse`) displayed in `ChatScreen`, `AgentDashboard`, and `SubAgentStudioModal`.
+- **Netlify & CI Build Hardening (`.npmrc`, `netlify.toml`, `package.json`, `.github/workflows/lint.yml`):**
+  - Enforces Node 20 (`NODE_VERSION = "20"`), `legacy-peer-deps=true`, `node scripts/patch-modules.js && expo export -p web`, and `esbuild` Netlify Functions 2.0 bundling.
+
+

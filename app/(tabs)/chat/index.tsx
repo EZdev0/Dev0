@@ -21,6 +21,7 @@ import SponsorBanner from '@/components/SponsorBanner';
 import ChatBubble from '@/components/ChatBubble';
 import AgentPlanView from '@/components/AgentPlanView';
 import ThinkingBlock from '@/components/ThinkingBlock';
+import SubAgentFloatingQuestionModal from '@/components/SubAgentFloatingQuestionModal';
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -29,6 +30,10 @@ export default function ChatScreen() {
     sendMessage, stopGeneration, clearChat, lastFallbackInfo,
     pendingApproval, approvePendingTool,
     hasPendingChatQuestions, skipClarificationQuestions: skipChatClarification,
+    pendingSubAgentQuestion,
+    openSubAgentFloatingLauncher,
+    submitSubAgentQuestionResponse,
+    closeSubAgentQuestionModal,
   } = useChat();
   const {
     activePlan, isPlanning, isExecuting,
@@ -39,7 +44,7 @@ export default function ChatScreen() {
     skipClarificationQuestions, submitClarificationAnswers,
   } = useAgent();
   const { allFilePaths, currentProject } = useProject();
-  const { settings, updateSettings } = useApp();
+  const { settings, updateSettings, customSubAgents, setShowSubAgentStudioModal } = useApp();
 
   const [input, setInput] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
@@ -635,16 +640,41 @@ export default function ChatScreen() {
           borderTopColor: IDE.accent + '60',
           paddingHorizontal: 12,
           paddingVertical: 10,
-          gap: 10,
+          gap: 8,
           zIndex: 9999,
           elevation: 20,
         }} pointerEvents="auto">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
             <MessageSquare size={15} color={IDE.warning} />
             <Text style={{ fontSize: 12, color: IDE.text, fontWeight: '600', flex: 1 }} numberOfLines={2}>
-              KI-Rückfragen offen ({clarificationQuestions?.length || 1})
+              KI-Rückfragen offen ({pendingSubAgentQuestion?.questions?.length || clarificationQuestions?.length || 1})
             </Text>
           </View>
+          {pendingSubAgentQuestion && (
+            <TouchableOpacity
+              onPress={() => openSubAgentFloatingLauncher({
+                role: pendingSubAgentQuestion.subAgentRole,
+                name: pendingSubAgentQuestion.subAgentName,
+                task: pendingSubAgentQuestion.suggestedTask,
+                questions: pendingSubAgentQuestion.questions.map(q => q.question),
+              })}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                backgroundColor: IDE.primary,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                borderRadius: 8,
+              }}
+              activeOpacity={0.75}
+            >
+              <Brain size={13} color="#fff" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                Floating Fenster
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={handleSkipQuestions}
             style={{
@@ -675,6 +705,98 @@ export default function ChatScreen() {
           <Text style={styles.loadingText}>
             {isPlanning ? 'Main agent planning tasks...' : settings?.selectedProvider === 'rork' ? 'Studio AI processing...' : 'AI processing...'}
           </Text>
+        </View>
+      )}
+
+      {/* Saved Sub-Agents Quick List Bar */}
+      {!keyboardVisible && customSubAgents && customSubAgents.length > 0 && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: IDE.bg,
+          borderTopWidth: 1,
+          borderTopColor: IDE.border,
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+          gap: 6,
+        }}>
+          <TouchableOpacity
+            onPress={() => setShowSubAgentStudioModal(true)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              backgroundColor: IDE.primary + '18',
+              borderWidth: 1,
+              borderColor: IDE.primary + '45',
+              paddingHorizontal: 7,
+              paddingVertical: 3,
+              borderRadius: 6,
+            }}
+            activeOpacity={0.75}
+          >
+            <Brain size={11} color={IDE.primary} />
+            <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.primary }}>
+              Sub-Agents ({customSubAgents.length})
+            </Text>
+          </TouchableOpacity>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
+            {customSubAgents.map(tpl => (
+              <TouchableOpacity
+                key={tpl.id}
+                onPress={() =>
+                  openSubAgentFloatingLauncher({
+                    role: tpl.role,
+                    name: tpl.name,
+                    task: tpl.description,
+                    questions: [
+                      `Welche Aufgabe soll der gespeicherte Sub-Agent "${tpl.name}" (${tpl.role}) für den Main-Ersteller ausführen?`,
+                    ],
+                  })
+                }
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  backgroundColor: IDE.surface,
+                  borderWidth: 1,
+                  borderColor: IDE.border,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                }}
+                activeOpacity={0.75}
+              >
+                <Sparkles size={10} color={IDE.accent} />
+                <Text style={{ fontSize: 10, fontWeight: '600', color: IDE.text }} numberOfLines={1}>
+                  {tpl.name}
+                </Text>
+                <Text style={{ fontSize: 9, color: IDE.muted }}>
+                  ({tpl.role})
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              onPress={() => openSubAgentFloatingLauncher()}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                backgroundColor: IDE.accent + '18',
+                borderWidth: 1,
+                borderColor: IDE.accent + '45',
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 6,
+              }}
+              activeOpacity={0.75}
+            >
+              <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.accent }}>
+                + Sub-Agent starten
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       )}
 
@@ -799,6 +921,14 @@ export default function ChatScreen() {
           </View>
         </View>
       </Modal>
+
+      <SubAgentFloatingQuestionModal
+        visible={Boolean(pendingSubAgentQuestion)}
+        request={pendingSubAgentQuestion}
+        onSubmit={submitSubAgentQuestionResponse}
+        onSkip={submitSubAgentQuestionResponse}
+        onClose={closeSubAgentQuestionModal}
+      />
     </KeyboardAvoidingView>
   );
 }

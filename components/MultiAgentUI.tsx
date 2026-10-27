@@ -13,13 +13,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { IDE } from '@/constants/colors';
 import { SubAgent, SubAgentType } from '@/utils/multi-agent-system';
 import { Memo } from '@/utils/memo-system';
+import { CustomSubAgentTemplate } from '@/utils/skill-loader';
 
 // ==================== Agent Dashboard ====================
 
 interface AgentDashboardProps {
   mainAgentStatus: 'idle' | 'planning' | 'executing' | 'completed';
   subAgents: SubAgent[];
+  savedSubAgentTemplates?: CustomSubAgentTemplate[];
   onDeploySubAgent: (type: SubAgentType) => void;
+  onLaunchSavedSubAgent?: (template: CustomSubAgentTemplate) => void;
   onViewSubAgentResult: (agentId: string) => void;
   currentTask?: string;
   hasClarificationQuestions?: boolean;
@@ -33,7 +36,9 @@ interface AgentDashboardProps {
 export const AgentDashboard: React.FC<AgentDashboardProps> = ({
   mainAgentStatus,
   subAgents,
+  savedSubAgentTemplates = [],
   onDeploySubAgent,
+  onLaunchSavedSubAgent,
   onViewSubAgentResult,
   currentTask,
   hasClarificationQuestions,
@@ -201,6 +206,65 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
           </ScrollView>
         )}
       </View>
+
+      {/* Saved Sub-Agent Templates List */}
+      {savedSubAgentTemplates.length > 0 && (
+        <View style={styles.subAgentsSection}>
+          <View style={styles.sectionHeader}>
+            <Ionicons name="bookmark" size={22} color={IDE.accent} />
+            <Text style={styles.sectionTitle}>Saved Sub-Agents List</Text>
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>{savedSubAgentTemplates.length}</Text>
+            </View>
+          </View>
+          {savedSubAgentTemplates.map(tpl => (
+            <View
+              key={tpl.id}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: IDE.surface,
+                borderRadius: 10,
+                padding: 12,
+                marginBottom: 8,
+                borderWidth: 1,
+                borderColor: IDE.border,
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: IDE.text }}>
+                  {tpl.name} · <Text style={{ color: IDE.primary, fontSize: 11 }}>{tpl.role.toUpperCase()}</Text>
+                </Text>
+                <Text style={{ fontSize: 11, color: IDE.muted, marginTop: 2 }} numberOfLines={2}>
+                  {tpl.description}
+                </Text>
+                <Text style={{ fontSize: 10, color: IDE.textSecondary, marginTop: 2 }}>
+                  Allowed Files: {tpl.allowedFiles.join(', ')}
+                </Text>
+              </View>
+              {onLaunchSavedSubAgent && (
+                <TouchableOpacity
+                  onPress={() => onLaunchSavedSubAgent(tpl)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                    backgroundColor: IDE.accent,
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
+                    borderRadius: 8,
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="play" size={13} color="#fff" />
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>Start / Ask</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* Agent Coordination Section */}
       <View style={styles.coordinationSection}>

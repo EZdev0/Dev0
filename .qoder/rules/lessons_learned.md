@@ -23,3 +23,8 @@ alwaysApply: true
 - **[2026-10-27] Custom `/v1/models` Browser CORS Failures (`app/api/models+api.ts`, `app/(tabs)/settings/index.tsx`)**:
   - **Issue**: Calling `fetch(customEndpoint + '/v1/models')` directly from browser clients triggers `TypeError: NetworkError when attempting to fetch resource` when the target server lacks browser CORS headers.
   - **Rule**: Always proxy custom `/v1/models` discovery through the server-side `/api/models` route with a graceful default model fallback.
+- **[2026-10-27] Strict Tool-Only Question Detection (`hasExplicitQuestionToolCall`) vs. Plain-Text `?` (`utils/subagent-question-relay.ts`, `providers/ChatProvider.tsx`)**:
+  - **Issue**: Checking `lastMsg.content.includes('?')` on assistant replies caused the `KI-Rückfragen offen (1) / Überspringen & Direkt starten (Skip)` banner to appear falsely on normal greetings or conversational replies ending with `?`.
+  - **Rule**: Never use a plain-text `?` check to trigger clarification/skip banners. Always require an explicit invocation of the `ask_user_question` tool (`hasExplicitQuestionToolCall`) or an active `SubAgentQuestionRequest`.
+- **[2026-10-27] Sub-Agent Floating Window Relay & Saved Sub-Agent List (`components/SubAgentFloatingQuestionModal.tsx`, `utils/subagent-question-relay.ts`)**:
+  - **Rule**: Whenever a question arises via or about a Sub-Agent, launch `SubAgentFloatingQuestionModal`, persist the configured Sub-Agent via `saveSubAgentTemplate` (`createSavedSubAgentFromQuestionResponse`) so it is displayed in the Saved Sub-Agent List, and relay structured answers directly back to the Main Creator Agent (`buildMainCreatorRelayPrompt`).

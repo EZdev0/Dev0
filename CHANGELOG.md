@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.3.0] - 2026-10-27
+
+### Added
+- **Dedicated `ask_user_question` Tool & Sub-Agent Floating Question Window (`utils/subagent-question-relay.ts`, `components/SubAgentFloatingQuestionModal.tsx`, `utils/ai-service.ts`, `types/index.ts`)**:
+  - Added the `ask_user_question` tool (`TOOL_DEFINITIONS` and `TOOL_REGISTRY`) for structured AI and Sub-Agent clarification questions.
+  - Added `SubAgentFloatingQuestionModal` floating window that launches automatically when a question comes via/about a Sub-Agent, captures role, name, allowed file globs, and answers, relays all information back to the Main Creator Agent (`buildMainCreatorRelayPrompt`), and saves the Sub-Agent to the persistent Saved Sub-Agents list (`createSavedSubAgentFromQuestionResponse`).
+- **Saved Sub-Agents Quick List in Chat & Agent Dashboard (`app/(tabs)/chat/index.tsx`, `components/MultiAgentUI.tsx`, `app/(tabs)/tools/index.tsx`)**:
+  - Added a persistent Saved Sub-Agents bar in `ChatScreen` and a Saved Sub-Agents section in `AgentDashboard` so all saved Sub-Agents are immediately visible and launchable with one tap.
+- **Expanded Unit & Integration Test Suite (`__tests__/utils/subagent-question-and-pool.test.ts`, `scripts/test-runner.js`)**:
+  - Added automated tests verifying strict tool-only question detection, Sub-Agent floating question relay, saved Sub-Agent list persistence, and Free AI Key Pool multi-key quota rotation and user scoping.
+
+### Fixed
+- **Eliminated False-Positive `KI-Rückfragen offen / Überspringen & Direkt starten (Skip)` Banner (`providers/ChatProvider.tsx`, `utils/subagent-question-relay.ts`)**:
+  - Replaced the naive plain-text `?` check in `hasPendingChatQuestions` with `hasExplicitQuestionToolCall`, ensuring the Skip banner only appears when the AI explicitly invokes `ask_user_question` (or when an `AgentPlan` is in `clarifying` status), never on normal conversational messages ending with `?`.
+- **Netlify & GitHub Actions Build Hardening (`.npmrc`, `netlify.toml`, `package.json`, `.github/workflows/lint.yml`)**:
+  - Added `.npmrc` (`legacy-peer-deps=true`, `engine-strict=false`), configured `NODE_VERSION = "20"`, `node_bundler = "esbuild"`, and `status = 200` redirects in `netlify.toml`, and ensured `npm run export-web` / `npm run build` always execute `node scripts/patch-modules.js` prior to `expo export -p web`.
+
+---
+
 ## [1.2.0] - 2026-10-27
 
 ### Added

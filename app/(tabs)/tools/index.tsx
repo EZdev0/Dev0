@@ -78,7 +78,7 @@ export default function ToolsScreen() {
     setShowFreePoolModal,
   } = useApp();
   const { getProjectTree, searchFilesInProject, currentProject } = useProject();
-  const { clearChat, startNewChat, compressChat, applyChatCompression, messages } = useChat();
+  const { clearChat, startNewChat, compressChat, applyChatCompression, messages, openSubAgentFloatingLauncher } = useChat();
   const { plans, activePlan, clarificationQuestions, skipClarificationQuestions } = useAgent();
 
   const { tab } = useLocalSearchParams<{ tab?: string }>();
@@ -280,10 +280,24 @@ export default function ToolsScreen() {
           <AgentDashboard
             mainAgentStatus={activePlan?.status === 'executing' ? 'executing' : (activePlan?.status === 'review' || activePlan?.status === 'clarifying') ? 'planning' : 'idle'}
             subAgents={subAgents}
+            savedSubAgentTemplates={customSubAgents}
             onDeploySubAgent={(type) => {
               const newAgent = createSubAgent(type);
               setSubAgents(prev => [...prev, newAgent]);
               setNoticeModal({ title: 'Agent Deployed', message: `${newAgent.name} is now active and ready for tasks.` });
+            }}
+            onLaunchSavedSubAgent={(tpl) => {
+              router.push('/(tabs)/chat' as any);
+              setTimeout(() => {
+                openSubAgentFloatingLauncher({
+                  role: tpl.role,
+                  name: tpl.name,
+                  task: tpl.description,
+                  questions: [
+                    `Welche Aufgabe soll der gespeicherte Sub-Agent "${tpl.name}" (${tpl.role}) für den Main-Ersteller ausführen?`,
+                  ],
+                });
+              }, 100);
             }}
             onViewSubAgentResult={(agentId) => {
               const ag = subAgents.find(a => a.id === agentId);

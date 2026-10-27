@@ -293,7 +293,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
   {
     name: 'sub_agent',
-    description: 'Delegates a focused sub-task to a specialized or custom user-defined sub-agent template (e.g. analyst, developer, tester, researcher, critic, or custom template name).',
+    description: 'Delegates a focused sub-task to a specialized or custom user-defined sub-agent template (e.g. analyst, developer, tester, researcher, critic, localizer, or custom template name).',
     parameters: {
       type: 'object',
       properties: {
@@ -301,6 +301,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         task: { type: 'string', description: 'Detailed task instruction for the sub-agent' },
       },
       required: ['role', 'task'],
+    },
+  },
+  {
+    name: 'ask_user_question',
+    description: 'Asks the user clarifying questions or Sub-Agent configuration questions via an interactive floating window and relays the answers back to the Main Creator Agent. MUST be called whenever you or a sub-agent need user input or when the user asks to start a sub-agent without specifying role/task.',
+    parameters: {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of clear questions for the user',
+        },
+        is_sub_agent: {
+          type: 'boolean',
+          description: 'Set to true when the question is from a sub-agent or about configuring/starting a sub-agent',
+        },
+        sub_agent_role: {
+          type: 'string',
+          description: 'Suggested sub-agent role (developer, localizer, analyst, researcher, tester, critic)',
+        },
+        sub_agent_name: {
+          type: 'string',
+          description: 'Suggested name for saving the sub-agent in the user Sub-Agent list',
+        },
+        task: {
+          type: 'string',
+          description: 'Optional initial task description',
+        },
+      },
+      required: ['questions'],
     },
   },
 ];
@@ -421,7 +452,8 @@ outside the tools provided to you.
   prompt += '- IMPORTANT: You MUST ALWAYS read a file with read_file BEFORE you edit it with write_file or edit_file.\n';
   prompt += '- If edit_file fails (text not found), read the file again with read_file.\n';
   prompt += '- DO NOT invent tools that do not exist. You only have the defined tools.\n';
-  prompt += '- ACT IMMEDIATELY. DO NOT ask if you should do something. Use tools DIRECTLY.\n';
+  prompt += '- ACT IMMEDIATELY. DO NOT ask in plain text if you should do something. Use tools DIRECTLY.\n';
+  prompt += '- QUESTION & SUB-AGENT FLOATING WINDOW RULE: If you genuinely need to ask clarifying questions, OR if the user asks to start/configure a sub-agent without specifying role and task, you MUST call the `ask_user_question` tool (with `is_sub_agent: true` for sub-agent questions) instead of writing plain-text questions.\n';
   prompt += '- For complex tasks: Use "think" tool to reason, then act immediately.\n';
   prompt += '- Format responses with Markdown: **bold**, `code`, lists etc.\n';
   prompt += '- If you need to change multiple files, use "think" first to create a plan, then execute EVERYTHING immediately.\n';
