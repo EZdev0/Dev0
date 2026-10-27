@@ -1,14 +1,13 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Alert, KeyboardAvoidingView, Platform, Modal,
-  Animated,
+  TextInput, KeyboardAvoidingView, Platform, Modal,
 } from 'react-native';
 import {
-  CheckSquare, Square, Plus, Trash2, BookOpen, X,
+  Plus, Trash2, BookOpen,
   Search, FolderTree, Zap, Wrench, ChevronRight, ChevronDown,
-  Shield, ShieldCheck, ShieldOff, ShieldX, Info, CircleCheck,
-  Clock, AlertCircle, Play, RefreshCw, Brain, Globe, FileText,
+  Shield, ShieldCheck, ShieldOff, ShieldX, CircleCheck,
+  Clock, AlertCircle, Play, RefreshCw, Brain, Globe,
   Folder, ClipboardList, Database, Settings2, Eye, LayoutDashboard,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
@@ -16,9 +15,9 @@ import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 import { useChat } from '@/providers/ChatProvider';
 import { useAgent } from '@/providers/AgentProvider';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { AgentDashboard } from '@/components/MultiAgentUI';
-import { SubAgent, SubAgentType, createSubAgent } from '@/utils/multi-agent-system';
+import { SubAgent, createSubAgent } from '@/utils/multi-agent-system';
 import {
   ToolPermission, TOOL_REGISTRY, TOOL_CATEGORIES, ToolRegistryItem,
   AgentPlan, AgentTask, isLearningTool, isLearningEnabled,
@@ -63,31 +62,60 @@ function getCategoryIcon(catId: string) {
   }
 }
 
+type SubTabId = 'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat';
+
 export default function ToolsScreen() {
-  const { todos, addTodo, updateTodoItem, deleteTodo, memos, addMemo, deleteMemo, settings, getToolPermission, setToolPermission } = useApp();
+  const router = useRouter();
+  const { memos, addMemo, deleteMemo, settings, getToolPermission, setToolPermission } = useApp();
   const { getProjectTree, searchFilesInProject, currentProject } = useProject();
   const { clearChat, startNewChat, compressChat, applyChatCompression, messages } = useChat();
   const { plans, activePlan, clarificationQuestions, skipClarificationQuestions } = useAgent();
 
   const { tab } = useLocalSearchParams<{ tab?: string }>();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat'>('dashboard');
-  const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
-
   const learningActive = isLearningEnabled(settings);
 
+  const initialTab: SubTabId = (
+    tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'search' || tab === 'chat'
+  ) ? tab : (tab === 'memos' && learningActive ? 'memos' : 'tools');
+
+  const [activeTab, setActiveTab] = useState<SubTabId>(initialTab);
+  const lastAppliedTabParamRef = useRef<string | undefined>(tab);
+  const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
+  const [noticeModal, setNoticeModal] = useState<{ title: string; message: string } | null>(null);
+  const [confirmClearChatModal, setConfirmClearChatModal] = useState<boolean>(false);
+
+  // Sync incoming URL parameter `tab` ONLY when the route parameter itself changes,
+  // never locking manual sub-tab switches.
+  useEffect(() => {
+    if (tab !== lastAppliedTabParamRef.current) {
+      lastAppliedTabParamRef.current = tab;
+      if (tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'memos' || tab === 'search' || tab === 'chat') {
+        if (tab === 'memos' && !learningActive) {
+          setActiveTab('tools');
+        } else {
+          setActiveTab(tab);
+        }
+      }
+    }
+  }, [tab, learningActive]);
+
+  // Guard memos tab if learning is disabled while on memos tab
   useEffect(() => {
     if (!learningActive && activeTab === 'memos') {
       setActiveTab('tools');
-      return;
     }
-    if (tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'memos' || tab === 'search' || tab === 'chat') {
-      if (tab === 'memos' && !learningActive) {
-        setActiveTab('tools');
-      } else {
-        setActiveTab(tab as any);
-      }
+  }, [learningActive, activeTab]);
+
+  const handleSelectTab = useCallback((nextTab: SubTabId) => {
+    const resolvedTab: SubTabId = nextTab === 'memos' && !learningActive ? 'tools' : nextTab;
+    lastAppliedTabParamRef.current = resolvedTab;
+    setActiveTab(resolvedTab);
+    try {
+      router.setParams({ tab: resolvedTab });
+    } catch {
+      // Ignore router param update errors if unmounted
     }
-  }, [tab, learningActive, activeTab]);
+  }, [learningActive, router]);
 
   const [newMemoText, setNewMemoText] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -122,18 +150,18 @@ export default function ToolsScreen() {
       setCompressSummary(summary);
       setShowCompress(true);
     } else {
-      Alert.alert('Notice', 'Not enough messages to compress (min. 4).');
+      setNoticeModal({ title: 'Notice', message: 'Not enough messages to compress (min. 4).' });
     }
   }, [compressChat]);
 
   const handleApplyCompress = useCallback(() => {
     const success = applyChatCompression(compressSummary);
     if (success === false) {
-      Alert.alert('Notice', 'Compression aborted: The summary is not smaller than the current chat.');
+      setNoticeModal({ title: 'Notice', message: 'Compression aborted: The summary is not smaller than the current chat.' });
     } else {
       setShowCompress(false);
       setCompressSummary('');
-      Alert.alert('Success', 'Chat has been compressed.');
+      setNoticeModal({ title: 'Success', message: 'Chat has been compressed.' });
     }
   }, [compressSummary, applyChatCompression]);
 
@@ -185,13 +213,13 @@ export default function ToolsScreen() {
     [plans]
   );
 
-  const tabs = [
-    { id: 'dashboard' as const, label: 'Dashboard', icon: LayoutDashboard, badge: subAgents.length || undefined },
-    { id: 'tools' as const, label: 'Tools', icon: Wrench, badge: activeToolCount },
-    { id: 'plans' as const, label: 'Plans', icon: Brain, badge: activePlans.length || undefined },
+  const tabs: { id: SubTabId; label: string; icon: any; badge?: number }[] = [
+    { id: 'tools', label: 'Tools', icon: Wrench, badge: activeToolCount },
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, badge: subAgents.length || undefined },
+    { id: 'plans', label: 'Plans', icon: Brain, badge: activePlans.length || undefined },
     ...(learningActive ? [{ id: 'memos' as const, label: 'Memos', icon: BookOpen, badge: undefined }] : []),
-    { id: 'search' as const, label: 'Search', icon: Search, badge: undefined },
-    { id: 'chat' as const, label: 'Chat', icon: Zap, badge: undefined },
+    { id: 'search', label: 'Search', icon: Search, badge: undefined },
+    { id: 'chat', label: 'Chat', icon: Zap, badge: undefined },
   ];
 
   return (
@@ -200,35 +228,37 @@ export default function ToolsScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabBar}
-        contentContainerStyle={styles.tabBarContent}
-      >
-        {tabs.map(tab => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <TouchableOpacity
-              key={tab.id}
-              style={[styles.tab, isActive && styles.activeTab]}
-              onPress={() => setActiveTab(tab.id)}
-              activeOpacity={0.7}
-            >
-              <Icon size={14} color={isActive ? IDE.primary : IDE.muted} />
-              <Text style={[styles.tabText, isActive && styles.activeTabText]}>{tab.label}</Text>
-              {tab.badge !== undefined && tab.badge > 0 && (
-                <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
-                  <Text style={[styles.tabBadgeText, isActive && styles.tabBadgeTextActive]}>
-                    {tab.badge}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      <View style={styles.tabBarWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabBar}
+          contentContainerStyle={styles.tabBarContent}
+        >
+          {tabs.map(tabItem => {
+            const Icon = tabItem.icon;
+            const isActive = activeTab === tabItem.id;
+            return (
+              <TouchableOpacity
+                key={tabItem.id}
+                style={[styles.tab, isActive && styles.activeTab]}
+                onPress={() => handleSelectTab(tabItem.id)}
+                activeOpacity={0.7}
+              >
+                <Icon size={15} color={isActive ? IDE.primary : IDE.muted} />
+                <Text style={[styles.tabText, isActive && styles.activeTabText]}>{tabItem.label}</Text>
+                {tabItem.badge !== undefined && tabItem.badge > 0 && (
+                  <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
+                    <Text style={[styles.tabBadgeText, isActive && styles.tabBadgeTextActive]}>
+                      {tabItem.badge}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       <ScrollView
         style={styles.content}
@@ -243,19 +273,21 @@ export default function ToolsScreen() {
             onDeploySubAgent={(type) => {
               const newAgent = createSubAgent(type);
               setSubAgents(prev => [...prev, newAgent]);
-              Alert.alert('Agent Deployed', `${newAgent.name} is now active and ready for tasks.`);
+              setNoticeModal({ title: 'Agent Deployed', message: `${newAgent.name} is now active and ready for tasks.` });
             }}
             onViewSubAgentResult={(agentId) => {
               const ag = subAgents.find(a => a.id === agentId);
               if (ag?.result) {
-                Alert.alert(ag.name + ' Result', ag.result.summary);
-              } else {
-                Alert.alert(ag?.name || 'Agent', 'Status: ' + (ag?.status || 'idle'));
+                setNoticeModal({ title: ag.name + ' Result', message: ag.result.summary });
               }
             }}
             currentTask={activePlan?.userRequest}
             hasClarificationQuestions={Boolean(activePlan?.status === 'clarifying' || (clarificationQuestions && clarificationQuestions.length > 0))}
             onSkipClarificationQuestions={() => skipClarificationQuestions(activePlan?.id, true)}
+            onNavigateToTools={() => handleSelectTab('tools')}
+            onNavigateToPlans={() => handleSelectTab('plans')}
+            onNavigateToChat={() => router.push('/(tabs)/chat' as any)}
+            onNavigateToProjects={() => router.push('/(tabs)/(home)' as any)}
           />
         )}
 
@@ -265,10 +297,10 @@ export default function ToolsScreen() {
               <Text style={styles.toolsTitle}>Active Agents</Text>
               <TouchableOpacity
                 style={styles.openDashboardHeaderBtn}
-                onPress={() => setActiveTab('dashboard')}
+                onPress={() => handleSelectTab('dashboard')}
                 activeOpacity={0.7}
               >
-                <LayoutDashboard size={13} color={IDE.primary} />
+                <LayoutDashboard size={14} color={IDE.primary} />
                 <Text style={styles.openDashboardHeaderText}>Open Dashboard</Text>
               </TouchableOpacity>
             </View>
@@ -278,7 +310,7 @@ export default function ToolsScreen() {
                 <TouchableOpacity
                   key={agentName}
                   style={styles.toolCard}
-                  onPress={() => setActiveTab('dashboard')}
+                  onPress={() => handleSelectTab('dashboard')}
                   activeOpacity={0.7}
                 >
                   <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
@@ -528,12 +560,7 @@ export default function ToolsScreen() {
 
               <TouchableOpacity
                 style={[styles.actionBtn, styles.dangerBtn]}
-                onPress={() => {
-                  Alert.alert('Clear Chat', 'Do you want to delete the entire chat history?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: clearChat },
-                  ]);
-                }}
+                onPress={() => setConfirmClearChatModal(true)}
                 activeOpacity={0.7}
               >
                 <Trash2 size={16} color={IDE.danger} />
@@ -580,6 +607,54 @@ export default function ToolsScreen() {
         onClose={() => setSelectedTool(null)}
         yoloMode={settings.yoloMode}
       />
+
+      {/* Cross-Platform Clear Chat Confirmation Modal */}
+      <Modal visible={confirmClearChatModal} transparent animationType="fade">
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>Clear Chat</Text>
+            <Text style={styles.dialogText}>Do you want to delete the entire chat history?</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity
+                style={styles.dialogCancelBtn}
+                onPress={() => setConfirmClearChatModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dialogCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.dialogDangerBtn}
+                onPress={() => {
+                  clearChat();
+                  setConfirmClearChatModal(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dialogDangerText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cross-Platform Notice Modal */}
+      <Modal visible={!!noticeModal} transparent animationType="fade">
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>{noticeModal?.title}</Text>
+            <Text style={styles.dialogText}>{noticeModal?.message}</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity
+                style={styles.dialogPrimaryBtn}
+                onPress={() => setNoticeModal(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dialogPrimaryText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1027,27 +1102,39 @@ const tdStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: IDE.bg },
-  tabBar: {
+  tabBarWrapper: {
     backgroundColor: IDE.surface,
     borderBottomWidth: 1,
     borderBottomColor: IDE.border,
-    maxHeight: 42,
+  },
+  tabBar: {
+    backgroundColor: IDE.surface,
+    minHeight: 48,
+    maxHeight: 48,
   },
   tabBarContent: {
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
+    alignItems: 'center' as const,
+    gap: 4,
   },
   tab: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    gap: 5,
+    gap: 6,
+    minHeight: 44,
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
-  activeTab: { borderBottomColor: IDE.primary },
-  tabText: { fontSize: 11, color: IDE.muted, fontWeight: '500' as const },
+  activeTab: {
+    borderBottomColor: IDE.primary,
+    backgroundColor: IDE.primary + '12',
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+  },
+  tabText: { fontSize: 12, color: IDE.muted, fontWeight: '600' as const },
   activeTabText: { color: IDE.primary },
   tabBadge: {
     backgroundColor: IDE.muted + '30',
@@ -1289,8 +1376,81 @@ const styles = StyleSheet.create({
     maxHeight: 300,
   },
   compressActions: { flexDirection: 'row' as const, justifyContent: 'flex-end' as const, gap: 10, marginTop: 12 },
-  compressCancelBtn: { paddingHorizontal: 14, paddingVertical: 8 },
+  compressCancelBtn: { paddingHorizontal: 14, paddingVertical: 10, minHeight: 40, justifyContent: 'center' as const },
   compressCancelText: { fontSize: 14, color: IDE.muted },
-  compressApplyBtn: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: IDE.warning, borderRadius: 6 },
+  compressApplyBtn: { paddingHorizontal: 16, paddingVertical: 10, minHeight: 40, justifyContent: 'center' as const, backgroundColor: IDE.warning, borderRadius: 6 },
   compressApplyText: { fontSize: 14, color: '#fff', fontWeight: '600' as const },
+  dialogOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+    padding: 24,
+  },
+  dialogBox: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: IDE.surface,
+    borderRadius: 14,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  dialogTitle: {
+    fontSize: 17,
+    fontWeight: '700' as const,
+    color: IDE.text,
+    marginBottom: 8,
+  },
+  dialogText: {
+    fontSize: 14,
+    color: IDE.textSecondary,
+    lineHeight: 20,
+    marginBottom: 18,
+  },
+  dialogActions: {
+    flexDirection: 'row' as const,
+    justifyContent: 'flex-end' as const,
+    gap: 10,
+  },
+  dialogCancelBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 42,
+    justifyContent: 'center' as const,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  dialogCancelText: {
+    fontSize: 14,
+    color: IDE.muted,
+    fontWeight: '600' as const,
+  },
+  dialogDangerBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    minHeight: 42,
+    justifyContent: 'center' as const,
+    borderRadius: 8,
+    backgroundColor: IDE.danger,
+  },
+  dialogDangerText: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600' as const,
+  },
+  dialogPrimaryBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    minHeight: 42,
+    justifyContent: 'center' as const,
+    borderRadius: 8,
+    backgroundColor: IDE.primary,
+  },
+  dialogPrimaryText: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600' as const,
+  },
 });

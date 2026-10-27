@@ -248,6 +248,19 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           return 'Tip: Click the "Create!" button to use the planner for this complex task: ' + input.reason;
         },
       }),
+      get_active_tools: createRorkTool({
+        description: 'Returns a list of all currently active and available tools.',
+        zodSchema: z.object({}),
+        execute: async () => {
+          const activeLearning = isLearningEnabled(settingsRef.current);
+          const available = TOOL_DEFINITIONS.filter(t => {
+            if (!activeLearning && isLearningTool(t.name)) return false;
+            const p = getToolPermission(t.name);
+            return p !== 'removed' && p !== 'blocked';
+          }).map(t => t.name);
+          return 'Active tools: ' + available.join(', ');
+        },
+      }),
       web_fetch: createRorkTool({
         description: 'Downloads the content of a webpage and returns the text (without HTML tags).',
         zodSchema: z.object({ url: z.string().describe('URL of the webpage'), max_length: z.number().optional().describe('Maximum characters (default: 5000)') }),
@@ -832,7 +845,12 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         }
 
         const toolCalls: ToolCall[] = validToolCalls.map(tc => ({
-          id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments ?? {},
+          status: 'running' as const,
+          ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+          ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
         }));
 
         const thinkToolCalls = toolCalls.filter(tc => tc.name === 'think');

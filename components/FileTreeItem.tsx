@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react-native';
+import { ChevronRight, ChevronDown, Folder, FolderOpen, MoreHorizontal } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { FileNode } from '@/types';
 import { getFileColor, getFileLabel } from '@/utils/file-icons';
@@ -76,6 +76,18 @@ const FileTreeItem = React.memo(({ node, depth, expanded, isActive, onPress, onL
       >
         {node.name}
       </Text>
+
+      {onLongPress && (
+        <TouchableOpacity
+          style={styles.moreBtn}
+          onPress={handleLongPress}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          activeOpacity={0.7}
+          testID={`file-tree-more-${node.name}`}
+        >
+          <MoreHorizontal size={15} color={IDE.muted} />
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 });
@@ -88,9 +100,18 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 40,
     paddingVertical: 8,
-    paddingRight: 12,
+    paddingRight: 8,
     position: 'relative' as const,
+  },
+  moreBtn: {
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    borderRadius: 6,
+    marginLeft: 4,
   },
   activeRow: {
     backgroundColor: IDE.surface,

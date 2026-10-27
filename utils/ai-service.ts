@@ -499,26 +499,55 @@ outside the tools provided to you.
   return prompt;
 }
 
-function formatMessagesForOpenAI(messages: ChatMessage[], systemPrompt: string) {
+export function formatMessagesForOpenAI(
+  messages: ChatMessage[],
+  systemPrompt: string,
+  flattenToolsAsText: boolean = false,
+) {
   const formatted: any[] = [{ role: 'system', content: systemPrompt }];
 
   for (const msg of messages) {
     if (msg.role === 'tool') {
-      formatted.push({
-        role: 'tool',
-        tool_call_id: msg.toolCallId || '',
-        content: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH),
-      });
+      if (flattenToolsAsText) {
+        const toolName = msg.toolName || 'tool';
+        formatted.push({
+          role: 'user',
+          content: '[Tool-Result from ' + toolName + ']:\n' + truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH),
+        });
+      } else {
+        formatted.push({
+          role: 'tool',
+          tool_call_id: msg.toolCallId || '',
+          content: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH),
+        });
+      }
     } else if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
-      formatted.push({
-        role: 'assistant',
-        content: msg.content || null,
-        tool_calls: msg.toolCalls.map(tc => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) },
-        })),
-      });
+      if (flattenToolsAsText) {
+        let assistantContent = msg.content || '';
+        for (const tc of msg.toolCalls) {
+          assistantContent += '\n```tool\n' + JSON.stringify({ name: tc.name, arguments: tc.arguments || {} }) + '\n```';
+        }
+        formatted.push({
+          role: 'assistant',
+          content: assistantContent.trim() || '(Tool executed)',
+        });
+      } else {
+        formatted.push({
+          role: 'assistant',
+          content: msg.content || null,
+          tool_calls: msg.toolCalls.map(tc => {
+            const sig = tc.thoughtSignature || tc.extra_content?.google?.thought_signature;
+            const extraContent = tc.extra_content || (sig ? { google: { thought_signature: sig } } : undefined);
+            return {
+              id: tc.id,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) },
+              ...(sig ? { thought_signature: sig } : {}),
+              ...(extraContent ? { extra_content: extraContent } : {}),
+            };
+          }),
+        });
+      }
     } else {
       formatted.push({ role: msg.role, content: msg.content || '' });
     }
@@ -575,8 +604,13 @@ function formatMessagesForAnthropic(messages: ChatMessage[]) {
   return formatted;
 }
 
-function formatMessagesForGemini(messages: ChatMessage[]) {
+export function formatMessagesForGemini(messages: ChatMessage[], forceFlattenTools: boolean = false) {
   const contents: any[] = [];
+  // Check if any historical assistant toolCall is missing a thoughtSignature.
+  // Gemini 2.5/3 thinking models reject Turn 2+ with HTTP 400 if any functionCall part lacks thoughtSignature.
+  const hasUnsignedToolCalls = forceFlattenTools || messages.some(
+    m => m.role === 'assistant' && Array.isArray(m.toolCalls) && m.toolCalls.some(tc => !tc.thoughtSignature && !tc.extra_content?.google?.thought_signature)
+  );
 
   for (const msg of messages) {
     if (msg.role === 'user') {
@@ -584,22 +618,50 @@ function formatMessagesForGemini(messages: ChatMessage[]) {
     } else if (msg.role === 'assistant') {
       const parts: any[] = [];
       if (msg.content) parts.push({ text: msg.content });
-      if (msg.toolCalls) {
-        for (const tc of msg.toolCalls) {
-          parts.push({ functionCall: { name: tc.name, args: tc.arguments || {} } });
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        if (hasUnsignedToolCalls) {
+          let toolText = '';
+          for (const tc of msg.toolCalls) {
+            toolText += '\n```tool\n' + JSON.stringify({ name: tc.name, arguments: tc.arguments || {} }) + '\n```';
+          }
+          parts.push({ text: toolText.trim() });
+        } else {
+          for (const tc of msg.toolCalls) {
+            const sig = tc.thoughtSignature || tc.extra_content?.google?.thought_signature;
+            parts.push({
+              functionCall: { name: tc.name, args: tc.arguments || {} },
+              ...(sig ? { thoughtSignature: sig } : {}),
+            });
+          }
         }
       }
       if (parts.length === 0) parts.push({ text: '' });
       contents.push({ role: 'model', parts });
     } else if (msg.role === 'tool') {
-      contents.push({
-        role: 'user',
-        parts: [{ functionResponse: { name: msg.toolName || 'unknown', response: { result: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH) } } }],
-      });
+      if (hasUnsignedToolCalls) {
+        contents.push({
+          role: 'user',
+          parts: [{ text: '[Tool-Result from ' + (msg.toolName || 'tool') + ']:\n' + truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH) }],
+        });
+      } else {
+        contents.push({
+          role: 'user',
+          parts: [{ functionResponse: { name: msg.toolName || 'unknown', response: { result: truncateToolResult(msg.content || '', MAX_TOOL_RESULT_LENGTH) } } }],
+        });
+      }
     }
   }
 
   return contents;
+}
+
+export function isThoughtSignatureError(_status: number, errorText: string): boolean {
+  const lower = (errorText || '').toLowerCase();
+  return (
+    lower.includes('thoughtsignature') ||
+    lower.includes('thought_signature') ||
+    (lower.includes('functioncall') && lower.includes('signature'))
+  );
 }
 
 async function callOpenAI(apiKey: string, model: string, messages: ChatMessage[], tools: ToolDefinition[], systemPrompt: string, signal: AbortSignal, endpoint?: string) {
@@ -619,46 +681,62 @@ async function callOpenAI(apiKey: string, model: string, messages: ChatMessage[]
     if (cleanEndpoint.endsWith('/v1/chat/completions')) {
       url = cleanEndpoint;
     } else {
-      if (cleanEndpoint.startsWith('/')) {
-        url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
-      } else {
-        url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
-      }
+      url = cleanEndpoint.replace(/\/$/, '') + '/v1/chat/completions';
     }
   }
-  const formattedMessages = formatMessagesForOpenAI(messages, systemPrompt);
-
-  const body: any = {
-    model,
-    messages: formattedMessages,
-    temperature: 0.7,
-    max_tokens: 4096,
-  };
-
-  if (tools.length > 0) {
-    body.tools = tools.map(t => ({
-      type: 'function',
-      function: { name: t.name, description: t.description, parameters: t.parameters },
-    }));
-  }
-
-  console.log('[AI] Calling OpenAI-compatible:', model, 'endpoint:', endpoint || 'openai', 'messages:', formattedMessages.length);
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) {
     headers['Authorization'] = 'Bearer ' + apiKey;
   }
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+
+  const executeRequest = async (flattenTools: boolean) => {
+    const effectiveSystemPrompt = flattenTools && tools.length > 0
+      ? systemPrompt + buildToolCallInstructions(tools)
+      : systemPrompt;
+    const formattedMessages = formatMessagesForOpenAI(messages, effectiveSystemPrompt, flattenTools);
+
+    const body: any = {
+      model,
+      messages: formattedMessages,
+      temperature: 0.7,
+      max_tokens: 4096,
+    };
+
+    if (tools.length > 0 && !flattenTools) {
+      body.tools = tools.map(t => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      }));
+    }
+
+    console.log('[AI] Calling OpenAI-compatible:', model, 'endpoint:', endpoint || 'openai', 'messages:', formattedMessages.length, 'flattenTools:', flattenTools);
+
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    });
+  };
+
+  let usedFlattenedTools = false;
+  let response = await executeRequest(false);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
-    console.log('[AI] OpenAI-compatible error:', response.status, errorText);
-    throw new AIError(response.status, 'Fehler (' + response.status + '): ' + errorText.slice(0, 300));
+    if (isThoughtSignatureError(response.status, errorText)) {
+      console.log('[AI] Detected HTTP 400 thoughtSignature error on OpenAI-compatible endpoint; retrying with flattened tool turns...');
+      usedFlattenedTools = true;
+      response = await executeRequest(true);
+      if (!response.ok) {
+        const retryErrorText = await response.text().catch(() => 'Unknown error');
+        throw new AIError(response.status, 'Fehler (' + response.status + '): ' + retryErrorText.slice(0, 300));
+      }
+    } else {
+      console.log('[AI] OpenAI-compatible error:', response.status, errorText);
+      throw new AIError(response.status, 'Fehler (' + response.status + '): ' + errorText.slice(0, 300));
+    }
   }
 
   const data = await response.json();
@@ -666,52 +744,87 @@ async function callOpenAI(apiKey: string, model: string, messages: ChatMessage[]
 
   if (!choice) throw new Error('Keine Antwort erhalten.');
 
-  return {
-    content: choice.message?.content || '',
-    toolCalls: (choice.message?.tool_calls || []).map((tc: any) => ({
+  const rawContent = choice.message?.content || '';
+  const nativeCalls = (choice.message?.tool_calls || []).map((tc: any) => {
+    const sig = tc.thought_signature || tc.thoughtSignature || tc.extra_content?.google?.thought_signature || tc.function?.thought_signature;
+    return {
       id: tc.id || 'tc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       name: tc.function?.name || '',
       arguments: safeParseJSON(tc.function?.arguments || '{}'),
-    })),
+      ...(sig ? { thoughtSignature: sig } : {}),
+      ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
+    };
+  });
+
+  if (usedFlattenedTools && tools.length > 0 && nativeCalls.length === 0) {
+    const { toolCalls: textCalls, cleanContent } = parseToolCallsFromText(rawContent);
+    return {
+      content: cleanContent,
+      toolCalls: textCalls,
+    };
+  }
+
+  return {
+    content: rawContent,
+    toolCalls: nativeCalls,
   };
 }
 
 async function callOpenRouter(apiKey: string, model: string, messages: ChatMessage[], tools: ToolDefinition[], systemPrompt: string, signal: AbortSignal) {
   const url = 'https://openrouter.ai/api/v1/chat/completions';
-  const formattedMessages = formatMessagesForOpenAI(messages, systemPrompt);
 
-  const body: any = {
-    model,
-    messages: formattedMessages,
-    temperature: 0.7,
-    max_tokens: 4096,
+  const executeRequest = async (flattenTools: boolean) => {
+    const effectiveSystemPrompt = flattenTools && tools.length > 0
+      ? systemPrompt + buildToolCallInstructions(tools)
+      : systemPrompt;
+    const formattedMessages = formatMessagesForOpenAI(messages, effectiveSystemPrompt, flattenTools);
+
+    const body: any = {
+      model,
+      messages: formattedMessages,
+      temperature: 0.7,
+      max_tokens: 4096,
+    };
+
+    if (tools.length > 0 && !flattenTools) {
+      body.tools = tools.map(t => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      }));
+    }
+
+    console.log('[AI] Calling OpenRouter:', model, 'messages:', formattedMessages.length, 'flattenTools:', flattenTools);
+
+    return fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + apiKey,
+        'HTTP-Referer': 'https://studio-ide.app',
+        'X-Title': 'Studio Mobile IDE',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
   };
 
-  if (tools.length > 0) {
-    body.tools = tools.map(t => ({
-      type: 'function',
-      function: { name: t.name, description: t.description, parameters: t.parameters },
-    }));
-  }
-
-  console.log('[AI] Calling OpenRouter:', model, 'messages:', formattedMessages.length);
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + apiKey,
-      'HTTP-Referer': 'https://studio-ide.app',
-      'X-Title': 'Studio Mobile IDE',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let usedFlattenedTools = false;
+  let response = await executeRequest(false);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
-    console.log('[AI] OpenRouter error:', response.status, errorText);
-    throw new AIError(response.status, 'OpenRouter error (' + response.status + '): ' + errorText.slice(0, 300));
+    if (isThoughtSignatureError(response.status, errorText)) {
+      console.log('[AI] Detected HTTP 400 thoughtSignature error on OpenRouter; retrying with flattened tool turns...');
+      usedFlattenedTools = true;
+      response = await executeRequest(true);
+      if (!response.ok) {
+        const retryErrorText = await response.text().catch(() => 'Unknown error');
+        throw new AIError(response.status, 'OpenRouter error (' + response.status + '): ' + retryErrorText.slice(0, 300));
+      }
+    } else {
+      console.log('[AI] OpenRouter error:', response.status, errorText);
+      throw new AIError(response.status, 'OpenRouter error (' + response.status + '): ' + errorText.slice(0, 300));
+    }
   }
 
   const data = await response.json();
@@ -719,13 +832,29 @@ async function callOpenRouter(apiKey: string, model: string, messages: ChatMessa
 
   if (!choice) throw new Error('Keine Antwort von OpenRouter erhalten.');
 
-  return {
-    content: choice.message?.content || '',
-    toolCalls: (choice.message?.tool_calls || []).map((tc: any) => ({
+  const rawContent = choice.message?.content || '';
+  const nativeCalls = (choice.message?.tool_calls || []).map((tc: any) => {
+    const sig = tc.thought_signature || tc.thoughtSignature || tc.extra_content?.google?.thought_signature || tc.function?.thought_signature;
+    return {
       id: tc.id || 'tc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       name: tc.function?.name || '',
       arguments: safeParseJSON(tc.function?.arguments || '{}'),
-    })),
+      ...(sig ? { thoughtSignature: sig } : {}),
+      ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
+    };
+  });
+
+  if (usedFlattenedTools && tools.length > 0 && nativeCalls.length === 0) {
+    const { toolCalls: textCalls, cleanContent } = parseToolCallsFromText(rawContent);
+    return {
+      content: cleanContent,
+      toolCalls: textCalls,
+    };
+  }
+
+  return {
+    content: rawContent,
+    toolCalls: nativeCalls,
   };
 }
 
@@ -787,39 +916,57 @@ async function callAnthropic(apiKey: string, model: string, messages: ChatMessag
 }
 
 async function callGemini(apiKey: string, model: string, messages: ChatMessage[], tools: ToolDefinition[], systemPrompt: string, signal: AbortSignal) {
-  const contents = formatMessagesForGemini(messages);
-
-  const body: any = {
-    contents,
-    systemInstruction: { parts: [{ text: systemPrompt }] },
-    generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
-  };
-
-  if (tools.length > 0) {
-    body.tools = [{
-      functionDeclarations: tools.map(t => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      })),
-    }];
-  }
-
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey;
 
-  console.log('[AI] Calling Gemini:', model, 'contents:', contents.length);
+  const executeRequest = async (forceFlattenTools: boolean) => {
+    const contents = formatMessagesForGemini(messages, forceFlattenTools);
+    const effectiveSystemPrompt = forceFlattenTools && tools.length > 0
+      ? systemPrompt + buildToolCallInstructions(tools)
+      : systemPrompt;
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
+    const body: any = {
+      contents,
+      systemInstruction: { parts: [{ text: effectiveSystemPrompt }] },
+      generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
+    };
+
+    if (tools.length > 0 && !forceFlattenTools) {
+      body.tools = [{
+        functionDeclarations: tools.map(t => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        })),
+      }];
+    }
+
+    console.log('[AI] Calling Gemini:', model, 'contents:', contents.length, 'forceFlattenTools:', forceFlattenTools);
+
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  };
+
+  let usedFlattenedTools = false;
+  let response = await executeRequest(false);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => 'Unknown error');
-    console.log('[AI] Gemini error:', response.status, errorText);
-    throw new AIError(response.status, 'Gemini error (' + response.status + '): ' + errorText.slice(0, 300));
+    if (isThoughtSignatureError(response.status, errorText)) {
+      console.log('[AI] Detected HTTP 400 thoughtSignature error on Gemini; retrying with flattened tool turns...');
+      usedFlattenedTools = true;
+      response = await executeRequest(true);
+      if (!response.ok) {
+        const retryErrorText = await response.text().catch(() => 'Unknown error');
+        throw new AIError(response.status, 'Gemini error (' + response.status + '): ' + retryErrorText.slice(0, 300));
+      }
+    } else {
+      console.log('[AI] Gemini error:', response.status, errorText);
+      throw new AIError(response.status, 'Gemini error (' + response.status + '): ' + errorText.slice(0, 300));
+    }
   }
 
   const data = await response.json();
@@ -831,12 +978,19 @@ async function callGemini(apiKey: string, model: string, messages: ChatMessage[]
     if (part.text) {
       content += part.text;
     } else if (part.functionCall) {
+      const sig = part.thoughtSignature || part.thought_signature || part.functionCall.thoughtSignature || part.functionCall.thought_signature;
       toolCalls.push({
         id: 'gem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
         name: part.functionCall.name,
         arguments: part.functionCall.args || {},
+        ...(sig ? { thoughtSignature: sig } : {}),
       });
     }
+  }
+
+  if (usedFlattenedTools && tools.length > 0 && toolCalls.length === 0) {
+    const { toolCalls: textCalls, cleanContent } = parseToolCallsFromText(content);
+    return { content: cleanContent, toolCalls: textCalls };
   }
 
   return { content, toolCalls };
@@ -972,10 +1126,10 @@ function parseToolCallsFromText(text: string): { toolCalls: { id: string; name: 
   return { toolCalls, cleanContent };
 }
 
-function extractNativeToolCalls(data: any): { id: string; name: string; arguments: Record<string, any> }[] {
+function extractNativeToolCalls(data: any): { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[] {
   const rawCalls = data?.choices?.[0]?.message?.tool_calls || data?.toolCalls;
   if (!Array.isArray(rawCalls)) return [];
-  const extracted: { id: string; name: string; arguments: Record<string, any> }[] = [];
+  const extracted: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[] = [];
   for (const tc of rawCalls) {
     const name = tc?.function?.name || tc?.name;
     if (!name || typeof name !== 'string') continue;
@@ -990,10 +1144,13 @@ function extractNativeToolCalls(data: any): { id: string; name: string; argument
     } else if (rawArgs && typeof rawArgs === 'object') {
       args = rawArgs;
     }
+    const sig = tc?.thought_signature || tc?.thoughtSignature || tc?.extra_content?.google?.thought_signature || tc?.function?.thought_signature;
     extracted.push({
       id: tc?.id || 'tc_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
       name,
       arguments: args,
+      ...(sig ? { thoughtSignature: sig } : {}),
+      ...(tc?.extra_content ? { extra_content: tc.extra_content } : {}),
     });
   }
   return extracted;
@@ -1085,7 +1242,7 @@ async function callRork(
   tools?: ToolDefinition[],
   model?: string,
   signal?: AbortSignal,
-): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
   const safeModel = resolveDefaultModel('rork', model) || DEFAULT_RORK_MODEL;
   const sanitizedMessages = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
   console.log('[AI] Calling Rork free model:', safeModel, 'messages:', sanitizedMessages.length, 'tools:', tools?.length ?? 0);
@@ -1240,7 +1397,7 @@ async function callProviderDirect(
   systemPrompt: string,
   signal: AbortSignal,
   customEndpoint?: string,
-): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
   const safeModel = resolveDefaultModel(provider, model);
   switch (provider) {
     case 'rork':
@@ -1275,7 +1432,7 @@ export async function callAI(
   systemPrompt: string,
   customEndpoint?: string,
   fallbackSettings?: Record<string, string>,
-): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
   if (!apiKey && provider !== 'rork' && provider !== 'custom') {
     throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "Studio KI" as provider for free usage without key!');
   }
@@ -1284,7 +1441,7 @@ export async function callAI(
   const compressedMessages = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
   const allowLearningTools = Array.isArray(tools) && tools.some(t => isLearningTool(t.name));
 
-  const filterResultTools = (res: { content: string; toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }) => {
+  const filterResultTools = (res: { content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }) => {
     if (!allowLearningTools && Array.isArray(res.toolCalls) && res.toolCalls.length > 0) {
       return {
         ...res,

@@ -3,12 +3,19 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start",
-    "start-web": "expo start --web",
+    "dev": "expo start --web --port 3000",
+    "start": "expo start --web --port 3000",
+    "start-native": "expo start",
+    "start-web": "expo start --web --port 3000",
     "start-tunnel": "bunx rork start -p z4baphwr1dneh3hj3x7o1 --tunnel",
     "start-web-dev": "DEBUG=expo* bunx rork start -p z4baphwr1dneh3hj3x7o1 --web --tunnel",
     "export-web": "expo export -p web",
+    "build": "expo export -p web",
     "lint": "eslint . --resolve-plugins-relative-to node_modules/eslint-config-expo",
+    "lint:biome": "biome check .",
+    "lint:oxlint": "oxlint .",
+    "lint:all": "npm run lint && npm run lint:oxlint && npm run lint:biome",
+    "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/patch-modules.js",
     "test": "node scripts/test-runner.js"
   },
@@ -59,6 +66,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@biomejs/biome": "^2.6.3",
     "@expo/ngrok": "^4.1.0",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.1.10",
@@ -66,6 +74,7 @@
     "eslint": "^8.57.1",
     "eslint-config-expo": "~10.0.0",
     "jest": "^30.5.2",
+    "oxlint": "^1.89.0",
     "ts-jest": "^29.4.15",
     "typescript": "~5.9.2"
   },

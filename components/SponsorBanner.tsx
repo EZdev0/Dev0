@@ -1,9 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Modal, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Modal, TouchableOpacity, StyleSheet, Platform, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { Heart, X } from 'lucide-react-native';
+import { Heart, X, ExternalLink } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
+
+const SPONSOR_URL = 'https://github.com/sponsors/EZdev0';
+const SPONSOR_BUTTON_URL = 'https://github.com/sponsors/EZdev0/button';
+
+function SponsorButtonEmbed() {
+  if (Platform.OS === 'web') {
+    return (
+      <TouchableOpacity
+        style={styles.webSponsorBtn}
+        onPress={() => {
+          Linking.openURL(SPONSOR_URL).catch(() => {});
+        }}
+        activeOpacity={0.75}
+      >
+        <Heart size={14} color="#db61a2" />
+        <Text style={styles.webSponsorBtnText}>Sponsor</Text>
+        <ExternalLink size={11} color={IDE.muted} />
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <View style={{ height: 32, width: 114, overflow: 'hidden', borderRadius: 6 }}>
+      <WebView
+        source={{ uri: SPONSOR_BUTTON_URL }}
+        style={{ height: 32, width: 114, backgroundColor: 'transparent' }}
+        scrollEnabled={false}
+      />
+    </View>
+  );
+}
 
 export default function SponsorBanner({ style }: { style?: any }) {
   const { settings } = useApp();
@@ -22,13 +53,7 @@ export default function SponsorBanner({ style }: { style?: any }) {
         A little support would be great! Schau doch mal bei unserem Sponsor-Programm vorbei oder kontaktiere uns unter EZdev-info@proton.me für Feedback und Ideen.
         You can hide this message in the settings, but we would be happy if you wrote to us or followed us at least once!
       </Text>
-      <View style={{ height: 32, width: 114, overflow: 'hidden', borderRadius: 6 }}>
-        <WebView
-          source={{ uri: 'https://github.com/sponsors/EZdev0/button' }}
-          style={{ height: 32, width: 114, backgroundColor: 'transparent' }}
-          scrollEnabled={false}
-        />
-      </View>
+      <SponsorButtonEmbed />
     </View>
   );
 }
@@ -85,11 +110,7 @@ export function SponsorOverlay() {
             You can disable this popup at any time in the settings.
           </Text>
           <View style={styles.buttonContainer}>
-            <WebView
-              source={{ uri: 'https://github.com/sponsors/EZdev0/button' }}
-              style={{ height: 32, width: 114, backgroundColor: 'transparent' }}
-              scrollEnabled={false}
-            />
+            <SponsorButtonEmbed />
           </View>
         </View>
       </View>
@@ -145,10 +166,28 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   buttonContainer: {
-    height: 32,
-    width: 114,
+    minHeight: 36,
     overflow: 'hidden',
     borderRadius: 6,
     alignSelf: 'center',
-  }
+  },
+  webSponsorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minHeight: 36,
+    alignSelf: 'flex-start',
+    backgroundColor: IDE.bg,
+    borderWidth: 1,
+    borderColor: IDE.border,
+    borderRadius: 8,
+  },
+  webSponsorBtnText: {
+    color: IDE.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
 });

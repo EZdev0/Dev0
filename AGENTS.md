@@ -94,3 +94,14 @@ Every code or rule change must be validated against the following checks:
   - Prominent **"Überspringen & Direkt starten (Skip)"** button in `AgentPlanView`, `MultiAgentUI`, and `ChatScreen` immediately starts execution with `SKIP_QUESTIONS_INSTRUCTION`.
   - 3-layer guard (`isLearningEnabled`, `LEARNING_TOOL_NAMES`, `setMemoSystemEnabled`) hides Learn/Memo tools in UI, strips them from system/planner prompts and tool schemas, and blocks runtime execution when disabled.
 
+---
+
+## ThoughtSignature Resilience, Dashboard Navigation & Linter Suite (2026-10-27)
+- **Gemini / OpenRouter `thoughtSignature` Preservation & Self-Healing (`utils/ai-service.ts`, `utils/chat-compression.ts`, `types/index.ts`):**
+  - Preserves `thoughtSignature` and `extra_content.google.thought_signature` across all tool call lifecycles (`callOpenAI`, `callOpenRouter`, `callGemini`, `compressAndSanitizeMessagesForAPI`, `ChatProvider`, `AgentProvider`).
+  - Automatically detects `HTTP 400` missing `thought_signature` errors (`isThoughtSignatureError`) and retries in-place with unsigned historical tool calls flattened into structured text context (`flattenUnsignedToolCalls`).
+- **Unblocked Sub-Tab Navigation & Cross-Platform Modals (`app/(tabs)/tools/index.tsx`, `components/MultiAgentUI.tsx`, `app/(tabs)/(home)/index.tsx`, `app/editor.tsx`, `components/FileTreeItem.tsx`):**
+  - Syncs route parameters via `router.setParams({ tab })` without locking `activeTab` to `dashboard`, and provides a persistent Quick-Return Navigation Bar inside `AgentDashboard`.
+  - Replaces `Alert.alert` and `Alert.prompt` with cross-platform `Modal` dialogs and explicit `•••` context menu buttons (`MoreHorizontal`) with $\ge 40\text{–}44\text{px}$ touch targets.
+- **Static Analysis & Audit Documentation (`biome.json`, `.eslintrc.js`, `CHANGELOG.md`, `docs/AUDIT_REPORT.md`):**
+  - Integrates `@biomejs/biome` (`npm run lint:biome`), `oxlint` (`npm run lint:oxlint`), ESLint (`npm run lint`), and TypeScript (`npm run typecheck`).

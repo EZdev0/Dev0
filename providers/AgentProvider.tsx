@@ -658,7 +658,12 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           const toolCalls: ToolCall[] = response.toolCalls
             .filter(tc => activeLearning || !isLearningTool(tc.name))
             .map(tc => ({
-              id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
+              id: tc.id,
+              name: tc.name,
+              arguments: tc.arguments ?? {},
+              status: 'running' as const,
+              ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+              ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
             }));
 
           messages = [...messages, { id: genId(), role: 'assistant', content: response.content || '', toolCalls, timestamp: Date.now() }];
@@ -874,7 +879,12 @@ Investigate all options thoroughly.`;
         const toolCalls: ToolCall[] = response.toolCalls
           .filter(tc => activeLearning || !isLearningTool(tc.name))
           .map(tc => ({
-            id: tc.id, name: tc.name, arguments: tc.arguments ?? {}, status: 'running' as const,
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments ?? {},
+            status: 'running' as const,
+            ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+            ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           }));
 
         const assistantMsg: ChatMessage = {

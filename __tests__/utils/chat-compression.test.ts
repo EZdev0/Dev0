@@ -7,6 +7,11 @@ import {
   truncateToolResult,
   compressAndSanitizeMessagesForAPI,
 } from '../../utils/chat-compression';
+import {
+  formatMessagesForOpenAI,
+  formatMessagesForGemini,
+  isThoughtSignatureError,
+} from '../../utils/ai-service';
 import { ChatMessage } from '../../types';
 
 describe('chat-compression utils', () => {
@@ -118,23 +123,125 @@ describe('chat-compression utils', () => {
       expect(truncated).toContain('[... Tool-Output gekürzt');
     });
 
-    it('should truncate oversized tool messages and nested toolCall results before API calls', () => {
+    it('should truncate oversized tool messages and nested toolCall results before API calls while preserving thoughtSignature', () => {
       const msgs: ChatMessage[] = [
         { id: 'u1', role: 'user', content: 'Bitte prüfe Datei', timestamp: t },
         {
           id: 'a1',
           role: 'assistant',
           content: 'Ich lese die Datei',
-          toolCalls: [{ id: 'tc1', name: 'read_file', arguments: { path: 'a.ts' }, status: 'completed', result: 'R'.repeat(9000) }],
+          toolCalls: [
+            {
+              id: 'tc1',
+              name: 'get_active_tools',
+              arguments: {},
+              status: 'completed',
+              result: 'R'.repeat(9000),
+              thoughtSignature: 'sig-abc-123',
+              extra_content: { google: { thought_signature: 'sig-abc-123' } },
+            },
+          ],
           timestamp: t + 100,
         },
-        { id: 't1', role: 'tool', content: 'T'.repeat(9000), toolCallId: 'tc1', toolName: 'read_file', timestamp: t + 200 },
+        { id: 't1', role: 'tool', content: 'T'.repeat(9000), toolCallId: 'tc1', toolName: 'get_active_tools', timestamp: t + 200 },
       ];
       const sanitized = compressAndSanitizeMessagesForAPI(msgs);
       const toolMsg = sanitized.find(m => m.role === 'tool');
       const assistantMsg = sanitized.find(m => m.role === 'assistant');
       expect(toolMsg?.content.length).toBeLessThanOrEqual(6000);
       expect(assistantMsg?.toolCalls?.[0]?.result?.length).toBeLessThanOrEqual(6000);
+      expect(assistantMsg?.toolCalls?.[0]?.thoughtSignature).toBe('sig-abc-123');
+      expect(assistantMsg?.toolCalls?.[0]?.extra_content).toEqual({ google: { thought_signature: 'sig-abc-123' } });
+    });
+  });
+
+  describe('thoughtSignature preservation & self-healing fallback', () => {
+    it('should preserve thoughtSignature and extra_content in formatMessagesForOpenAI and flatten when flattenUnsignedToolCalls=true', () => {
+      const msgs: ChatMessage[] = [
+        { id: 'u1', role: 'user', content: 'List active tools', timestamp: t },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'Checking active tools',
+          toolCalls: [
+            {
+              id: 'tc1',
+              name: 'get_active_tools',
+              arguments: {},
+              status: 'completed',
+              thoughtSignature: 'sig-xyz-789',
+            },
+          ],
+          timestamp: t + 100,
+        },
+        { id: 't1', role: 'tool', content: 'Active tools: read_file, get_active_tools', toolCallId: 'tc1', toolName: 'get_active_tools', timestamp: t + 200 },
+      ];
+
+      const formatted = formatMessagesForOpenAI(msgs, 'System prompt', false);
+      const assistantFormatted = formatted.find((m: any) => m.role === 'assistant');
+      expect(assistantFormatted?.tool_calls?.[0]?.thought_signature).toBe('sig-xyz-789');
+      expect(assistantFormatted?.tool_calls?.[0]?.extra_content?.google?.thought_signature).toBe('sig-xyz-789');
+
+      const flattened = formatMessagesForOpenAI(msgs, 'System prompt', true);
+      const assistantFlattened = flattened.find((m: any) => m.role === 'assistant');
+      expect(assistantFlattened?.tool_calls).toBeUndefined();
+      expect(assistantFlattened?.content).toContain('"name":"get_active_tools"');
+    });
+
+    it('should preserve thoughtSignature on signed Gemini functionCall parts and flatten unsigned historical calls', () => {
+      const signedMsgs: ChatMessage[] = [
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            {
+              id: 'tc1',
+              name: 'get_active_tools',
+              arguments: {},
+              status: 'completed',
+              thoughtSignature: 'gemini-sig-001',
+            },
+          ],
+          timestamp: t,
+        },
+        { id: 't1', role: 'tool', content: 'Active tools: get_active_tools', toolCallId: 'tc1', toolName: 'get_active_tools', timestamp: t + 100 },
+      ];
+
+      const geminiSigned = formatMessagesForGemini(signedMsgs, false);
+      expect(geminiSigned[0].parts[0].functionCall?.name).toBe('get_active_tools');
+      expect(geminiSigned[0].parts[0].thoughtSignature).toBe('gemini-sig-001');
+
+      const unsignedMsgs: ChatMessage[] = [
+        {
+          id: 'a2',
+          role: 'assistant',
+          content: 'Used tool',
+          toolCalls: [
+            {
+              id: 'tc2',
+              name: 'get_active_tools',
+              arguments: {},
+              status: 'completed',
+            },
+          ],
+          timestamp: t,
+        },
+        { id: 't2', role: 'tool', content: 'Active tools: get_active_tools', toolCallId: 'tc2', toolName: 'get_active_tools', timestamp: t + 100 },
+      ];
+
+      const geminiUnsigned = formatMessagesForGemini(unsignedMsgs, false);
+      expect(geminiUnsigned[0].parts.every((p: any) => !p.functionCall)).toBe(true);
+      const combinedText = geminiUnsigned[0].parts.map((p: any) => p.text).join('\n');
+      expect(combinedText).toContain('"name":"get_active_tools"');
+    });
+
+    it('should accurately detect HTTP 400 missing thoughtSignature errors', () => {
+      const errText =
+        'Fehler (400): [{"error": {"code": 400, "message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call default_api:get_active_tools , pos 0."}}]';
+      expect(isThoughtSignatureError(400, errText)).toBe(true);
+      expect(isThoughtSignatureError(429, 'Rate limit exceeded (429)')).toBe(false);
     });
   });
 });
+

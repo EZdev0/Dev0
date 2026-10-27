@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Modal, Alert, FlatList, ActivityIndicator,
+  TextInput, Modal, FlatList, ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -38,6 +38,10 @@ export default function ProjectsScreen() {
   const [newFileContent, setNewFileContent] = useState<string>('');
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [fileActionTarget, setFileActionTarget] = useState<{ node: FileNode; path: string } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{ node: FileNode; path: string; newName: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'file' | 'project'; idOrPath: string; name: string } | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<{ title: string; message: string } | null>(null);
 
   const toggleDir = useCallback((node: FileNode) => {
     setExpandedDirs(prev => {
@@ -53,7 +57,7 @@ export default function ProjectsScreen() {
 
   const openFile = useCallback((node: FileNode, path: string) => {
     if (isBinaryFile(node.name)) {
-      Alert.alert('Binary File', 'This file cannot be opened in the editor.');
+      setNoticeMessage({ title: 'Binary File', message: 'This file cannot be opened in the text editor.' });
       return;
     }
     setActiveFile(path);
@@ -70,7 +74,7 @@ export default function ProjectsScreen() {
 
   const handleCreateNewFile = useCallback(() => {
     if (!newFileName.trim()) {
-      Alert.alert('Error', 'Please enter a name.');
+      setNoticeMessage({ title: 'Error', message: 'Please enter a valid file or folder name.' });
       return;
     }
     const fullPath = newFileBasePath
@@ -90,82 +94,29 @@ export default function ProjectsScreen() {
   }, [newFileName, newFileBasePath, newFileIsDir, newFileContent, createFile, createDirectory]);
 
   const handleLongPress = useCallback((node: FileNode, path: string) => {
-    const isDir = node.type === 'directory';
-    const actions: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [
-      { text: 'Cancel', style: 'cancel' },
-    ];
-
-    if (isDir) {
-      actions.push({
-        text: '📄 New file here',
-        onPress: () => openNewFileModal(path, false),
-      });
-      actions.push({
-        text: '📁 New folder here',
-        onPress: () => openNewFileModal(path, true),
-      });
-    }
-
-    actions.push({
-      text: '📋 Copy path',
-      onPress: async () => {
-        try {
-          await Clipboard.setStringAsync(path);
-        } catch (e) {
-          console.log('[Projects] Copy path error:', e);
-        }
-      },
-    });
-
-    actions.push({
-      text: '✏️ Rename',
-      onPress: () => {
-        if (Alert.prompt) {
-          Alert.prompt('Rename', 'New name:', (newName) => {
-            if (newName && newName.trim()) {
-              const parts = path.split('/');
-              parts[parts.length - 1] = newName.trim();
-              renameFile(path, parts.join('/'));
-            }
-          }, 'plain-text', node.name);
-        } else {
-          handleRenameAlert(node, path);
-        }
-      },
-    });
-
-    actions.push({
-      text: '🗑️ Delete',
-      style: 'destructive',
-      onPress: () => {
-        Alert.alert(
-          'Delete',
-          'Really delete "' + node.name + '"?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: () => {
-                deleteFile(path);
-                if (activeFile === path) {
-                  setActiveFile(null);
-                }
-              },
-            },
-          ]
-        );
-      },
-    });
-
-    Alert.alert(node.name, isDir ? 'Folder: ' + path : path, actions);
-  }, [deleteFile, activeFile, openNewFileModal, renameFile]);
-
-  const handleRenameAlert = useCallback((node: FileNode, path: string) => {
-    Alert.alert('Rename', 'Function limited on this device with Alert.alert. Use chat to rename.', [
-      { text: 'OK' },
-    ]);
+    setFileActionTarget({ node, path });
   }, []);
+
+  const handleConfirmRename = useCallback(() => {
+    if (!renameTarget || !renameTarget.newName.trim()) return;
+    const parts = renameTarget.path.split('/');
+    parts[parts.length - 1] = renameTarget.newName.trim();
+    renameFile(renameTarget.path, parts.join('/'));
+    setRenameTarget(null);
+  }, [renameTarget, renameFile]);
+
+  const handleConfirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    if (deleteTarget.type === 'project') {
+      deleteProject(deleteTarget.idOrPath);
+    } else {
+      deleteFile(deleteTarget.idOrPath);
+      if (activeFile === deleteTarget.idOrPath) {
+        setActiveFile(null);
+      }
+    }
+    setDeleteTarget(null);
+  }, [deleteTarget, deleteProject, deleteFile, activeFile]);
 
   const handleExport = useCallback(async (format: 'zip' | 'text' | 'json') => {
     if (!currentProject) return;
@@ -185,7 +136,7 @@ export default function ProjectsScreen() {
       }
     } catch (e) {
       console.log('[Projects] Export error:', e);
-      Alert.alert('Export Error', 'An error occurred during export.');
+      setNoticeMessage({ title: 'Export Error', message: 'An error occurred during export.' });
     } finally {
       setIsExporting(false);
     }
@@ -198,7 +149,7 @@ export default function ProjectsScreen() {
 
   const handleCreateProject = useCallback(() => {
     if (!newProjectName.trim()) {
-      Alert.alert('Error', 'Please enter a project name.');
+      setNoticeMessage({ title: 'Error', message: 'Please enter a project name.' });
       return;
     }
     createProject(newProjectName.trim(), newProjectType);
@@ -270,10 +221,7 @@ export default function ProjectsScreen() {
               style={[styles.projectTab, currentProject?.id === p.id && styles.activeProjectTab]}
               onPress={() => selectProject(p.id)}
               onLongPress={() => {
-                Alert.alert('Delete Project', 'Do you really want to delete "' + p.name + '"? All files will be deleted.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Delete', style: 'destructive', onPress: () => deleteProject(p.id) },
-                ]);
+                setDeleteTarget({ type: 'project', idOrPath: p.id, name: p.name });
               }}
               activeOpacity={0.7}
             >
@@ -419,6 +367,171 @@ export default function ProjectsScreen() {
         onExport={handleExport}
         onClose={() => setShowExportModal(false)}
       />
+
+      {/* Cross-Platform File/Folder Context Menu Modal */}
+      <Modal visible={!!fileActionTarget} transparent animationType="fade">
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.container}>
+            <Text style={modalStyles.title}>{fileActionTarget?.node.name}</Text>
+            <Text style={{ fontSize: 12, color: IDE.muted, marginBottom: 14, fontFamily: 'monospace' }}>
+              {fileActionTarget?.node.type === 'directory' ? 'Folder: ' : 'File: '}{fileActionTarget?.path}
+            </Text>
+
+            {fileActionTarget?.node.type === 'directory' && (
+              <>
+                <TouchableOpacity
+                  style={exportStyles.formatOption}
+                  onPress={() => {
+                    const targetPath = fileActionTarget.path;
+                    setFileActionTarget(null);
+                    openNewFileModal(targetPath, false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={exportStyles.formatTitle}>📄 New file here</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={exportStyles.formatOption}
+                  onPress={() => {
+                    const targetPath = fileActionTarget.path;
+                    setFileActionTarget(null);
+                    openNewFileModal(targetPath, true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={exportStyles.formatTitle}>📁 New folder here</Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            <TouchableOpacity
+              style={exportStyles.formatOption}
+              onPress={async () => {
+                if (fileActionTarget) {
+                  try {
+                    await Clipboard.setStringAsync(fileActionTarget.path);
+                  } catch (e) {
+                    console.log('[Projects] Copy path error:', e);
+                  }
+                }
+                setFileActionTarget(null);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={exportStyles.formatTitle}>📋 Copy path</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={exportStyles.formatOption}
+              onPress={() => {
+                if (fileActionTarget) {
+                  setRenameTarget({
+                    node: fileActionTarget.node,
+                    path: fileActionTarget.path,
+                    newName: fileActionTarget.node.name,
+                  });
+                }
+                setFileActionTarget(null);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={exportStyles.formatTitle}>✏️ Rename</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[exportStyles.formatOption, { borderColor: IDE.danger + '40' }]}
+              onPress={() => {
+                if (fileActionTarget) {
+                  setDeleteTarget({
+                    type: 'file',
+                    idOrPath: fileActionTarget.path,
+                    name: fileActionTarget.node.name,
+                  });
+                }
+                setFileActionTarget(null);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[exportStyles.formatTitle, { color: IDE.danger }]}>🗑️ Delete</Text>
+            </TouchableOpacity>
+
+            <View style={modalStyles.actions}>
+              <TouchableOpacity onPress={() => setFileActionTarget(null)} style={modalStyles.cancelBtn}>
+                <Text style={modalStyles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cross-Platform Rename Modal */}
+      <Modal visible={!!renameTarget} transparent animationType="fade">
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.container}>
+            <Text style={modalStyles.title}>Rename</Text>
+            <Text style={modalStyles.label}>New name</Text>
+            <TextInput
+              style={modalStyles.input}
+              value={renameTarget?.newName ?? ''}
+              onChangeText={(text) => setRenameTarget(prev => prev ? { ...prev, newName: text } : null)}
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={handleConfirmRename}
+            />
+            <View style={modalStyles.actions}>
+              <TouchableOpacity onPress={() => setRenameTarget(null)} style={modalStyles.cancelBtn}>
+                <Text style={modalStyles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleConfirmRename} style={modalStyles.createBtn}>
+                <Text style={modalStyles.createText}>Rename</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cross-Platform Delete Confirmation Modal */}
+      <Modal visible={!!deleteTarget} transparent animationType="fade">
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.container}>
+            <Text style={modalStyles.title}>
+              {deleteTarget?.type === 'project' ? 'Delete Project' : 'Delete'}
+            </Text>
+            <Text style={{ fontSize: 14, color: IDE.textSecondary, lineHeight: 20, marginBottom: 8 }}>
+              Really delete "{deleteTarget?.name}"?
+            </Text>
+            <View style={modalStyles.actions}>
+              <TouchableOpacity onPress={() => setDeleteTarget(null)} style={modalStyles.cancelBtn}>
+                <Text style={modalStyles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleConfirmDelete}
+                style={[modalStyles.createBtn, { backgroundColor: IDE.danger }]}
+              >
+                <Text style={modalStyles.createText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Cross-Platform Notice Modal */}
+      <Modal visible={!!noticeMessage} transparent animationType="fade">
+        <View style={modalStyles.overlay}>
+          <View style={modalStyles.container}>
+            <Text style={modalStyles.title}>{noticeMessage?.title}</Text>
+            <Text style={{ fontSize: 14, color: IDE.textSecondary, lineHeight: 20 }}>
+              {noticeMessage?.message}
+            </Text>
+            <View style={modalStyles.actions}>
+              <TouchableOpacity onPress={() => setNoticeMessage(null)} style={modalStyles.createBtn}>
+                <Text style={modalStyles.createText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -821,6 +934,8 @@ const styles = StyleSheet.create({
   projectTab: {
     paddingHorizontal: 14,
     paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: 'center' as const,
     marginRight: 2,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
@@ -840,9 +955,17 @@ const styles = StyleSheet.create({
   addProjectBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   searchToggle: {
     padding: 10,
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   searchBar: {
     flexDirection: 'row' as const,
@@ -864,7 +987,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     backgroundColor: IDE.surface,
     borderBottomWidth: 1,
     borderBottomColor: IDE.border,
@@ -873,11 +996,13 @@ const styles = StyleSheet.create({
   actionBarBtn: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    justifyContent: 'center' as const,
+    gap: 6,
+    minHeight: 40,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     backgroundColor: IDE.bg,
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: IDE.border,
   },

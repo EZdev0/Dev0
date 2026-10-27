@@ -39,6 +39,8 @@ export interface ToolCall {
   arguments: Record<string, any>;
   result?: string;
   status: 'pending' | 'running' | 'completed' | 'error';
+  thoughtSignature?: string;
+  extra_content?: Record<string, any>;
 }
 
 export interface ToolDefinition {

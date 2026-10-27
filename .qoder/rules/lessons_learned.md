@@ -3,9 +3,17 @@ trigger: always_on
 alwaysApply: true
 ---
 
-# 🧠 QCoder System-Gedächtnis
+# 🧠 QCoder System Memory (Lessons Learned)
 
-*Dies ist das Long-Term-Memory. QCoder prüft dieses Dokument, um Redundanzen und zyklische Fehler im Codebase-Analyseprozess und in Quests zu eliminieren.*
+*This document serves as the long-term engineering memory to prevent regressions and recurring bugs across code analysis and implementation tasks.*
 
-## Bekannte Probleme & gelöste Lektionen
-- [2026-XX-XX] Initialisierung erfolgreich. Warten auf erstes Fehler-Event zur Dokumentation.
+## Known Issues & Resolved Lessons
+- **[2026-10-27] Gemini 2.5 / 3 `thoughtSignature` Preservation on Tool Calls**:
+  - **Issue**: Gemini 2.5 and Gemini 3 thinking models return a `thoughtSignature` (or `extra_content.google.thought_signature` via OpenAI/OpenRouter compatibility layers) on `functionCall` / `tool_calls` parts. Stripping this signature during message sanitization or history formatting triggers `HTTP 400: Function call is missing a thought_signature in functionCall parts`.
+  - **Rule**: Always preserve `thoughtSignature` and `extra_content` in `ToolCall` objects (`types/index.ts`), `compressAndSanitizeMessagesForAPI` (`utils/chat-compression.ts`), `ChatProvider.tsx`, `AgentProvider.tsx`, and API formatters (`formatMessagesForOpenAI`, `formatMessagesForGemini`). Always maintain an automatic self-healing fallback (`flattenUnsignedToolCalls`) for unsigned historical tool calls.
+- **[2026-10-27] Route Param Synchronization vs. Local Sub-Tab State (`app/(tabs)/tools/index.tsx`)**:
+  - **Issue**: Including local `activeTab` in the dependency array of a `useEffect` that watches `params.tab` (`[params.tab, activeTab]`) causes an immediate state snap-back loop whenever the user clicks another sub-tab while `?tab=dashboard` remains in route params.
+  - **Rule**: Only depend on `[params.tab]` when syncing route parameters to local tab state, and call `router.setParams({ tab: newTab })` when the user manually switches sub-tabs.
+- **[2026-10-27] Cross-Platform Web Compatibility (`Alert.prompt` & `react-native-webview`)**:
+  - **Issue**: `Alert.prompt` is iOS-only and multi-button `Alert.alert` calls fail on React Native Web; native `WebView` components crash on Web if rendered without a `Platform.OS === 'web'` guard.
+  - **Rule**: Always use React Native `Modal` components for interactive confirmations, context menus, and rename prompts, and guard `WebView` embeds with a Web fallback.

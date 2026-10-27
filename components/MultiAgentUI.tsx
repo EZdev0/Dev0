@@ -24,6 +24,10 @@ interface AgentDashboardProps {
   currentTask?: string;
   hasClarificationQuestions?: boolean;
   onSkipClarificationQuestions?: () => void;
+  onNavigateToTools?: () => void;
+  onNavigateToPlans?: () => void;
+  onNavigateToChat?: () => void;
+  onNavigateToProjects?: () => void;
 }
 
 export const AgentDashboard: React.FC<AgentDashboardProps> = ({
@@ -34,6 +38,10 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
   currentTask,
   hasClarificationQuestions,
   onSkipClarificationQuestions,
+  onNavigateToTools,
+  onNavigateToPlans,
+  onNavigateToChat,
+  onNavigateToProjects,
 }) => {
   const [deployModalVisible, setDeployModalVisible] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<SubAgent | null>(null);
@@ -48,6 +56,52 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
 
   return (
     <View style={styles.dashboard}>
+      {/* Quick-Return Navigation Bar */}
+      {(onNavigateToTools || onNavigateToPlans || onNavigateToChat || onNavigateToProjects) && (
+        <View style={styles.quickNavBar}>
+          {onNavigateToTools && (
+            <TouchableOpacity
+              style={[styles.quickNavBtn, styles.quickNavBtnPrimary]}
+              onPress={onNavigateToTools}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="construct-outline" size={15} color={IDE.primary} />
+              <Text style={[styles.quickNavText, { color: IDE.primary }]}>Tools Registry</Text>
+            </TouchableOpacity>
+          )}
+          {onNavigateToPlans && (
+            <TouchableOpacity
+              style={styles.quickNavBtn}
+              onPress={onNavigateToPlans}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="git-network-outline" size={15} color={IDE.textSecondary} />
+              <Text style={styles.quickNavText}>Plans</Text>
+            </TouchableOpacity>
+          )}
+          {onNavigateToChat && (
+            <TouchableOpacity
+              style={styles.quickNavBtn}
+              onPress={onNavigateToChat}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="sparkles-outline" size={15} color={IDE.accent} />
+              <Text style={[styles.quickNavText, { color: IDE.accent }]}>AI Chat</Text>
+            </TouchableOpacity>
+          )}
+          {onNavigateToProjects && (
+            <TouchableOpacity
+              style={styles.quickNavBtn}
+              onPress={onNavigateToProjects}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="folder-open-outline" size={15} color={IDE.textSecondary} />
+              <Text style={styles.quickNavText}>Projects</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {/* Main Agent Status */}
       <View style={styles.mainAgentSection}>
         <View style={styles.sectionHeader}>
@@ -610,13 +664,48 @@ function getRiskText(level: 'low' | 'medium' | 'high'): string {
 const styles = StyleSheet.create({
   dashboard: {
     backgroundColor: IDE.bg,
-    padding: 16,
-    gap: 20
+    padding: 4,
+    gap: 16
+  },
+  quickNavBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: IDE.surface,
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  quickNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 40,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: IDE.bg,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  quickNavBtnPrimary: {
+    borderColor: IDE.primary + '50',
+    backgroundColor: IDE.primary + '14',
+  },
+  quickNavText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: IDE.textSecondary,
   },
   mainAgentSection: {
     backgroundColor: IDE.surface,
     borderRadius: 12,
-    padding: 16
+    padding: 16,
+    borderWidth: 1,
+    borderColor: IDE.border,
   },
   sectionHeader: {
     flexDirection: 'row',

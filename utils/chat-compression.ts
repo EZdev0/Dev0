@@ -110,6 +110,8 @@ export function compressAndSanitizeMessagesForAPI(
         ? m.toolCalls.map(tc => ({
             ...tc,
             result: tc.result !== undefined ? truncateToolResult(tc.result, maxToolLength) : undefined,
+            ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
+            ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
           }))
         : undefined;
 

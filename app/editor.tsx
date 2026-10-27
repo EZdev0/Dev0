@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, TextInput, ScrollView, TouchableOpacity,
-  Alert, KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Modal,
 } from 'react-native';
-import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { Save, ArrowLeft, Pencil, Eye } from 'lucide-react-native';
-import * as Clipboard from 'expo-clipboard';
+import { useLocalSearchParams, Stack } from 'expo-router';
+import { Save, Pencil, Eye } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { useProject } from '@/providers/ProjectProvider';
 import { useApp } from '@/providers/AppProvider';
@@ -14,13 +13,13 @@ import { detectLanguage } from '@/utils/file-icons';
 
 export default function EditorScreen() {
   const { path } = useLocalSearchParams<{ path: string }>();
-  const router = useRouter();
   const { getFileContent, updateFileContent } = useProject();
   const { settings } = useApp();
 
   const [content, setContent] = useState<string>('');
   const [originalContent, setOriginalContent] = useState<string>('');
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [showUnsavedModal, setShowUnsavedModal] = useState<boolean>(false);
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
 
@@ -62,31 +61,19 @@ export default function EditorScreen() {
 
   const handleToggleEdit = useCallback(() => {
     if (isEditing && hasChanges) {
-      Alert.alert(
-        'Unsaved Changes',
-        'Do you want to save the changes?',
-        [
-          { text: 'Discard', style: 'destructive', onPress: () => { setContent(originalContent); setIsEditing(false); } },
-          { text: 'Save', onPress: handleSave },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
+      setShowUnsavedModal(true);
     } else {
       setIsEditing(!isEditing);
       if (!isEditing) {
         setTimeout(() => inputRef.current?.focus(), 100);
       }
     }
-  }, [isEditing, hasChanges, originalContent, handleSave]);
+  }, [isEditing, hasChanges]);
 
   const symbolKeys = useMemo(() => ['{', '}', '(', ')', '[', ']', ';', '=', '"', "'", '<', '>', '/', '.', ':', '_', '-', '+', '*', '!', '&', '|', '@', '#', '\t'], []);
 
   const insertSymbol = useCallback((sym: string) => {
     setContent(prev => prev + sym);
-  }, []);
-
-  const handleContentChange = useCallback((text: string) => {
-    setContent(text);
   }, []);
 
   return (
@@ -100,11 +87,11 @@ export default function EditorScreen() {
           headerRight: () => (
             <View style={headerStyles.right}>
               {hasChanges && (
-                <TouchableOpacity onPress={handleSave} style={headerStyles.btn}>
+                <TouchableOpacity onPress={handleSave} style={headerStyles.btn} activeOpacity={0.7}>
                   <Save size={18} color={IDE.accent} />
                 </TouchableOpacity>
               )}
-              <TouchableOpacity onPress={handleToggleEdit} style={headerStyles.btn}>
+              <TouchableOpacity onPress={handleToggleEdit} style={headerStyles.btn} activeOpacity={0.7}>
                 {isEditing ? (
                   <Eye size={18} color={IDE.primary} />
                 ) : (
@@ -203,14 +190,125 @@ export default function EditorScreen() {
           {hasChanges && <Text style={[styles.statusText, { color: IDE.warning }]}>● Modified</Text>}
           <Text style={styles.statusText}>UTF-8</Text>
         </View>
+
+        <Modal visible={showUnsavedModal} transparent animationType="fade">
+          <View style={headerStyles.modalOverlay}>
+            <View style={headerStyles.modalBox}>
+              <Text style={headerStyles.modalTitle}>Unsaved Changes</Text>
+              <Text style={headerStyles.modalText}>Do you want to save your changes before leaving edit mode?</Text>
+              <View style={headerStyles.modalActions}>
+                <TouchableOpacity
+                  style={headerStyles.modalBtnCancel}
+                  onPress={() => setShowUnsavedModal(false)}
+                >
+                  <Text style={headerStyles.modalBtnCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={headerStyles.modalBtnDanger}
+                  onPress={() => {
+                    setContent(originalContent);
+                    setIsEditing(false);
+                    setShowUnsavedModal(false);
+                  }}
+                >
+                  <Text style={headerStyles.modalBtnText}>Discard</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={headerStyles.modalBtnSave}
+                  onPress={() => {
+                    setShowUnsavedModal(false);
+                    handleSave();
+                  }}
+                >
+                  <Text style={headerStyles.modalBtnText}>Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     </>
   );
 }
 
 const headerStyles = StyleSheet.create({
-  right: { flexDirection: 'row', gap: 8 },
-  btn: { padding: 6 },
+  right: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  btn: {
+    minWidth: 40,
+    minHeight: 40,
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalBox: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: IDE.surface,
+    borderRadius: 14,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: IDE.text,
+    marginBottom: 8,
+  },
+  modalText: {
+    fontSize: 14,
+    color: IDE.textSecondary,
+    lineHeight: 20,
+    marginBottom: 18,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalBtnCancel: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minHeight: 40,
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: IDE.border,
+  },
+  modalBtnCancelText: {
+    fontSize: 13,
+    color: IDE.muted,
+    fontWeight: '600',
+  },
+  modalBtnDanger: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    minHeight: 40,
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: IDE.danger,
+  },
+  modalBtnSave: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 40,
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: IDE.accent,
+  },
+  modalBtnText: {
+    fontSize: 13,
+    color: '#fff',
+    fontWeight: '600',
+  },
 });
 
 const styles = StyleSheet.create({
