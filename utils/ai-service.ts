@@ -334,6 +334,99 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['questions'],
     },
   },
+  {
+    name: 'finish_task',
+    description: 'Mandatory completion tool for Dev0 and Sub-Agents. Marks the current task as finished, writes the English status report to .agents/<slug>/STATUS.md and LOG.md, and triggers any dependent Cron jobs or downstream Sub-Agents.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent_slug: {
+          type: 'string',
+          description: 'Sub-Agent slug (e.g., developer, auditor, teamworker, localizer, critic)',
+        },
+        summary: {
+          type: 'string',
+          description: 'Concise English summary of completed work and verified files',
+        },
+        files_modified: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of created or modified file paths',
+        },
+        next_recommended_agent: {
+          type: 'string',
+          description: 'Optional recommended next Sub-Agent slug (e.g., auditor or tester)',
+        },
+      },
+      required: ['agent_slug', 'summary'],
+    },
+  },
+  {
+    name: 'create_cron_job',
+    description: 'Creates an automated Cron job or event-driven trigger for a Sub-Agent (e.g., run Auditor after Developer finishes, or run periodic code health checks). Explain why and when the Cron job runs.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Short English name for the Cron job (e.g., Post-Commit Security Audit)',
+        },
+        target_sub_agent: {
+          type: 'string',
+          description: 'Target Sub-Agent slug or role (e.g., auditor, teamworker, developer, localizer)',
+        },
+        schedule: {
+          type: 'string',
+          description: 'Cron expression (e.g., */15 * * * *) or event trigger (e.g., on_finish:developer)',
+        },
+        trigger_on_finish_of: {
+          type: 'string',
+          description: 'Optional Sub-Agent slug whose finish_task call automatically triggers this job',
+        },
+        task: {
+          type: 'string',
+          description: 'English task instruction executed when the Cron job triggers',
+        },
+      },
+      required: ['name', 'target_sub_agent', 'schedule', 'task'],
+    },
+  },
+  {
+    name: 'sleep_agent',
+    description: 'Places a Sub-Agent into pause/sleep mode or wakes it up to conserve tokens and coordinate multi-agent execution.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent_slug: {
+          type: 'string',
+          description: 'Target Sub-Agent slug (e.g., developer, auditor, teamworker)',
+        },
+        action: {
+          type: 'string',
+          description: '"sleep" to pause the Sub-Agent or "wake" to resume it',
+        },
+        reason: {
+          type: 'string',
+          description: 'English explanation for why the Sub-Agent is being paused or woken',
+        },
+      },
+      required: ['agent_slug', 'action'],
+    },
+  },
+  {
+    name: 'inspect_subagent_workspace',
+    description: 'Reads the hidden .agents/<slug>/ workspace documentation (README.md, RULES.md, STATUS.md, LOG.md) and active Cron jobs so Dev0 and Sub-Agents can coordinate seamlessly.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent_slug: {
+          type: 'string',
+          description: 'Optional Sub-Agent slug (e.g., teamworker, auditor, developer). Omit to inspect all active .agents/ workspaces.',
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
 export function getAvailableTools(options?: {
@@ -377,20 +470,17 @@ export function buildSystemPrompt(options: {
   const learningActive = Boolean(options.learningEnabled ?? options.betaAgentLearning ?? false);
 
   const personaPrompts: Record<string, string> = {
-    standard: 'You are an experienced and helpful AI coding assistant in a mobile IDE called "Dev0".',
-    android: 'You are a Senior Android Developer Assistant, specialized in Kotlin, Java, Jetpack Compose, Android SDK, and Gradle. You know best practices for Android development.',
-    web: 'You are a Senior Web Developer Assistant, specialized in TypeScript, React, Next.js, HTML, CSS, Node.js, and modern web technologies.',
-    python: 'You are a Senior Python Developer Assistant, specialized in Python, Django, Flask, FastAPI, Data Science, and Machine Learning.',
-    fullstack: 'You are an experienced Fullstack Developer Assistant with expertise in frontend, backend, databases, DevOps, and cloud architectures.',
+    standard: 'You are "Dev0", the flagship autonomous AI Coding & Multi-Agent Orchestrator in the Dev0 IDE.',
+    android: 'You are "Dev0" (Android Specialist), a Senior Android Developer Assistant specialized in Kotlin, Java, Jetpack Compose, Android SDK, and Gradle.',
+    web: 'You are "Dev0" (Web Specialist), a Senior Web Developer Assistant specialized in TypeScript, React, Next.js, HTML, CSS, Node.js, and modern web technologies.',
+    python: 'You are "Dev0" (Python Specialist), a Senior Python Developer Assistant specialized in Python, Django, Flask, FastAPI, Data Science, and Machine Learning.',
+    fullstack: 'You are "Dev0" (Fullstack Architect), an experienced Fullstack Developer Assistant with expertise in frontend, backend, databases, Docker sandboxes, DevOps, and cloud architectures.',
   };
 
   let prompt = personaPrompts[options.persona] || personaPrompts.standard;
   prompt += `\n\n
-# ROLE
-You are a Coding Agent in a mobile IDE. You have EXCLUSIVE access to tools
-provided explicitly to you in this request via the "tools" schema. You have NO
-other capabilities — no direct internet access, no direct filesystem access, no code execution
-outside the tools provided to you.
+# ROLE & IDENTITY: Dev0
+You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an isolated user sandbox in the Dev0 IDE. You have EXCLUSIVE access to tools provided explicitly to you in this request via the "tools" schema.
 
 # STRICT RULE: GENUINE TOOL CALLS ONLY, NO TEXT SIMULATIONS
 - A tool MUST ALWAYS be called via the native Function Calling mechanism, NEVER via
@@ -400,6 +490,12 @@ outside the tools provided to you.
   Never describe an action as completed if you did not execute it via a real tool call.
 - If a tool you need is missing: state this explicitly ("I do not have a tool for X"),
   do NOT guess, and do NOT pretend you did it anyway.
+
+# SUB-AGENT WORKSPACES (.agents/<slug>/), CRON JOBS, SLEEP MODE & MANDATORY finish_task
+- Every Sub-Agent (e.g., \`teamworker\`, \`auditor\`, \`developer\`, \`localizer\`, \`critic\`) has its own hidden workspace folder under \`.agents/<slug>/\` containing English documentation: \`README.md\`, \`RULES.md\`, \`STATUS.md\`, and \`LOG.md\`.
+- These \`.agents/<slug>/\` folders are hidden from the user's normal project tree (like \`.gitignore\`d metadata) so they never clutter the user's codebase, but you and all Sub-Agents can inspect and update them using \`inspect_subagent_workspace\`, \`read_file\`, and \`finish_task\`.
+- **Mandatory \`finish_task\` Call**: Whenever a Sub-Agent finishes its task (or when you complete a delegated multi-step workflow), it MUST invoke \`finish_task({ agent_slug, summary, files_modified, next_recommended_agent })\`. Calling \`finish_task\` updates \`.agents/<slug>/STATUS.md\` and automatically triggers any dependent Cron jobs (such as \`on_finish:developer\` -> \`auditor\`).
+- **Cron Jobs & Sleep/Pause Mode**: Both you (\`Dev0\`) and Sub-Agents can create recurring or event-driven Cron jobs via \`create_cron_job\` when continuous verification, auditing, or follow-up tasks are beneficial, and can pause/wake Sub-Agents via \`sleep_agent\`.
 
 # WORKFLOW
 1. UNDERSTAND: Summarize in one sentence what the task requires.
@@ -411,8 +507,8 @@ outside the tools provided to you.
    result (e.g., with verify_file or another read_file) before considering the step
    complete. A tool call that returns an error is NOT complete —
    correct the parameters and try again, or report the error.
-5. ONLY call task_complete when all necessary changes have been confirmed by successful
-   tool calls. Flow text that sounds like "done" never replaces a genuine task_complete call.
+5. CALL finish_task / task_complete when all necessary changes have been confirmed by successful
+   tool calls. Flow text that sounds like "done" never replaces a genuine finish_task call.
 
 # ERROR HANDLING
 - Tool error → try again once with corrected parameters. If it fails again,
@@ -447,7 +543,8 @@ outside the tools provided to you.
 `;
 
   prompt += '\n\n## Core Rules\n';
-  prompt += '- ALWAYS reply in English.\n';
+  prompt += '- ALWAYS reply in English in technical files/logs, and match the user language in chat.\n';
+  prompt += '- Your name is **Dev0**. Never expose internal IDE host source files; operate strictly within the user sandbox.\n';
   prompt += '- You have access to the tools defined below. Use ONLY these tools. Use get_active_tools to see which ones are available.\n';
   prompt += '- IMPORTANT: You MUST ALWAYS read a file with read_file BEFORE you edit it with write_file or edit_file.\n';
   prompt += '- If edit_file fails (text not found), read the file again with read_file.\n';

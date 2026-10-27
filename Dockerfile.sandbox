@@ -1,0 +1,20 @@
+# Dev0 Isolated Sandbox Container (Zero Host Source Access)
+FROM node:20-alpine
+
+# Create non-root sandbox user and group
+RUN addgroup -S dev0sandbox && adduser -S dev0user -G dev0sandbox
+
+# Create isolated workspace directory
+RUN mkdir -p /workspace && chown -R dev0user:dev0sandbox /workspace
+
+WORKDIR /workspace
+
+# Switch to unprivileged user
+USER dev0user
+
+ENV NODE_ENV=development
+ENV SANDBOX_ISOLATED=true
+
+EXPOSE 4040
+
+CMD ["sh", "-c", "echo 'Dev0 Isolated Docker Sandbox Active at /workspace' && tail -f /dev/null"]

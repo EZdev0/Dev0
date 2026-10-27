@@ -15,7 +15,6 @@ import {
   Shield,
   Clock,
   Activity,
-  Bell,
   Users,
   Plus,
   Trash2,
@@ -26,6 +25,8 @@ import {
   UserCheck,
   Ban,
   MessageSquare,
+  Globe,
+  Terminal,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { AI_PROVIDERS, AIProviderType } from '@/types';
@@ -33,7 +34,11 @@ import {
   FreePoolState,
   SharedPoolKey,
   GovernanceUser,
+  GovernanceRole,
   evaluatePoolKeyStatus,
+  maskEmailAddress,
+  canManageUsers,
+  canViewUserChats,
 } from '@/utils/free-ai-pool';
 
 interface FreeAIPoolModalProps {
@@ -51,7 +56,14 @@ interface FreeAIPoolModalProps {
   }) => void;
   onRemovePoolKey: (keyId: string) => void;
   onTogglePoolKeyActive: (keyId: string) => void;
-  onSwitchUserIdentity: (email: string, displayName: string) => void;
+  onSwitchUserIdentity: (
+    email: string,
+    displayName: string,
+    authProvider?: 'google' | 'local',
+    ownerPassphrase?: string,
+  ) => void;
+  onClaimOwnerRole?: (passphrase: string) => boolean;
+  onSetUserRole?: (userId: string, role: GovernanceRole) => void;
   onTimeoutUser: (userId: string, minutes: number | null) => void;
   onToggleSuspendUser: (userId: string, reason?: string) => void;
   onUpdateUserTokenQuota: (userId: string, quota: number) => void;
@@ -67,6 +79,8 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
   onRemovePoolKey,
   onTogglePoolKeyActive,
   onSwitchUserIdentity,
+  onClaimOwnerRole,
+  onSetUserRole,
   onTimeoutUser,
   onToggleSuspendUser,
   onUpdateUserTokenQuota,
@@ -84,9 +98,11 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
   const [shareTargetUserId, setShareTargetUserId] = useState<string>('*');
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
 
-  // User Login / Switch State
+  // Google Sign-In & Owner Claim State
   const [loginEmail, setLoginEmail] = useState<string>('');
   const [loginName, setLoginName] = useState<string>('');
+  const [ownerClaimCode, setOwnerClaimCode] = useState<string>('');
+  const [authFeedback, setAuthFeedback] = useState<string | null>(null);
   const [inspectingUserChat, setInspectingUserChat] = useState<GovernanceUser | null>(null);
 
   const currentUser = useMemo(
@@ -96,7 +112,15 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
     [poolState.users, poolState.currentUserId],
   );
 
-  const isAdmin = currentUser?.role === 'admin';
+  const userRole: GovernanceRole = currentUser?.role || 'user';
+  const isOwner = userRole === 'owner';
+  const isAdminOrOwner = canManageUsers(userRole);
+
+  const visibleDebugLogs = useMemo(() => {
+    const allLogs = poolState.chatDebugLogs || [];
+    if (isOwner) return allLogs;
+    return allLogs.filter(l => l.userId === poolState.currentUserId);
+  }, [poolState.chatDebugLogs, poolState.currentUserId, isOwner]);
 
   const selectedProviderModels = useMemo(() => {
     const prov = AI_PROVIDERS.find(p => p.id === shareProvider);
@@ -104,6 +128,11 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
   }, [shareProvider]);
 
   const handleCreateSharedKey = () => {
+    if (!poolState.isAuthenticated && currentUser?.authProvider === 'guest') {
+      setFormFeedback('Please sign in with Google in the Account tab to participate and share keys.');
+      setActiveTab('admin');
+      return;
+    }
     if (!shareRawKey.trim()) {
       setFormFeedback('Please enter an API key to share with the pool.');
       return;
@@ -121,6 +150,34 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
     setShowAddKeyForm(false);
     setFormFeedback('Key encrypted, masked, and added to the AI for Free pool.');
     setTimeout(() => setFormFeedback(null), 4000);
+  };
+
+  const handleGoogleSignIn = () => {
+    const emailToUse = loginEmail.trim() || 'google.user@gmail.com';
+    const nameToUse = loginName.trim() || emailToUse.split('@')[0];
+    onSwitchUserIdentity(emailToUse, nameToUse, 'google', ownerClaimCode.trim() || undefined);
+    setLoginEmail('');
+    setLoginName('');
+    setOwnerClaimCode('');
+    setAuthFeedback('Signed in with Google. Your workspace and Free AI Pool quotas are now synced.');
+    setTimeout(() => setAuthFeedback(null), 4000);
+  };
+
+  const handleClaimOwner = () => {
+    if (!ownerClaimCode.trim()) {
+      setAuthFeedback('Enter your Owner Passphrase (e.g. DEV0-OWNER-2026) to claim Owner governance.');
+      return;
+    }
+    if (onClaimOwnerRole) {
+      const ok = onClaimOwnerRole(ownerClaimCode.trim());
+      if (ok) {
+        setOwnerClaimCode('');
+        setAuthFeedback('Owner role verified and activated. Full User & Chat Audit enabled.');
+      } else {
+        setAuthFeedback('Invalid Owner claim passphrase.');
+      }
+      setTimeout(() => setAuthFeedback(null), 4000);
+    }
   };
 
   const formatRemainingTime = (expiresAt: number | null) => {
@@ -141,10 +198,15 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
           <View style={styles.header}>
             <View style={styles.headerTitleRow}>
               <Sparkles size={20} color={IDE.accent} />
-              <View>
-                <Text style={styles.headerTitle}>AI for Free — Smart Key Pool & Governance</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.headerTitle}>Dev0 • AI for Free — Smart Key Pool & Governance</Text>
                 <Text style={styles.headerSubtitle}>
-                  User ID: {currentUser?.id} ({currentUser?.role === 'admin' ? 'Super Admin' : 'Member'})
+                  Session: {currentUser?.displayName} · Role:{' '}
+                  {userRole === 'owner'
+                    ? 'OWNER (Full Audit)'
+                    : userRole === 'admin'
+                      ? 'ADMIN (User Mod, No Chat Access)'
+                      : 'MEMBER (Private Scope)'}
                 </Text>
               </View>
             </View>
@@ -152,6 +214,21 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
               <X size={20} color={IDE.muted} />
             </TouchableOpacity>
           </View>
+
+          {/* Guest Sign-In Reminder Banner */}
+          {!poolState.isAuthenticated && (
+            <TouchableOpacity
+              style={styles.signInReminderBanner}
+              onPress={() => setActiveTab('admin')}
+              activeOpacity={0.8}
+            >
+              <Globe size={15} color={IDE.warning} />
+              <Text style={styles.signInReminderText}>
+                Sign in with Google to save your sandboxed projects, participate in AI for Free, and persist token quotas.
+              </Text>
+              <Text style={styles.signInReminderAction}>Sign In →</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Navigation Tabs */}
           <View style={styles.tabRow}>
@@ -171,7 +248,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
             >
               <Activity size={14} color={activeTab === 'telemetry' ? IDE.primary : IDE.muted} />
               <Text style={[styles.tabBtnText, activeTab === 'telemetry' && styles.tabBtnTextActive]}>
-                Tokens & Alerts ({poolState.notifications.filter(n => !n.read).length})
+                Chat Debug & Tokens ({visibleDebugLogs.length})
               </Text>
             </TouchableOpacity>
 
@@ -181,7 +258,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
             >
               <Users size={14} color={activeTab === 'admin' ? IDE.primary : IDE.muted} />
               <Text style={[styles.tabBtnText, activeTab === 'admin' && styles.tabBtnTextActive]}>
-                {isAdmin ? 'Admin & Users' : 'Account'}
+                {isOwner ? 'Owner & Audit' : isAdminOrOwner ? 'Admin & Users' : 'Google Sign-In'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -193,10 +270,10 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                 <View style={styles.recommendBanner}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.recommendTitle}>
-                      Recommended: Use "AI for Free" Shared Pool
+                      Recommended: Use "AI for Free" Auto-Rotating Key Pool
                     </Text>
                     <Text style={styles.recommendDesc}>
-                      Automatically routes requests through available community and shared keys with real-time token tracking and zero key exposure.
+                      Automatically routes requests through active shared keys and rotates to the next available key when token or time quotas are reached.
                     </Text>
                   </View>
                   <Switch
@@ -233,7 +310,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                     <View style={styles.securityNoteRow}>
                       <Lock size={14} color={IDE.accent} />
                       <Text style={styles.securityNoteText}>
-                        Your API key is encrypted and masked (••••). Other users can NEVER view your raw key.
+                        Your API key is encrypted and masked (••••). Other users can NEVER view your raw key or email.
                       </Text>
                     </View>
 
@@ -277,7 +354,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                               shareModel === m.id && styles.chipBtnTextActive,
                             ]}
                           >
-                            {m.name}
+                            {m.name} ({m.id})
                           </Text>
                         </TouchableOpacity>
                       ))}
@@ -360,7 +437,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                       style={styles.textInput}
                       value={shareTargetUserId}
                       onChangeText={setShareTargetUserId}
-                      placeholder="* (All users) or e.g. usr_demo_member_1"
+                      placeholder="* (All users) or specific User ID"
                       placeholderTextColor={IDE.muted}
                     />
 
@@ -403,22 +480,25 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                           <Text style={[styles.keyStatusLabel, { color: statusColor }]}>
                             {status.toUpperCase()}
                           </Text>
-                          <TouchableOpacity
-                            style={styles.smallIconBtn}
-                            onPress={() => onTogglePoolKeyActive(k.id)}
-                          >
-                            <Text style={{ fontSize: 11, color: IDE.primary, fontWeight: '600' }}>
-                              {k.isActive ? 'Pause' : 'Resume'}
-                            </Text>
-                          </TouchableOpacity>
-                          {k.id !== 'pool_builtin_studio_free' && (
+                          {(isAdminOrOwner || k.ownerUserId === poolState.currentUserId) && (
                             <TouchableOpacity
                               style={styles.smallIconBtn}
-                              onPress={() => onRemovePoolKey(k.id)}
+                              onPress={() => onTogglePoolKeyActive(k.id)}
                             >
-                              <Trash2 size={14} color={IDE.danger} />
+                              <Text style={{ fontSize: 11, color: IDE.primary, fontWeight: '600' }}>
+                                {k.isActive ? 'Pause' : 'Resume'}
+                              </Text>
                             </TouchableOpacity>
                           )}
+                          {k.id !== 'pool_builtin_studio_free' &&
+                            (isAdminOrOwner || k.ownerUserId === poolState.currentUserId) && (
+                              <TouchableOpacity
+                                style={styles.smallIconBtn}
+                                onPress={() => onRemovePoolKey(k.id)}
+                              >
+                                <Trash2 size={14} color={IDE.danger} />
+                              </TouchableOpacity>
+                            )}
                         </View>
                       </View>
 
@@ -486,8 +566,54 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                   </View>
                 </View>
 
+                {/* Per-Chat Real-Time Debug Telemetry */}
                 <View style={styles.sectionHeaderRow}>
-                  <Text style={styles.sectionHeading}>Real-Time Pool Alerts & Warnings</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Terminal size={14} color={IDE.primary} />
+                    <Text style={styles.sectionHeading}>
+                      Per-Chat Turn Debugger & Token Accounting ({visibleDebugLogs.length})
+                    </Text>
+                  </View>
+                </View>
+
+                {visibleDebugLogs.length === 0 ? (
+                  <Text style={styles.emptyNote}>
+                    0 chat turns recorded in this session. Send a chat message to inspect real API/BPE token counts, latency, and key routing.
+                  </Text>
+                ) : (
+                  visibleDebugLogs.map(log => (
+                    <View key={log.id} style={styles.keyCard}>
+                      <View style={styles.keyCardTop}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.keyProviderModel}>
+                            {log.provider.toUpperCase()} · {log.model}{' '}
+                            {log.usedFallback ? '(Fallback)' : ''}
+                          </Text>
+                          <Text style={styles.maskedKeyText}>
+                            {new Date(log.timestamp).toLocaleTimeString()} · Latency: {log.latencyMs}ms ·{' '}
+                            {log.isExactFromAPI ? 'Exact API Usage' : 'Calibrated BPE'}
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: IDE.primary }}>
+                          {log.totalTokens.toLocaleString()} tok
+                        </Text>
+                      </View>
+                      <Text style={styles.keyMetaText}>
+                        Prompt: {log.promptTokens.toLocaleString()} · Completion:{' '}
+                        {log.completionTokens.toLocaleString()} · Tools:{' '}
+                        {log.toolCalls.length > 0 ? log.toolCalls.join(', ') : 'none'}
+                      </Text>
+                      {log.promptPreview ? (
+                        <Text style={[styles.notifMsg, { marginTop: 4 }]} numberOfLines={2}>
+                          Prompt: "{log.promptPreview}"
+                        </Text>
+                      ) : null}
+                    </View>
+                  ))
+                )}
+
+                <View style={[styles.sectionHeaderRow, { marginTop: 12 }]}>
+                  <Text style={styles.sectionHeading}>Real-Time Pool Alerts & Key Rotation Logs</Text>
                   {poolState.notifications.length > 0 && (
                     <TouchableOpacity onPress={onClearNotifications}>
                       <Text style={{ fontSize: 12, color: IDE.primary, fontWeight: '600' }}>
@@ -524,19 +650,31 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
 
             {activeTab === 'admin' && (
               <>
-                {/* Quick Google / Identity Switcher */}
+                {/* Google Sign-In & Owner Passphrase Claim */}
                 <View style={styles.shareFormCard}>
-                  <Text style={styles.sectionHeading}>Active User Session (Zero-Config Auth)</Text>
-                  <Text style={styles.recommendDesc}>
-                    First user is automatically promoted to Super Admin. Switch identities below to test per-User ID key routing.
+                  <Text style={styles.sectionHeading}>
+                    Google Sign-In & Role Verification (Zero Email Leak)
                   </Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                  <Text style={styles.recommendDesc}>
+                    Sign in with Google to participate in the "AI for Free" program and isolate your sandboxed projects.
+                    Admins can moderate users but CANNOT view private chats; only the verified Owner can audit chats.
+                  </Text>
+
+                  {authFeedback && (
+                    <View style={[styles.feedbackToast, { marginTop: 8 }]}>
+                      <CheckCircle size={14} color={IDE.accent} />
+                      <Text style={styles.feedbackToastText}>{authFeedback}</Text>
+                    </View>
+                  )}
+
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                     <TextInput
                       style={[styles.textInput, { flex: 1, marginBottom: 0 }]}
                       value={loginEmail}
                       onChangeText={setLoginEmail}
-                      placeholder="Email (e.g. ggjonasgameryt@gmail.com)"
+                      placeholder="Google Account Email (masked in UI)"
                       placeholderTextColor={IDE.muted}
+                      autoCapitalize="none"
                     />
                     <TextInput
                       style={[styles.textInput, { flex: 1, marginBottom: 0 }]}
@@ -545,138 +683,199 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                       placeholder="Display Name"
                       placeholderTextColor={IDE.muted}
                     />
+                  </View>
+
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+                    <TextInput
+                      style={[styles.textInput, { flex: 1, marginBottom: 0 }]}
+                      value={ownerClaimCode}
+                      onChangeText={setOwnerClaimCode}
+                      placeholder="Optional Owner Claim Code (e.g. DEV0-OWNER-2026)"
+                      placeholderTextColor={IDE.muted}
+                      secureTextEntry
+                      autoCapitalize="characters"
+                    />
                     <TouchableOpacity
-                      style={styles.offerKeyBtn}
-                      onPress={() => {
-                        if (!loginEmail.trim()) return;
-                        onSwitchUserIdentity(
-                          loginEmail.trim(),
-                          loginName.trim() || loginEmail.trim().split('@')[0],
-                        );
-                        setLoginEmail('');
-                        setLoginName('');
-                      }}
+                      style={[styles.offerKeyBtn, { backgroundColor: IDE.primary }]}
+                      onPress={handleGoogleSignIn}
                     >
                       <UserCheck size={14} color="#fff" />
-                      <Text style={styles.offerKeyBtnText}>Sign In</Text>
+                      <Text style={styles.offerKeyBtnText}>Sign in with Google</Text>
                     </TouchableOpacity>
+                    {ownerClaimCode.trim().length > 0 && (
+                      <TouchableOpacity
+                        style={[styles.offerKeyBtn, { backgroundColor: IDE.accent }]}
+                        onPress={handleClaimOwner}
+                      >
+                        <Shield size={14} color="#000" />
+                        <Text style={[styles.offerKeyBtnText, { color: '#000' }]}>Claim Owner</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
 
-                {/* Admin User Management List */}
-                <Text style={[styles.sectionHeading, { marginTop: 12, marginBottom: 8 }]}>
-                  User Governance & Moderation ({poolState.users.length} Users)
-                </Text>
-
-                {poolState.users.map(u => (
-                  <View key={u.id} style={styles.keyCard}>
-                    <View style={styles.keyCardTop}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.keyProviderModel}>
-                          {u.displayName} ({u.role.toUpperCase()})
-                        </Text>
-                        <Text style={styles.maskedKeyText}>
-                          ID: {u.id} · {u.email}
-                        </Text>
-                      </View>
-                      <Text
-                        style={{
-                          fontSize: 11,
-                          fontWeight: '700',
-                          color:
-                            u.status === 'active'
-                              ? IDE.accent
-                              : u.status === 'timeout'
-                                ? IDE.warning
-                                : IDE.danger,
-                        }}
-                      >
-                        {u.status.toUpperCase()}
-                      </Text>
-                    </View>
-
-                    <Text style={styles.keyMetaText}>
-                      Tokens Consumed: {u.tokensConsumed.toLocaleString()} · Quota:{' '}
-                      {u.tokenQuota > 0 ? u.tokenQuota.toLocaleString() : 'Unlimited'}
+                {/* Role-Scoped Governance View */}
+                {!isAdminOrOwner ? (
+                  <View style={styles.keyCard}>
+                    <Text style={styles.keyProviderModel}>
+                      Your Account ({currentUser?.displayName})
+                    </Text>
+                    <Text style={styles.maskedKeyText}>
+                      ID: {currentUser?.id} · Masked Email: {maskEmailAddress(currentUser?.email || '')} · Role: MEMBER
+                    </Text>
+                    <Text style={[styles.keyMetaText, { marginTop: 6 }]}>
+                      Tokens Consumed: {currentUser?.tokensConsumed.toLocaleString()} · Quota:{' '}
+                      {currentUser?.tokenQuota && currentUser.tokenQuota > 0
+                        ? currentUser.tokenQuota.toLocaleString()
+                        : 'Unlimited'}
+                    </Text>
+                    <Text style={[styles.recommendDesc, { marginTop: 6 }]}>
+                      Privacy Guarantee: Regular users and Admins cannot view your private chat history.
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={[styles.sectionHeading, { marginTop: 12, marginBottom: 8 }]}>
+                      {isOwner
+                        ? `Owner Governance & Full Chat Audit (${poolState.users.length} Users)`
+                        : `Admin User Directory (${poolState.users.length} Users — Private Chats Hidden)`}
                     </Text>
 
-                    {isAdmin && u.role !== 'admin' && (
-                      <View style={styles.adminActionRow}>
-                        <TouchableOpacity
-                          style={styles.adminBtn}
-                          onPress={() => onTimeoutUser(u.id, 15)}
-                        >
-                          <Clock size={12} color={IDE.warning} />
-                          <Text style={styles.adminBtnText}>15m Timeout</Text>
-                        </TouchableOpacity>
+                    {poolState.users.map(u => {
+                      const canAuditThisUserChat = canViewUserChats(
+                        userRole,
+                        poolState.currentUserId,
+                        u.id,
+                      );
+                      return (
+                        <View key={u.id} style={styles.keyCard}>
+                          <View style={styles.keyCardTop}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.keyProviderModel}>
+                                {u.displayName} ({u.role.toUpperCase()})
+                              </Text>
+                              <Text style={styles.maskedKeyText}>
+                                ID: {u.id} · {maskEmailAddress(u.email)} · Auth: {u.authProvider.toUpperCase()}
+                              </Text>
+                            </View>
+                            <Text
+                              style={{
+                                fontSize: 11,
+                                fontWeight: '700',
+                                color:
+                                  u.status === 'active'
+                                    ? IDE.accent
+                                    : u.status === 'timeout'
+                                      ? IDE.warning
+                                      : IDE.danger,
+                              }}
+                            >
+                              {u.status.toUpperCase()}
+                            </Text>
+                          </View>
 
-                        <TouchableOpacity
-                          style={styles.adminBtn}
-                          onPress={() => onTimeoutUser(u.id, null)}
-                        >
-                          <Text style={styles.adminBtnText}>Clear Timeout</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                          style={styles.adminBtn}
-                          onPress={() => onToggleSuspendUser(u.id, 'Policy violation')}
-                        >
-                          <Ban size={12} color={IDE.danger} />
-                          <Text style={[styles.adminBtnText, { color: IDE.danger }]}>
-                            {u.status === 'suspended' ? 'Unsuspend' : 'Suspend'}
+                          <Text style={styles.keyMetaText}>
+                            Tokens Consumed: {u.tokensConsumed.toLocaleString()} · Quota:{' '}
+                            {u.tokenQuota > 0 ? u.tokenQuota.toLocaleString() : 'Unlimited'}
                           </Text>
-                        </TouchableOpacity>
 
-                        <TouchableOpacity
-                          style={styles.adminBtn}
-                          onPress={() =>
-                            onUpdateUserTokenQuota(
-                              u.id,
-                              u.tokenQuota === 50000 ? 0 : 50000,
-                            )
-                          }
-                        >
-                          <Text style={styles.adminBtnText}>
-                            {u.tokenQuota === 50000 ? 'Remove Cap' : 'Cap 50k'}
-                          </Text>
-                        </TouchableOpacity>
+                          {u.role !== 'owner' && (
+                            <View style={styles.adminActionRow}>
+                              <TouchableOpacity
+                                style={styles.adminBtn}
+                                onPress={() => onTimeoutUser(u.id, 15)}
+                              >
+                                <Clock size={12} color={IDE.warning} />
+                                <Text style={styles.adminBtnText}>15m Timeout</Text>
+                              </TouchableOpacity>
 
-                        <TouchableOpacity
-                          style={styles.adminBtn}
-                          onPress={() => setInspectingUserChat(u)}
-                        >
-                          <MessageSquare size={12} color={IDE.primary} />
-                          <Text style={[styles.adminBtnText, { color: IDE.primary }]}>
-                            Audit Chat ({u.recentChatExcerpts.length})
+                              <TouchableOpacity
+                                style={styles.adminBtn}
+                                onPress={() => onTimeoutUser(u.id, null)}
+                              >
+                                <Text style={styles.adminBtnText}>Clear Timeout</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.adminBtn}
+                                onPress={() => onToggleSuspendUser(u.id, 'Policy violation')}
+                              >
+                                <Ban size={12} color={IDE.danger} />
+                                <Text style={[styles.adminBtnText, { color: IDE.danger }]}>
+                                  {u.status === 'suspended' ? 'Unsuspend' : 'Suspend'}
+                                </Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.adminBtn}
+                                onPress={() =>
+                                  onUpdateUserTokenQuota(
+                                    u.id,
+                                    u.tokenQuota === 50000 ? 0 : 50000,
+                                  )
+                                }
+                              >
+                                <Text style={styles.adminBtnText}>
+                                  {u.tokenQuota === 50000 ? 'Remove Cap' : 'Cap 50k'}
+                                </Text>
+                              </TouchableOpacity>
+
+                              {isOwner && onSetUserRole && (
+                                <TouchableOpacity
+                                  style={styles.adminBtn}
+                                  onPress={() =>
+                                    onSetUserRole(u.id, u.role === 'admin' ? 'user' : 'admin')
+                                  }
+                                >
+                                  <Shield size={12} color={IDE.accent} />
+                                  <Text style={[styles.adminBtnText, { color: IDE.accent }]}>
+                                    {u.role === 'admin' ? 'Demote to User' : 'Make Admin'}
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {/* ONLY Owner (or self) can inspect chat excerpts */}
+                              {canAuditThisUserChat && (
+                                <TouchableOpacity
+                                  style={styles.adminBtn}
+                                  onPress={() => setInspectingUserChat(u)}
+                                >
+                                  <MessageSquare size={12} color={IDE.primary} />
+                                  <Text style={[styles.adminBtnText, { color: IDE.primary }]}>
+                                    Owner Audit Chat ({u.recentChatExcerpts.length})
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })}
+
+                    {inspectingUserChat && isOwner && (
+                      <View style={styles.shareFormCard}>
+                        <View style={styles.sectionHeaderRow}>
+                          <Text style={styles.sectionHeading}>
+                            Owner Chat Audit: {inspectingUserChat.displayName}
                           </Text>
-                        </TouchableOpacity>
+                          <TouchableOpacity onPress={() => setInspectingUserChat(null)}>
+                            <X size={16} color={IDE.muted} />
+                          </TouchableOpacity>
+                        </View>
+                        {inspectingUserChat.recentChatExcerpts.length === 0 ? (
+                          <Text style={styles.emptyNote}>No recorded chat excerpts for this user.</Text>
+                        ) : (
+                          inspectingUserChat.recentChatExcerpts.map(ex => (
+                            <View key={ex.id} style={styles.notifCard}>
+                              <Text style={styles.notifMsg}>
+                                [{new Date(ex.timestamp).toLocaleTimeString()}] {ex.text}
+                              </Text>
+                            </View>
+                          ))
+                        )}
                       </View>
                     )}
-                  </View>
-                ))}
-
-                {inspectingUserChat && (
-                  <View style={styles.shareFormCard}>
-                    <View style={styles.sectionHeaderRow}>
-                      <Text style={styles.sectionHeading}>
-                        Chat Audit: {inspectingUserChat.displayName}
-                      </Text>
-                      <TouchableOpacity onPress={() => setInspectingUserChat(null)}>
-                        <X size={16} color={IDE.muted} />
-                      </TouchableOpacity>
-                    </View>
-                    {inspectingUserChat.recentChatExcerpts.length === 0 ? (
-                      <Text style={styles.emptyNote}>No recorded chat excerpts for this user.</Text>
-                    ) : (
-                      inspectingUserChat.recentChatExcerpts.map(ex => (
-                        <View key={ex.id} style={styles.notifCard}>
-                          <Text style={styles.notifMsg}>
-                            [{new Date(ex.timestamp).toLocaleTimeString()}] {ex.text}
-                          </Text>
-                        </View>
-                      ))
-                    )}
-                  </View>
+                  </>
                 )}
               </>
             )}
@@ -697,7 +896,7 @@ const styles = StyleSheet.create({
   },
   floatingWindow: {
     width: '100%',
-    maxWidth: 640,
+    maxWidth: 660,
     maxHeight: '90%',
     backgroundColor: IDE.surface,
     borderRadius: 14,
@@ -734,6 +933,26 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     padding: 6,
+  },
+  signInReminderBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: IDE.warning + '18',
+    borderBottomWidth: 1,
+    borderBottomColor: IDE.warning + '40',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  signInReminderText: {
+    flex: 1,
+    fontSize: 11,
+    color: IDE.text,
+  },
+  signInReminderAction: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: IDE.warning,
   },
   tabRow: {
     flexDirection: 'row',
@@ -803,6 +1022,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: IDE.accent,
     fontWeight: '600',
+    flex: 1,
   },
   sectionHeaderRow: {
     flexDirection: 'row',

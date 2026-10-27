@@ -38,6 +38,8 @@ function GlobalModalsHost() {
     removePoolKey,
     togglePoolKeyActive,
     switchUserIdentity,
+    claimOwnerRole,
+    setUserRole,
     timeoutUser,
     toggleSuspendUser,
     updateUserTokenQuota,
@@ -69,6 +71,8 @@ function GlobalModalsHost() {
         onRemovePoolKey={removePoolKey}
         onTogglePoolKeyActive={togglePoolKeyActive}
         onSwitchUserIdentity={switchUserIdentity}
+        onClaimOwnerRole={claimOwnerRole}
+        onSetUserRole={setUserRole}
         onTimeoutUser={timeoutUser}
         onToggleSuspendUser={toggleSuspendUser}
         onUpdateUserTokenQuota={updateUserTokenQuota}

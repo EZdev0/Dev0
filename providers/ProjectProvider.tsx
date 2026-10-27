@@ -3,6 +3,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
 import { FileNode, Project } from '@/types';
 import { createSampleProject } from '@/utils/sample-project';
+import {
+  sanitizeUserSandboxProjects,
+  getPerUserSandboxStorageKey,
+  getPerUserCurrentProjectKey,
+} from '@/utils/sandbox-workspace';
+import {
+  filterVisibleUserFiles,
+  isHiddenAgentWorkspacePath,
+} from '@/utils/subagent-workspace';
 import { useApp } from '@/providers/AppProvider';
 
 function generateId(): string {
@@ -28,7 +37,8 @@ function cloneFiles(files: FileNode[]): FileNode[] {
 
 function buildTreeString(nodes: FileNode[], indent: string = ''): string {
   let result = '';
-  const sorted = [...nodes].sort((a, b) => {
+  const visibleNodes = filterVisibleUserFiles(nodes);
+  const sorted = [...visibleNodes].sort((a, b) => {
     if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
     return a.name.localeCompare(b.name);
   });
@@ -63,6 +73,7 @@ function ensureDirectories(files: FileNode[], dirParts: string[]): FileNode[] {
 function searchInFiles(nodes: FileNode[], query: string, basePath: string, results: string[]): void {
   for (const node of nodes) {
     const path = basePath ? basePath + '/' + node.name : node.name;
+    if (isHiddenAgentWorkspacePath(path)) continue;
     if (node.type === 'file' && node.content) {
       const lines = node.content.split('\n');
       for (let i = 0; i < lines.length; i++) {
@@ -84,7 +95,8 @@ function listDir(nodes: FileNode[], pathParts: string[]): string {
     if (!node || node.type !== 'directory' || !node.children) return 'Verzeichnis nicht gefunden.';
     target = node.children;
   }
-  return target
+  const visibleTarget = pathParts.length === 0 ? filterVisibleUserFiles(target) : target;
+  return visibleTarget
     .sort((a, b) => {
       if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -97,6 +109,7 @@ function getAllFilePaths(nodes: FileNode[], basePath: string = ''): string[] {
   const paths: string[] = [];
   for (const node of nodes) {
     const path = basePath ? basePath + '/' + node.name : node.name;
+    if (isHiddenAgentWorkspacePath(path)) continue;
     if (node.type === 'file') {
       paths.push(path);
     }
@@ -108,13 +121,26 @@ function getAllFilePaths(nodes: FileNode[], basePath: string = ''): string[] {
 }
 
 export const [ProjectProvider, useProject] = createContextHook(() => {
-  const { triggerSponsorInteraction } = useApp();
+  const { triggerSponsorInteraction, freePoolState } = useApp();
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentProjectIdRef = useRef<string | null>(null);
   currentProjectIdRef.current = currentProjectId;
+
+  const userSandboxKey = useMemo(
+    () => getPerUserSandboxStorageKey(freePoolState?.currentUserId),
+    [freePoolState?.currentUserId],
+  );
+  const userCurrentProjKey = useMemo(
+    () => getPerUserCurrentProjectKey(freePoolState?.currentUserId),
+    [freePoolState?.currentUserId],
+  );
+  const userSandboxKeyRef = useRef(userSandboxKey);
+  userSandboxKeyRef.current = userSandboxKey;
+  const userCurrentProjKeyRef = useRef(userCurrentProjKey);
+  userCurrentProjKeyRef.current = userCurrentProjKey;
 
   const plansProjectsRef = useRef<Project[]>([]);
   plansProjectsRef.current = projects;
@@ -123,23 +149,47 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
     projects.find(p => p.id === currentProjectId) ?? null
   , [projects, currentProjectId]);
 
-  const files = useMemo(() => currentProject?.files ?? [], [currentProject]);
+  // Hide .agents/ and .agent/ from standard user-facing file trees
+  const files = useMemo(
+    () => filterVisibleUserFiles(currentProject?.files ?? []),
+    [currentProject],
+  );
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [projStr, idStr] = await Promise.all([
+        const [userProjStr, userIdStr, legacyProjStr, legacyIdStr] = await Promise.all([
+          AsyncStorage.getItem(userSandboxKey),
+          AsyncStorage.getItem(userCurrentProjKey),
           AsyncStorage.getItem('ide_projects'),
           AsyncStorage.getItem('ide_current_project'),
         ]);
-        if (projStr) {
-          const loaded: Project[] = JSON.parse(projStr);
+        const rawStr = userProjStr || legacyProjStr;
+        const idStr = userIdStr || legacyIdStr;
+        if (rawStr) {
+          const parsed: Project[] = JSON.parse(rawStr);
+          // Strictly strip any legacy self-source (studio-ide) exposure so the app's own code is never leaked
+          const loaded = sanitizeUserSandboxProjects(parsed);
           setProjects(loaded);
+          plansProjectsRef.current = loaded;
           if (idStr && loaded.some(p => p.id === idStr)) {
             setCurrentProjectId(idStr);
+            currentProjectIdRef.current = idStr;
           } else if (loaded.length > 0) {
             setCurrentProjectId(loaded[0].id);
+            currentProjectIdRef.current = loaded[0].id;
+          } else {
+            setCurrentProjectId(null);
+            currentProjectIdRef.current = null;
           }
+          if (loaded.length !== parsed.length || !userProjStr) {
+            AsyncStorage.setItem(userSandboxKey, JSON.stringify(loaded)).catch(console.log);
+          }
+        } else {
+          setProjects([]);
+          plansProjectsRef.current = [];
+          setCurrentProjectId(null);
+          currentProjectIdRef.current = null;
         }
       } catch (e) {
         console.log('[Project] Fehler beim Laden:', e);
@@ -153,7 +203,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
         clearTimeout(persistTimerRef.current);
       }
     };
-  }, []);
+  }, [userSandboxKey, userCurrentProjKey]);
 
   const persist = useCallback((updated: Project[]) => {
     if (persistTimerRef.current) {
@@ -161,13 +211,15 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
     }
     persistTimerRef.current = setTimeout(() => {
       try {
-        const serialized = JSON.stringify(updated);
+        const sanitized = sanitizeUserSandboxProjects(updated);
+        const serialized = JSON.stringify(sanitized);
         if (serialized.length > 4 * 1024 * 1024) {
           console.log('[Project] Warnung: Projektdaten sehr groß (' + Math.round(serialized.length / 1024) + 'KB)');
         }
-        AsyncStorage.setItem('ide_projects', serialized).catch(e =>
+        AsyncStorage.setItem(userSandboxKeyRef.current, serialized).catch(e =>
           console.log('[Project] Fehler beim Speichern:', e)
         );
+        AsyncStorage.setItem('ide_projects', serialized).catch(console.log);
       } catch (e) {
         console.log('[Project] Serialisierungsfehler:', e);
       }
@@ -176,11 +228,12 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
 
   const createProject = useCallback((name: string, projectType: string) => {
     triggerSponsorInteraction();
+    const safeType = projectType === 'studio-ide' ? 'docker-sandbox' : projectType;
     const project: Project = {
       id: Date.now().toString(),
       name,
-      projectType,
-      files: createSampleProject(projectType),
+      projectType: safeType,
+      files: createSampleProject(safeType),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -192,6 +245,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
     });
     currentProjectIdRef.current = project.id;
     setCurrentProjectId(project.id);
+    AsyncStorage.setItem(userCurrentProjKeyRef.current, project.id).catch(console.log);
     AsyncStorage.setItem('ide_current_project', project.id).catch(console.log);
     return project.id;
   }, [persist, triggerSponsorInteraction]);

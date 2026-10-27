@@ -1,6 +1,6 @@
 {
-  "summary":  "Revised implementation plan incorporating RepoGraph/LocAgent-inspired AST Synapse Memory Graph, 3-Tier Hybrid ReAct/XML/JSON Tool Parser for local LLMs, YAML frontmatter Skill & Learning File Auto-Loader, Manual Sub-Agent Templates with file/tool scopes callable by AI and user, and 'AI for Free' Community Key Pool with masked keys, per-user ID routing, real API token accounting, and proactive notifications.",
-  "updatedAt":  "2026-10-27T09:13:49.585856994Z",
+  "summary":  "Comprehensive implementation plan for Dev0 v1.5 covering: (1) Sandboxed Browser IndexedDB + Docker Container Workspace Isolation without self-source exposure, (2) Zero-PII Email Redaction & Google Sign-In + Owner Passphrase Claim with 3-tier RBAC (Owner/Admin/User), (3) Real Per-Chat Debug Telemetry & Zero-Seeded Token Accounting, (4) Provider Model Catalog with Yellow Search Highlighting & LM Studio/Ollama Custom Endpoint Fetch, (5) Hidden .agents/<name>/ Sub-Agent Workspaces, Cron Scheduler, Pause/Sleep Mode, Explicit finish_task Tool, and Interactive Workflow Graph Card with Direct Relay Submission, and (6) Automated Branch & PR Creation for Netlify CI/CD.",
+  "updatedAt":  "2026-10-27T11:12:18.494444337Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

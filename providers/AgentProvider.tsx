@@ -35,6 +35,13 @@ import {
   buildActiveSkillsPromptBlock,
   isFileAllowedForSubAgent,
 } from '@/utils/skill-loader';
+import {
+  normalizeSubAgentSlug,
+  buildSubAgentWorkspaceFiles,
+  buildSubAgentStatusMarkdown,
+  appendSubAgentLogMarkdown,
+  evaluateCronJobsOnFinishTask,
+} from '@/utils/subagent-workspace';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
@@ -110,6 +117,9 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
     customSubAgents,
     saveSubAgentTemplate,
     skillEnabledOverrides,
+    subAgentWorkflow,
+    updateSubAgentWorkflow,
+    addSubAgentCronJob,
   } = useApp();
   const {
     currentProject,
@@ -198,6 +208,10 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
     if (
       name !== 'think' &&
       name !== 'task_complete' &&
+      name !== 'finish_task' &&
+      name !== 'create_cron_job' &&
+      name !== 'sleep_agent' &&
+      name !== 'inspect_subagent_workspace' &&
       name !== 'verify_file' &&
       name !== 'get_active_tools' &&
       name !== 'ask_user_question' &&
@@ -393,6 +407,88 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
         case 'task_complete': {
           return { result: 'TASK_COMPLETED: ' + (args?.summary || 'Done') };
         }
+        case 'finish_task': {
+          const slug = normalizeSubAgentSlug(args?.agent_slug || 'developer');
+          const summary = String(args?.summary || 'Task completed.').trim();
+          const now = Date.now();
+          updateFileContent(
+            `.agents/${slug}/STATUS.md`,
+            buildSubAgentStatusMarkdown({
+              name: `${slug.toUpperCase()} Sub-Agent`,
+              slug,
+              role: slug,
+              status: 'completed',
+              currentTask: summary,
+              lastSummary: summary,
+            }),
+          );
+          const existingLog = getFileContent(`.agents/${slug}/LOG.md`) || `# ${slug} Execution Log\n`;
+          updateFileContent(
+            `.agents/${slug}/LOG.md`,
+            appendSubAgentLogMarkdown(existingLog, `finish_task: ${summary}`),
+          );
+          let triggeredNames: string[] = [];
+          updateSubAgentWorkflow((prev) => {
+            const evalCron = evaluateCronJobsOnFinishTask(prev.cronJobs, slug, now);
+            triggeredNames = evalCron.triggeredJobs.map((j) => j.name);
+            return {
+              ...prev,
+              updatedAt: now,
+              lastFinishedSubAgentSlug: slug,
+              nodes: prev.nodes.map((n) =>
+                n.slug === slug ? { ...n, status: 'completed' as const, lastSummary: summary, updatedAt: now } : n,
+              ),
+              cronJobs: evalCron.updatedCronJobs,
+            };
+          });
+          return {
+            result:
+              'TASK_COMPLETED: ' +
+              summary +
+              (triggeredNames.length > 0 ? ` (Triggered Cron: ${triggeredNames.join(', ')})` : ''),
+          };
+        }
+        case 'create_cron_job': {
+          const job = addSubAgentCronJob({
+            name: String(args?.name || 'Automated Check'),
+            targetSubAgentSlug: normalizeSubAgentSlug(args?.target_sub_agent || 'auditor'),
+            targetRole: normalizeSubAgentSlug(args?.target_sub_agent || 'auditor'),
+            scheduleExpression: String(args?.schedule || 'on_finish:developer'),
+            triggerOnFinishOf: args?.trigger_on_finish_of
+              ? normalizeSubAgentSlug(String(args.trigger_on_finish_of))
+              : undefined,
+            taskInstruction: String(args?.task || 'Run audit check'),
+            createdBy: 'sub_agent',
+          });
+          return { result: `Cron job "${job.name}" scheduled for ${job.targetSubAgentSlug} (${job.scheduleExpression}).` };
+        }
+        case 'sleep_agent': {
+          const slug = normalizeSubAgentSlug(args?.agent_slug || 'developer');
+          const action = String(args?.action || 'sleep').toLowerCase() === 'wake' ? 'wake' : 'sleep';
+          const reason = String(args?.reason || 'Paused by agent');
+          updateSubAgentWorkflow((prev) => ({
+            ...prev,
+            updatedAt: Date.now(),
+            nodes: prev.nodes.map((n) =>
+              n.slug === slug
+                ? { ...n, status: action === 'sleep' ? 'sleeping' : 'idle', sleepReason: reason, updatedAt: Date.now() }
+                : n,
+            ),
+          }));
+          return { result: `Sub-Agent "${slug}" ${action === 'sleep' ? 'paused' : 'woken'}: ${reason}` };
+        }
+        case 'inspect_subagent_workspace': {
+          const slug = args?.agent_slug ? normalizeSubAgentSlug(String(args.agent_slug)) : '';
+          if (slug) {
+            const status = getFileContent(`.agents/${slug}/STATUS.md`) || '(no status)';
+            return wrapResult({ result: status });
+          }
+          return wrapResult({
+            result: subAgentWorkflow.nodes
+              .map((n) => `${n.name} (.agents/${n.slug}/): ${n.status}`)
+              .join('\n'),
+          });
+        }
         case 'verify_file': {
           if (!args?.path) return { result: 'ERROR: No file path provided.' };
           const content = getFileContent(args.path);
@@ -447,7 +543,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
               description: taskDesc.slice(0, 140),
               systemPrompt: `You are a specialized ${roleOrId} Sub-Agent. Complete the delegated task accurately.`,
               rules: ['Always read files before modifying them.', 'Stay within allowed file scope.'],
-              allowedTools: ['read_file', 'read_lines', 'list_directory', 'search_files', 'get_project_tree', 'localize_code_graph', 'write_file', 'edit_file', 'think'],
+              allowedTools: ['read_file', 'read_lines', 'list_directory', 'search_files', 'get_project_tree', 'localize_code_graph', 'write_file', 'edit_file', 'think', 'finish_task'],
               allowedFiles: ['*'],
               canBeCalledByAI: true,
               createdAt: Date.now(),
@@ -457,16 +553,33 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             matchedTemplate = autoSaved;
           }
 
+          const agentSlug = normalizeSubAgentSlug(matchedTemplate?.role || roleOrId);
+          const workspaceFiles = buildSubAgentWorkspaceFiles({
+            name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
+            role: matchedTemplate?.role || roleOrId,
+            description: matchedTemplate?.description || taskDesc,
+            systemPrompt: matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.',
+            rules: matchedTemplate?.rules || ['Always read files before modifying them.'],
+            allowedTools: matchedTemplate?.allowedTools || ['read_file', 'finish_task'],
+            allowedFiles: matchedTemplate?.allowedFiles || ['*'],
+            currentTask: taskDesc,
+            status: 'running',
+          });
+          for (const wf of workspaceFiles) {
+            updateFileContent(wf.path, wf.content);
+          }
+
           const resolvedAuth = resolveEffectiveProviderAndKey();
 
           const subSystemPrompt =
-            `You are a specialized Sub-Agent: ${matchedTemplate?.name || roleOrId}.\n` +
+            `You are a specialized Sub-Agent: ${matchedTemplate?.name || roleOrId} (workspace: .agents/${agentSlug}/).\n` +
             `${matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.'}\n` +
             (matchedTemplate?.rules?.length
               ? `Rules:\n${matchedTemplate.rules.map((r: string) => `- ${r}`).join('\n')}\n`
               : '') +
             `Allowed file patterns: ${(matchedTemplate?.allowedFiles || ['*']).join(', ')}`;
 
+          const t0 = Date.now();
           const subResp = await callAI(
             resolvedAuth.provider,
             resolvedAuth.apiKey || 'rork_builtin',
@@ -478,10 +591,17 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
             settings.autoFallback ? getFallbackSettings() : undefined,
           );
           if (subResp.tokenUsage) {
-            recordPoolTokenUsage(subResp.tokenUsage, resolvedAuth.poolKeyId, taskDesc);
+            recordPoolTokenUsage(subResp.tokenUsage, resolvedAuth.poolKeyId, taskDesc, {
+              provider: resolvedAuth.provider,
+              model: resolvedAuth.model,
+              latencyMs: Date.now() - t0,
+              toolCalls: ['sub_agent'],
+              usedFallback: subResp.usedFallback,
+              fallbackProvider: subResp.fallbackProvider,
+            });
           }
           return wrapResult({
-            result: `[Sub-Agent ${matchedTemplate?.name || roleOrId}]:\n${subResp.content || 'Completed.'}`,
+            result: `[Sub-Agent ${matchedTemplate?.name || roleOrId} (.agents/${agentSlug}/)]:\n${subResp.content || 'Completed.'}`,
           });
         }
         default:
@@ -491,7 +611,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       console.log('[Agent] Tool error:', name, e);
       return { result: 'ERROR in ' + name + ': ' + (e?.message || 'Unknown error') };
     }
-  }, [settings, currentProject, discoveredSkills, customSubAgents, saveSubAgentTemplate, resolveEffectiveProviderAndKey, recordPoolTokenUsage, getFallbackSettings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, memos, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
+  }, [settings, currentProject, discoveredSkills, customSubAgents, saveSubAgentTemplate, subAgentWorkflow, updateSubAgentWorkflow, addSubAgentCronJob, resolveEffectiveProviderAndKey, recordPoolTokenUsage, getFallbackSettings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, memos, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
 
   const createPlan = useCallback(async (
     userRequest: string,

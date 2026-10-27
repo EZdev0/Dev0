@@ -34,10 +34,16 @@ import {
   SubAgentQuestionResponse,
   hasExplicitQuestionToolCall,
   buildSubAgentQuestionRequestFromTool,
-  detectSubAgentQuestionFromTurn,
   createSavedSubAgentFromQuestionResponse,
   buildMainCreatorRelayPrompt,
 } from '@/utils/subagent-question-relay';
+import {
+  normalizeSubAgentSlug,
+  buildSubAgentWorkspaceFiles,
+  buildSubAgentStatusMarkdown,
+  appendSubAgentLogMarkdown,
+  evaluateCronJobsOnFinishTask,
+} from '@/utils/subagent-workspace';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
@@ -88,6 +94,10 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     customSubAgents,
     saveSubAgentTemplate,
     skillEnabledOverrides,
+    subAgentWorkflow,
+    updateSubAgentWorkflow,
+    togglePauseSubAgent,
+    addSubAgentCronJob,
   } = useApp();
 
   const settingsRef = useRef(settings);
@@ -182,6 +192,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       name: string,
       args: Record<string, any>,
       allowedFilePatterns?: string[],
+      toolCallId?: string,
     ): Promise<{ result: string; inlineTodos?: InlineTodo[] }> => {
       console.log('[Chat] Executing tool:', name, JSON.stringify(args || {}).slice(0, 200));
 
@@ -203,7 +214,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         ['write_file', 'create_file', 'edit_file', 'delete_file', 'rename_file', 'find_replace'].includes(name)
       ) {
         const targetPath = args?.path || args?.new_path || args?.old_path || '';
-        if (targetPath && !isFileAllowedForSubAgent(targetPath, allowedFilePatterns)) {
+        if (targetPath && !targetPath.startsWith('.agents/') && !isFileAllowedForSubAgent(targetPath, allowedFilePatterns)) {
           return {
             result: `ERROR: Sub-agent file scope violation. Path "${targetPath}" is not permitted by allowed patterns: ${allowedFilePatterns.join(', ')}`,
           };
@@ -216,7 +227,11 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         name !== 'localize_code_graph' &&
         name !== 'ask_user_question' &&
         name !== 'ask_question' &&
-        name !== 'ask_clarification'
+        name !== 'ask_clarification' &&
+        name !== 'finish_task' &&
+        name !== 'create_cron_job' &&
+        name !== 'sleep_agent' &&
+        name !== 'inspect_subagent_workspace'
       ) {
         const permCheck = await checkToolPermission(name, args);
         if (!permCheck.allowed) {
@@ -250,12 +265,192 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           case 'ask_user_question':
           case 'ask_question':
           case 'ask_clarification': {
-            const req = buildSubAgentQuestionRequestFromTool(args);
+            const req = buildSubAgentQuestionRequestFromTool(
+              args,
+              toolCallId || 'tc_' + Date.now().toString(36),
+            );
             setPendingSubAgentQuestion(req);
             const relayResult = await new Promise<string>((resolve) => {
               pendingQuestionResolverRef.current = resolve;
             });
             return wrapResult({ result: relayResult });
+          }
+          case 'finish_task': {
+            const slug = normalizeSubAgentSlug(args?.agent_slug || 'developer');
+            const summary = String(args?.summary || 'Task completed.').trim();
+            const nextAgent = args?.next_recommended_agent
+              ? normalizeSubAgentSlug(String(args.next_recommended_agent))
+              : undefined;
+            const now = Date.now();
+
+            const statusPath = `.agents/${slug}/STATUS.md`;
+            const logPath = `.agents/${slug}/LOG.md`;
+            const statusMd = buildSubAgentStatusMarkdown({
+              name: `${slug.toUpperCase()} Sub-Agent`,
+              slug,
+              role: slug,
+              status: 'completed',
+              currentTask: summary,
+              lastSummary: summary,
+            });
+            updateFileContent(statusPath, statusMd);
+            const existingLog = getFileContent(logPath) || `# ${slug} Execution Log\n`;
+            updateFileContent(
+              logPath,
+              appendSubAgentLogMarkdown(
+                existingLog,
+                `finish_task invoked: ${summary}${nextAgent ? ` (Next recommended: ${nextAgent})` : ''}`,
+              ),
+            );
+
+            let triggeredCronNames: string[] = [];
+            updateSubAgentWorkflow((prev) => {
+              const evalCron = evaluateCronJobsOnFinishTask(prev.cronJobs, slug, now);
+              triggeredCronNames = evalCron.triggeredJobs.map(
+                (j) => `${j.name} -> ${j.targetSubAgentSlug}`,
+              );
+              const exists = prev.nodes.some((n) => n.slug === slug);
+              const nextNodes = exists
+                ? prev.nodes.map((n) =>
+                    n.slug === slug
+                      ? { ...n, status: 'completed' as const, lastSummary: summary, updatedAt: now }
+                      : n,
+                  )
+                : [
+                    ...prev.nodes,
+                    {
+                      id: `node_${slug}`,
+                      slug,
+                      name: `${slug.charAt(0).toUpperCase() + slug.slice(1)} Sub-Agent`,
+                      role: slug,
+                      status: 'completed' as const,
+                      currentTask: summary,
+                      lastSummary: summary,
+                      workspaceDir: `.agents/${slug}`,
+                      allowedFiles: ['*'],
+                      updatedAt: now,
+                      cronJobIds: [],
+                    },
+                  ];
+              return {
+                ...prev,
+                updatedAt: now,
+                lastFinishedSubAgentSlug: slug,
+                nodes: nextNodes,
+                cronJobs: evalCron.updatedCronJobs,
+              };
+            });
+
+            return wrapResult({
+              result:
+                `[finish_task recorded in .agents/${slug}/STATUS.md]\n` +
+                `Summary: ${summary}\n` +
+                (nextAgent ? `Recommended Next Sub-Agent: ${nextAgent}\n` : '') +
+                (triggeredCronNames.length > 0
+                  ? `Triggered Cron Jobs: ${triggeredCronNames.join(', ')}`
+                  : 'No dependent Cron jobs triggered.'),
+            });
+          }
+          case 'create_cron_job': {
+            const jobName = String(args?.name || 'Automated Sub-Agent Check').trim();
+            const targetSlug = normalizeSubAgentSlug(args?.target_sub_agent || 'auditor');
+            const schedule = String(args?.schedule || 'on_finish:developer').trim();
+            const triggerOf = args?.trigger_on_finish_of
+              ? normalizeSubAgentSlug(String(args.trigger_on_finish_of))
+              : schedule.startsWith('on_finish:')
+                ? normalizeSubAgentSlug(schedule.replace('on_finish:', ''))
+                : undefined;
+            const taskInstr = String(args?.task || 'Audit recent changes and update .agents status.').trim();
+
+            const createdJob = addSubAgentCronJob({
+              name: jobName,
+              targetSubAgentSlug: targetSlug,
+              targetRole: targetSlug,
+              scheduleExpression: schedule,
+              triggerOnFinishOf: triggerOf,
+              taskInstruction: taskInstr,
+              createdBy: 'dev0',
+            });
+
+            const logPath = `.agents/${targetSlug}/LOG.md`;
+            const existingLog = getFileContent(logPath) || `# ${targetSlug} Execution Log\n`;
+            updateFileContent(
+              logPath,
+              appendSubAgentLogMarkdown(
+                existingLog,
+                `Cron job "${createdJob.name}" scheduled (${createdJob.scheduleExpression}): ${taskInstr}`,
+              ),
+            );
+
+            return wrapResult({
+              result: `Cron job "${createdJob.name}" (ID: ${createdJob.id}) created for Sub-Agent "${targetSlug}" with schedule "${schedule}".`,
+            });
+          }
+          case 'sleep_agent': {
+            const slug = normalizeSubAgentSlug(args?.agent_slug || 'developer');
+            const action = String(args?.action || 'sleep').toLowerCase() === 'wake' ? 'wake' : 'sleep';
+            const reason = String(args?.reason || (action === 'sleep' ? 'Paused to save tokens' : 'Resumed by Dev0')).trim();
+            const now = Date.now();
+
+            updateSubAgentWorkflow((prev) => ({
+              ...prev,
+              updatedAt: now,
+              nodes: prev.nodes.map((n) =>
+                n.slug === slug
+                  ? {
+                      ...n,
+                      status: action === 'sleep' ? 'sleeping' : 'idle',
+                      sleepReason: action === 'sleep' ? reason : undefined,
+                      updatedAt: now,
+                    }
+                  : n,
+              ),
+            }));
+
+            const statusPath = `.agents/${slug}/STATUS.md`;
+            updateFileContent(
+              statusPath,
+              buildSubAgentStatusMarkdown({
+                name: `${slug.toUpperCase()} Sub-Agent`,
+                slug,
+                role: slug,
+                status: action === 'sleep' ? 'sleeping' : 'idle',
+                sleepReason: action === 'sleep' ? reason : undefined,
+              }),
+            );
+
+            return wrapResult({
+              result: `Sub-Agent "${slug}" is now ${action === 'sleep' ? 'SLEEPING (paused)' : 'AWAKE (idle)'}. Reason: ${reason}`,
+            });
+          }
+          case 'inspect_subagent_workspace': {
+            const rawSlug = args?.agent_slug ? normalizeSubAgentSlug(String(args.agent_slug)) : '';
+            if (rawSlug) {
+              const readme = getFileContent(`.agents/${rawSlug}/README.md`) || '(not initialized yet)';
+              const status = getFileContent(`.agents/${rawSlug}/STATUS.md`) || '(no status yet)';
+              const log = getFileContent(`.agents/${rawSlug}/LOG.md`) || '(no logs yet)';
+              return wrapResult({
+                result: `### Workspace .agents/${rawSlug}/\n\n${status}\n\n${readme}\n\n${log}`,
+              });
+            }
+            const nodesSummary = subAgentWorkflow.nodes
+              .map(
+                (n) =>
+                  `- **${n.name}** (\`.agents/${n.slug}/\`): status=\`${n.status}\`${n.currentTask ? `, task="${n.currentTask}"` : ''}${n.lastSummary ? `, lastSummary="${n.lastSummary}"` : ''}`,
+              )
+              .join('\n');
+            const cronSummary =
+              subAgentWorkflow.cronJobs.length > 0
+                ? subAgentWorkflow.cronJobs
+                    .map(
+                      (c) =>
+                        `- **${c.name}** (target: \`${c.targetSubAgentSlug}\`, schedule: \`${c.scheduleExpression}\`, enabled: ${c.enabled}, runs: ${c.runCount})`,
+                    )
+                    .join('\n')
+                : '(No Cron jobs configured)';
+            return wrapResult({
+              result: `## Dev0 Hidden .agents/ Workspaces\n${nodesSummary}\n\n## Active Cron Jobs\n${cronSummary}`,
+            });
           }
           case 'get_active_tools': {
             const activeLearning = isLearningEnabled(settingsRef.current);
@@ -286,11 +481,11 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                   is_sub_agent: true,
                   sub_agent_role: roleOrId,
                   questions: [
-                    'Which role should the Sub-Agent take (developer, localizer, analyst, researcher, tester, critic)?',
+                    'Which role should the Sub-Agent take (developer, localizer, analyst, researcher, tester, critic, teamworker, auditor)?',
                     'What concrete task should be assigned to this Sub-Agent?',
                   ],
                 },
-                undefined,
+                toolCallId || 'tc_sub_' + Date.now().toString(36),
                 'sub_agent',
               );
               setPendingSubAgentQuestion(req);
@@ -314,9 +509,27 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                 name: `${roleOrId.charAt(0).toUpperCase() + roleOrId.slice(1)} Sub-Agent`,
                 role: roleOrId.toLowerCase(),
                 description: taskDesc.slice(0, 140),
-                systemPrompt: `You are a specialized ${roleOrId} Sub-Agent. Complete the delegated task accurately.`,
-                rules: ['Always read files before modifying them.', 'Stay within allowed file scope.'],
-                allowedTools: ['read_file', 'read_lines', 'list_directory', 'search_files', 'get_project_tree', 'localize_code_graph', 'write_file', 'edit_file', 'think'],
+                systemPrompt: `You are a specialized ${roleOrId} Sub-Agent orchestrated by Dev0. Complete the delegated task accurately and call finish_task when done.`,
+                rules: [
+                  'Always read files before modifying them.',
+                  'Stay within allowed file scope.',
+                  'Always invoke finish_task when your task is complete.',
+                ],
+                allowedTools: [
+                  'read_file',
+                  'read_lines',
+                  'list_directory',
+                  'search_files',
+                  'get_project_tree',
+                  'localize_code_graph',
+                  'write_file',
+                  'edit_file',
+                  'think',
+                  'finish_task',
+                  'create_cron_job',
+                  'sleep_agent',
+                  'inspect_subagent_workspace',
+                ],
                 allowedFiles: ['*'],
                 canBeCalledByAI: true,
                 createdAt: Date.now(),
@@ -326,27 +539,83 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               matchedTemplate = autoSaved;
             }
 
+            const agentSlug = normalizeSubAgentSlug(matchedTemplate?.role || roleOrId);
+            const workspaceFiles = buildSubAgentWorkspaceFiles({
+              name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
+              role: matchedTemplate?.role || roleOrId,
+              description: matchedTemplate?.description || taskDesc,
+              systemPrompt: matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.',
+              rules: matchedTemplate?.rules || ['Always read files before modifying them.'],
+              allowedTools: matchedTemplate?.allowedTools || ['read_file', 'finish_task'],
+              allowedFiles: matchedTemplate?.allowedFiles || ['*'],
+              currentTask: taskDesc,
+              status: 'running',
+            });
+            for (const wf of workspaceFiles) {
+              updateFileContent(wf.path, wf.content);
+            }
+
+            updateSubAgentWorkflow((prev) => {
+              const now = Date.now();
+              const exists = prev.nodes.some((n) => n.slug === agentSlug);
+              const nextNodes = exists
+                ? prev.nodes.map((n) =>
+                    n.slug === agentSlug
+                      ? { ...n, status: 'running' as const, currentTask: taskDesc, updatedAt: now }
+                      : n,
+                  )
+                : [
+                    ...prev.nodes,
+                    {
+                      id: `node_${agentSlug}`,
+                      slug: agentSlug,
+                      name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
+                      role: matchedTemplate?.role || roleOrId,
+                      status: 'running' as const,
+                      currentTask: taskDesc,
+                      workspaceDir: `.agents/${agentSlug}`,
+                      allowedFiles: matchedTemplate?.allowedFiles || ['*'],
+                      updatedAt: now,
+                      cronJobIds: [],
+                    },
+                  ];
+              return {
+                ...prev,
+                activeSubAgentSlug: agentSlug,
+                updatedAt: now,
+                nodes: nextNodes,
+              };
+            });
+
             const resolvedAuth = resolveEffectiveProviderAndKey();
 
-            const allowedToolNames = matchedTemplate?.allowedTools || [
-              'read_file',
-              'read_lines',
-              'list_directory',
-              'search_files',
-              'get_project_tree',
-              'localize_code_graph',
-              'think',
+            const allowedToolNames = [
+              ...(matchedTemplate?.allowedTools || [
+                'read_file',
+                'read_lines',
+                'list_directory',
+                'search_files',
+                'get_project_tree',
+                'localize_code_graph',
+                'think',
+              ]),
+              'finish_task',
+              'create_cron_job',
+              'sleep_agent',
+              'inspect_subagent_workspace',
             ];
             const subTools = TOOL_DEFINITIONS.filter(
               (t) => t.name !== 'sub_agent' && allowedToolNames.includes(t.name),
             );
 
             const subSystemPrompt =
-              `You are a specialized Sub-Agent: ${matchedTemplate?.name || roleOrId}.\n` +
+              `You are a specialized Sub-Agent: ${matchedTemplate?.name || roleOrId} (slug: "${agentSlug}").\n` +
+              `Your hidden workspace directory is .agents/${agentSlug}/ (README.md, RULES.md, STATUS.md, LOG.md).\n` +
               `${matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.'}\n` +
               (matchedTemplate?.rules?.length
                 ? `Rules:\n${matchedTemplate.rules.map((r) => `- ${r}`).join('\n')}\n`
                 : '') +
+              `MANDATORY: When you complete your task, call finish_task({ agent_slug: "${agentSlug}", summary: "..." }).\n` +
               `Allowed file patterns: ${(matchedTemplate?.allowedFiles || ['*']).join(', ')}\n` +
               `Project tree:\n${truncateToolResult(getProjectTree(), 2500)}`;
 
@@ -358,6 +627,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               : undefined;
 
             for (let step = 0; step < 4; step++) {
+              const t0 = Date.now();
               const subResp = await callAI(
                 resolvedAuth.provider,
                 resolvedAuth.apiKey || 'rork_builtin',
@@ -368,12 +638,43 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                 settingsRef.current.customEndpoint || undefined,
                 fallbackSettings,
               );
+              const latencyMs = Date.now() - t0;
               if (subResp.tokenUsage) {
-                recordPoolTokenUsage(subResp.tokenUsage, resolvedAuth.poolKeyId, taskDesc);
+                recordPoolTokenUsage(subResp.tokenUsage, resolvedAuth.poolKeyId, `[Sub-Agent ${agentSlug}] ${taskDesc}`, {
+                  provider: resolvedAuth.provider,
+                  model: resolvedAuth.model,
+                  latencyMs,
+                  toolCalls: (subResp.toolCalls || []).map((t) => t.name),
+                  usedFallback: subResp.usedFallback,
+                  fallbackProvider: subResp.fallbackProvider,
+                });
               }
               if (!subResp.toolCalls || subResp.toolCalls.length === 0) {
+                const finalOut = subResp.content || 'Completed.';
+                updateFileContent(
+                  `.agents/${agentSlug}/STATUS.md`,
+                  buildSubAgentStatusMarkdown({
+                    name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
+                    slug: agentSlug,
+                    role: matchedTemplate?.role || roleOrId,
+                    status: 'completed',
+                    currentTask: taskDesc,
+                    lastSummary: finalOut.slice(0, 240),
+                  }),
+                );
+                updateSubAgentWorkflow((prev) => ({
+                  ...prev,
+                  activeSubAgentSlug: null,
+                  lastFinishedSubAgentSlug: agentSlug,
+                  updatedAt: Date.now(),
+                  nodes: prev.nodes.map((n) =>
+                    n.slug === agentSlug
+                      ? { ...n, status: 'completed' as const, lastSummary: finalOut.slice(0, 200), updatedAt: Date.now() }
+                      : n,
+                  ),
+                }));
                 return wrapResult({
-                  result: `[Sub-Agent ${matchedTemplate?.name || roleOrId} Output]:\n${subResp.content || 'Completed.'}`,
+                  result: `[Sub-Agent ${matchedTemplate?.name || roleOrId} (.agents/${agentSlug}/) Output]:\n${finalOut}`,
                 });
               }
               const subTcList: ToolCall[] = subResp.toolCalls.map((tc) => ({
@@ -396,6 +697,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                   stc.name,
                   stc.arguments,
                   matchedTemplate?.allowedFiles,
+                  stc.id,
                 );
                 stc.result = subExec.result;
                 stc.status = subExec.result.startsWith('ERROR') ? 'error' : 'completed';
@@ -410,8 +712,20 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               }
             }
             const lastSubAssistant = [...subMsgs].reverse().find((m) => m.role === 'assistant');
+            const summaryOut = lastSubAssistant?.content || 'Task finished.';
+            updateSubAgentWorkflow((prev) => ({
+              ...prev,
+              activeSubAgentSlug: null,
+              lastFinishedSubAgentSlug: agentSlug,
+              updatedAt: Date.now(),
+              nodes: prev.nodes.map((n) =>
+                n.slug === agentSlug
+                  ? { ...n, status: 'completed' as const, lastSummary: summaryOut.slice(0, 200), updatedAt: Date.now() }
+                  : n,
+              ),
+            }));
             return wrapResult({
-              result: `[Sub-Agent ${matchedTemplate?.name || roleOrId} Summary]:\n${lastSubAssistant?.content || 'Task finished.'}`,
+              result: `[Sub-Agent ${matchedTemplate?.name || roleOrId} (.agents/${agentSlug}/) Summary]:\n${summaryOut}`,
             });
           }
           case 'propose_agent_mode': {
@@ -651,6 +965,10 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       setIdentityMd,
       setUserMd,
       setMemoryMd,
+      subAgentWorkflow,
+      updateSubAgentWorkflow,
+      togglePauseSubAgent,
+      addSubAgentCronJob,
     ],
   );
 
@@ -675,7 +993,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       setManualMessages(newMessages);
       setManualLoading(true);
       setIsThinking(true);
-      setThinkingPhase('Analyzing request...');
+      setThinkingPhase('Dev0 is analyzing request...');
 
       try {
         const resolvedAuth = resolveEffectiveProviderAndKey();
@@ -706,7 +1024,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               customSubAgents
                 .map(
                   (ag) =>
-                    `- **${ag.name}** (role: \`${ag.role}\`): ${ag.description} [Allowed files: ${ag.allowedFiles.join(', ')}]`,
+                    `- **${ag.name}** (role: \`${ag.role}\`, workspace: \`.agents/${normalizeSubAgentSlug(ag.role)}/\`): ${ag.description} [Allowed files: ${ag.allowedFiles.join(', ')}]`,
                 )
                 .join('\n') +
               '\n'
@@ -756,25 +1074,45 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         while (iterations < maxIterations && !abortRef.current) {
           iterations++;
           setThinkingPhase(
-            iterations === 1 ? 'AI is thinking...' : 'Processing tool results...',
+            iterations === 1 ? 'Dev0 is thinking...' : 'Processing tool results...',
           );
 
+          // Re-resolve active pool key on every iteration so exhausted keys automatically rotate to the next available key!
+          const turnAuth = resolveEffectiveProviderAndKey();
+          const turnProvider = turnAuth.provider || effectiveProvider;
+          const turnApiKey = turnAuth.apiKey || apiKey || 'rork_builtin';
+          const turnModel = resolveDefaultModel(turnProvider, turnAuth.model || safeModel);
+
+          const tStart = Date.now();
           const response = await callAI(
-            effectiveProvider,
-            apiKey || 'rork_builtin',
-            safeModel,
+            turnProvider,
+            turnApiKey,
+            turnModel,
             conversationHistory,
             filteredTools,
             systemPrompt,
             settings.customEndpoint || undefined,
             fallbackSettings,
           );
+          const latencyMs = Date.now() - tStart;
+
+          const validToolCalls = (response.toolCalls || []).filter(
+            (tc) => activeLearning || !isLearningTool(tc.name),
+          );
 
           if (response.tokenUsage) {
             recordPoolTokenUsage(
               response.tokenUsage,
-              resolvedAuth.poolKeyId,
+              turnAuth.poolKeyId,
               userText,
+              {
+                provider: turnProvider,
+                model: turnModel,
+                latencyMs,
+                toolCalls: validToolCalls.map((t) => t.name),
+                usedFallback: response.usedFallback,
+                fallbackProvider: response.fallbackProvider,
+              },
             );
           }
 
@@ -782,16 +1120,14 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             setLastFallbackInfo(
               'Automatically switched to ' + (response.fallbackProvider || 'Fallback'),
             );
-          } else if (resolvedAuth.poolKeyId) {
-            setLastFallbackInfo(`Using Shared Free Pool Key (${effectiveProvider.toUpperCase()})`);
+          } else if (turnAuth.poolKeyId) {
+            setLastFallbackInfo(
+              `Using Shared Free Pool Key ${turnAuth.maskedPoolKey || ''} (${turnProvider.toUpperCase()})`,
+            );
           }
 
           setIsThinking(false);
           const { thinking, cleanContent } = parseThinkingFromContent(response.content || '');
-
-          const validToolCalls = (response.toolCalls || []).filter(
-            (tc) => activeLearning || !isLearningTool(tc.name),
-          );
 
           if (validToolCalls.length === 0) {
             const assistantMsg: ChatMessage = {
@@ -805,13 +1141,6 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             conversationHistory = [...conversationHistory, assistantMsg];
             manualMessagesRef.current = conversationHistory;
             setManualMessages([...conversationHistory]);
-
-            // If the user asked to start/configure a Sub-Agent and the AI replied with Sub-Agent questions,
-            // launch the Floating Sub-Agent Window automatically so answers relay back to the Main Creator AI.
-            const detectedSubAgentQuestion = detectSubAgentQuestionFromTurn(userText, cleanContent);
-            if (detectedSubAgentQuestion) {
-              setPendingSubAgentQuestion(detectedSubAgentQuestion);
-            }
             break;
           }
 
@@ -852,7 +1181,12 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             tc.status = 'running';
             setManualMessages([...conversationHistory, ...toolResultMessages]);
 
-            const { result, inlineTodos } = await executeManualTool(tc.name, tc.arguments);
+            const { result, inlineTodos } = await executeManualTool(
+              tc.name,
+              tc.arguments,
+              undefined,
+              tc.id,
+            );
             const safeResult = truncateToolResult(result, MAX_TOOL_RESULT_LENGTH);
             tc.result = safeResult;
             tc.status = safeResult.startsWith('ERROR') ? 'error' : 'completed';

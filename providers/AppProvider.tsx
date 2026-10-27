@@ -18,13 +18,17 @@ import {
   FreePoolState,
   SharedPoolKey,
   TokenUsageRecord,
+  ChatDebugLogEntry,
+  PoolUserRole,
   createDefaultFreePoolState,
   loadFreePoolState,
   saveFreePoolState,
   encodePoolSecret,
   maskApiKey,
+  maskEmailAddress,
   evaluatePoolKeyStatus,
   selectActivePoolKeyForUser,
+  verifyOwnerClaimPassphrase,
 } from '@/utils/free-ai-pool';
 import {
   CustomSubAgentTemplate,
@@ -34,9 +38,28 @@ import {
   loadSkillEnabledOverrides,
   saveSkillEnabledOverrides,
 } from '@/utils/skill-loader';
+import {
+  SubAgentWorkflowGraphState,
+  SubAgentCronJob,
+  createDefaultWorkflowGraphState,
+  loadSubAgentWorkflowState,
+  saveSubAgentWorkflowState,
+  createSubAgentCronJob,
+  normalizeSubAgentSlug,
+} from '@/utils/subagent-workspace';
 
 function uniqueId(prefix: string = ''): string {
   return prefix + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+}
+
+export interface ChatTurnDebugMeta {
+  provider: AIProviderType;
+  model: string;
+  latencyMs: number;
+  toolCalls?: string[];
+  usedFallback?: boolean;
+  fallbackProvider?: string;
+  chatTurnId?: string;
 }
 
 export const [AppProvider, useApp] = createContextHook(() => {
@@ -49,7 +72,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [showSubAgentStudioModal, setShowSubAgentStudioModal] = useState<boolean>(false);
   const sponsorInteractionCountRef = useRef<number>(0);
 
-  // "AI for Free" Pool & Zero-Config Admin Governance State
+  // "AI for Free" Pool & Zero-PII 3-Tier RBAC Governance State
   const [freePoolState, setFreePoolState] = useState<FreePoolState>(() => createDefaultFreePoolState());
   const freePoolStateRef = useRef<FreePoolState>(freePoolState);
   freePoolStateRef.current = freePoolState;
@@ -59,6 +82,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
     DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES,
   );
   const [skillEnabledOverrides, setSkillEnabledOverrides] = useState<Record<string, boolean>>({});
+
+  // Dev0 Sub-Agent Workflow & Cron State (.agents/<slug>/)
+  const [subAgentWorkflow, setSubAgentWorkflow] = useState<SubAgentWorkflowGraphState>(() =>
+    createDefaultWorkflowGraphState(),
+  );
+  const subAgentWorkflowRef = useRef<SubAgentWorkflowGraphState>(subAgentWorkflow);
+  subAgentWorkflowRef.current = subAgentWorkflow;
 
   const learningActive = isLearningEnabled(settings);
 
@@ -76,6 +106,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
           loadedPool,
           loadedTemplates,
           loadedSkillOverrides,
+          loadedWorkflow,
         ] = await Promise.all([
           AsyncStorage.getItem('ide_settings'),
           AsyncStorage.getItem('ide_todos'),
@@ -83,6 +114,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
           loadFreePoolState(),
           loadCustomSubAgentTemplates(),
           loadSkillEnabledOverrides(),
+          loadSubAgentWorkflowState(),
         ]);
         if (settingsStr) {
           const parsed = JSON.parse(settingsStr);
@@ -100,6 +132,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
         }
         if (loadedTemplates) setCustomSubAgents(loadedTemplates);
         if (loadedSkillOverrides) setSkillEnabledOverrides(loadedSkillOverrides);
+        if (loadedWorkflow) {
+          setSubAgentWorkflow(loadedWorkflow);
+          subAgentWorkflowRef.current = loadedWorkflow;
+        }
       } catch (e) {
         console.log('[App] Error loading settings:', e);
       } finally {
@@ -108,6 +144,90 @@ export const [AppProvider, useApp] = createContextHook(() => {
     };
     load();
   }, []);
+
+  const updateSubAgentWorkflow = useCallback(
+    (updater: (prev: SubAgentWorkflowGraphState) => SubAgentWorkflowGraphState) => {
+      setSubAgentWorkflow(prev => {
+        const next = updater(prev);
+        subAgentWorkflowRef.current = next;
+        saveSubAgentWorkflowState(next).catch(console.log);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const togglePauseSubAgent = useCallback(
+    (slugOrRole: string, reason?: string) => {
+      const slug = normalizeSubAgentSlug(slugOrRole);
+      const now = Date.now();
+      updateSubAgentWorkflow(prev => ({
+        ...prev,
+        updatedAt: now,
+        nodes: prev.nodes.map(n => {
+          if (n.slug !== slug && normalizeSubAgentSlug(n.role) !== slug) return n;
+          const isSleeping = n.status === 'sleeping';
+          return {
+            ...n,
+            status: isSleeping ? 'idle' : 'sleeping',
+            sleepReason: isSleeping ? undefined : reason || 'Paused by user/Dev0',
+            updatedAt: now,
+          };
+        }),
+      }));
+    },
+    [updateSubAgentWorkflow],
+  );
+
+  const addSubAgentCronJob = useCallback(
+    (params: {
+      name: string;
+      targetSubAgentSlug: string;
+      targetRole: string;
+      scheduleExpression: string;
+      intervalMinutes?: number;
+      triggerOnFinishOf?: string;
+      taskInstruction: string;
+      createdBy: 'dev0' | 'sub_agent' | 'user';
+    }): SubAgentCronJob => {
+      const job = createSubAgentCronJob(params);
+      const now = Date.now();
+      updateSubAgentWorkflow(prev => ({
+        ...prev,
+        updatedAt: now,
+        cronJobs: [job, ...prev.cronJobs],
+        nodes: prev.nodes.map(n =>
+          n.slug === job.targetSubAgentSlug
+            ? { ...n, cronJobIds: [...new Set([...n.cronJobIds, job.id])], updatedAt: now }
+            : n,
+        ),
+      }));
+      return job;
+    },
+    [updateSubAgentWorkflow],
+  );
+
+  const toggleSubAgentCronJob = useCallback(
+    (cronId: string) => {
+      updateSubAgentWorkflow(prev => ({
+        ...prev,
+        updatedAt: Date.now(),
+        cronJobs: prev.cronJobs.map(c => (c.id === cronId ? { ...c, enabled: !c.enabled } : c)),
+      }));
+    },
+    [updateSubAgentWorkflow],
+  );
+
+  const deleteSubAgentCronJob = useCallback(
+    (cronId: string) => {
+      updateSubAgentWorkflow(prev => ({
+        ...prev,
+        updatedAt: Date.now(),
+        cronJobs: prev.cronJobs.filter(c => c.id !== cronId),
+      }));
+    },
+    [updateSubAgentWorkflow],
+  );
 
   const updateFreePoolState = useCallback((updater: (prev: FreePoolState) => FreePoolState) => {
     setFreePoolState(prev => {
@@ -142,7 +262,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
       maskedKey: maskApiKey(params.rawKey),
       encodedSecret: encodePoolSecret(params.rawKey),
       ownerUserId: freePoolStateRef.current.currentUserId,
-      ownerLabel: freePoolStateRef.current.currentUserEmail,
+      ownerLabel: maskEmailAddress(freePoolStateRef.current.currentUserEmail),
       targetUserId: params.targetUserId || '*',
       tokenLimit: Math.max(0, params.tokenLimit),
       tokensUsed: 0,
@@ -192,47 +312,133 @@ export const [AppProvider, useApp] = createContextHook(() => {
     }));
   }, [updateFreePoolState]);
 
-  const switchUserIdentity = useCallback((email: string, displayName: string) => {
-    const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail) return;
-    const now = Date.now();
-    updateFreePoolState(prev => {
-      const existing = prev.users.find(u => u.email.toLowerCase() === cleanEmail);
-      if (existing) {
+  const switchUserIdentity = useCallback(
+    (
+      email: string,
+      displayName: string,
+      authProviderOrOptions?:
+        | 'google'
+        | 'local'
+        | 'guest'
+        | { authProvider?: 'google' | 'local' | 'guest'; ownerPassphrase?: string },
+      ownerPassphraseArg?: string,
+    ) => {
+      const cleanEmail = email.trim().toLowerCase();
+      if (!cleanEmail) return;
+      const now = Date.now();
+      const authProvider: 'google' | 'local' | 'guest' =
+        typeof authProviderOrOptions === 'string'
+          ? authProviderOrOptions
+          : authProviderOrOptions?.authProvider || 'google';
+      const passphrase =
+        typeof authProviderOrOptions === 'object' && authProviderOrOptions !== null
+          ? authProviderOrOptions.ownerPassphrase
+          : ownerPassphraseArg;
+      const claimsOwner = verifyOwnerClaimPassphrase(passphrase);
+
+      updateFreePoolState(prev => {
+        const existing = prev.users.find(u => u.email.toLowerCase() === cleanEmail);
+        if (existing) {
+          const nextRole: PoolUserRole = claimsOwner ? 'owner' : existing.role;
+          return {
+            ...prev,
+            currentUserId: existing.id,
+            currentUserEmail: existing.email,
+            isAuthenticated: authProvider !== 'guest',
+            isAuthenticatedGoogle: authProvider === 'google',
+            authProvider,
+            ownerClaimedByUserId: claimsOwner ? existing.id : prev.ownerClaimedByUserId,
+            users: prev.users.map(u =>
+              u.id === existing.id
+                ? {
+                    ...u,
+                    maskedEmail: maskEmailAddress(existing.email),
+                    displayName: displayName || u.displayName,
+                    role: nextRole,
+                    authProvider,
+                    lastActiveAt: now,
+                  }
+                : u,
+            ),
+          };
+        }
+
+        // First real Google-authenticated user or valid Owner Passphrase claim becomes Owner (zero hardcoded email)
+        const nonGuestUsers = prev.users.filter(u => u.authProvider === 'google');
+        const isFirstOwner = claimsOwner || (!prev.ownerClaimedByUserId && nonGuestUsers.length === 0);
+        const assignedRole: PoolUserRole = isFirstOwner ? 'owner' : 'user';
+        const newUserId = 'usr_' + cleanEmail.replace(/[^a-z0-9]/g, '_').slice(0, 16);
+        const newUser = {
+          id: newUserId,
+          email: cleanEmail,
+          maskedEmail: maskEmailAddress(cleanEmail),
+          displayName: displayName || cleanEmail.split('@')[0],
+          role: assignedRole,
+          authProvider,
+          status: 'active' as const,
+          timeoutUntil: null,
+          tokenQuota: 0,
+          tokensConsumed: 0,
+          createdAt: now,
+          lastActiveAt: now,
+          recentChatExcerpts: [],
+        };
         return {
           ...prev,
-          currentUserId: existing.id,
-          currentUserEmail: existing.email,
-          users: prev.users.map(u =>
-            u.id === existing.id ? { ...u, lastActiveAt: now } : u,
-          ),
+          currentUserId: newUserId,
+          currentUserEmail: cleanEmail,
+          isAuthenticated: authProvider !== 'guest',
+          isAuthenticatedGoogle: authProvider === 'google',
+          authProvider,
+          ownerClaimedByUserId: isFirstOwner ? newUserId : prev.ownerClaimedByUserId,
+          users: [...prev.users, newUser],
         };
+      });
+    },
+    [updateFreePoolState],
+  );
+
+  const claimOwnerRole = useCallback(
+    (passphrase: string): boolean => {
+      if (!verifyOwnerClaimPassphrase(passphrase)) {
+        return false;
       }
-      // First user in DB or ggjonasgameryt@gmail.com becomes Super Admin
-      const isFirstOrOwner =
-        prev.users.length === 0 || cleanEmail === 'ggjonasgameryt@gmail.com';
-      const newUserId = 'usr_' + cleanEmail.replace(/[^a-z0-9]/g, '_').slice(0, 16);
-      const newUser = {
-        id: newUserId,
-        email: cleanEmail,
-        displayName: displayName || cleanEmail.split('@')[0],
-        role: (isFirstOrOwner ? 'admin' : 'user') as 'admin' | 'user',
-        status: 'active' as const,
-        timeoutUntil: null,
-        tokenQuota: 0,
-        tokensConsumed: 0,
-        createdAt: now,
-        lastActiveAt: now,
-        recentChatExcerpts: [],
-      };
-      return {
+      updateFreePoolState(prev => ({
         ...prev,
-        currentUserId: newUserId,
-        currentUserEmail: cleanEmail,
-        users: [...prev.users, newUser],
-      };
-    });
-  }, [updateFreePoolState]);
+        ownerClaimedByUserId: prev.currentUserId,
+        users: prev.users.map(u =>
+          u.id === prev.currentUserId ? { ...u, role: 'owner' } : u,
+        ),
+        notifications: [
+          {
+            id: uniqueId('notif_'),
+            level: 'success',
+            title: 'Owner Privileges Activated',
+            message: 'Current account is now verified as System Owner with full governance and chat audit permissions.',
+            timestamp: Date.now(),
+            read: false,
+          },
+          ...prev.notifications.slice(0, 29),
+        ],
+      }));
+      return true;
+    },
+    [updateFreePoolState],
+  );
+
+  const setUserRole = useCallback(
+    (userId: string, role: PoolUserRole) => {
+      updateFreePoolState(prev => {
+        const caller = prev.users.find(u => u.id === prev.currentUserId);
+        if (caller?.role !== 'owner') return prev;
+        return {
+          ...prev,
+          users: prev.users.map(u => (u.id === userId ? { ...u, role } : u)),
+        };
+      });
+    },
+    [updateFreePoolState],
+  );
 
   const timeoutUser = useCallback((userId: string, minutes: number | null) => {
     const now = Date.now();
@@ -279,15 +485,22 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, [updateFreePoolState]);
 
   const recordPoolTokenUsage = useCallback(
-    (usage: TokenUsageRecord, poolKeyId?: string, userMessageExcerpt?: string) => {
+    (
+      usage: TokenUsageRecord,
+      poolKeyId?: string,
+      userMessageExcerpt?: string,
+      debugMeta?: ChatTurnDebugMeta,
+    ) => {
       updateFreePoolState(prev => {
         const now = Date.now();
         const newAlerts = [...prev.notifications];
+        let matchedKeyMask: string | undefined;
 
         const updatedKeys = prev.sharedKeys.map(k => {
           if (k.id !== poolKeyId) {
             return { ...k, status: evaluatePoolKeyStatus(k, now) };
           }
+          matchedKeyMask = k.maskedKey;
           const prevStatus = evaluatePoolKeyStatus(k, now);
           const nextUsed = k.tokensUsed + usage.totalTokens;
           const updated: SharedPoolKey = {
@@ -311,7 +524,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
             newAlerts.unshift({
               id: uniqueId('notif_'),
               level: 'critical',
-              title: 'Pool Key Quota Reached — Auto-Switched',
+              title: 'Pool Key Quota Reached — Auto-Switched to Next Key',
               message: `Key ${k.maskedKey} reached its ${k.tokenLimit.toLocaleString()} token limit. Automatically rotating to the next available Free Pool key.`,
               timestamp: now,
               read: false,
@@ -324,7 +537,14 @@ export const [AppProvider, useApp] = createContextHook(() => {
           if (u.id !== prev.currentUserId) return u;
           const excerpts = userMessageExcerpt
             ? [
-                { id: uniqueId('ex_'), text: userMessageExcerpt.slice(0, 200), timestamp: now },
+                {
+                  id: uniqueId('ex_'),
+                  text: userMessageExcerpt.slice(0, 200),
+                  timestamp: now,
+                  tokens: usage.totalTokens,
+                  model: debugMeta?.model,
+                  provider: debugMeta?.provider,
+                },
                 ...u.recentChatExcerpts.slice(0, 19),
               ]
             : u.recentChatExcerpts;
@@ -336,11 +556,38 @@ export const [AppProvider, useApp] = createContextHook(() => {
           };
         });
 
+        const debugEntry: ChatDebugLogEntry = {
+          id: uniqueId('dbg_'),
+          chatTurnId: debugMeta?.chatTurnId || uniqueId('turn_'),
+          userId: prev.currentUserId,
+          provider: debugMeta?.provider || (settings.selectedProvider as AIProviderType) || 'rork',
+          model: debugMeta?.model || settings.selectedModel || 'default',
+          poolKeyId,
+          maskedPoolKey: matchedKeyMask,
+          maskedKeyUsed: matchedKeyMask,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          isExactFromAPI: Boolean(usage.isExactFromAPI ?? usage.isExactFromProvider),
+          isExactFromProvider: Boolean(usage.isExactFromProvider ?? usage.isExactFromAPI),
+          latencyMs: debugMeta?.latencyMs ?? 0,
+          toolCalls: debugMeta?.toolCalls ?? [],
+          usedFallback: Boolean(debugMeta?.usedFallback),
+          fallbackProvider: debugMeta?.fallbackProvider,
+          timestamp: now,
+          promptPreview: (userMessageExcerpt || '').slice(0, 140),
+          responsePreview: '',
+        };
+
+        const nextLogs = [debugEntry, ...(prev.chatDebugLogs || prev.debugLogs || []).slice(0, 49)];
+
         return {
           ...prev,
           sharedKeys: updatedKeys,
           users: updatedUsers,
           notifications: newAlerts.slice(0, 30),
+          chatDebugLogs: nextLogs,
+          debugLogs: nextLogs,
           sessionTokens: {
             prompt: prev.sessionTokens.prompt + usage.promptTokens,
             completion: prev.sessionTokens.completion + usage.completionTokens,
@@ -351,7 +598,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
         };
       });
     },
-    [updateFreePoolState],
+    [updateFreePoolState, settings.selectedProvider, settings.selectedModel],
   );
 
   const saveSubAgentTemplate = useCallback((template: CustomSubAgentTemplate) => {
@@ -625,6 +872,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
     removePoolKey,
     togglePoolKeyActive,
     switchUserIdentity,
+    claimOwnerRole,
+    setUserRole,
     timeoutUser,
     toggleSuspendUser,
     updateUserTokenQuota,
@@ -632,7 +881,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
     recordPoolTokenUsage,
     showFreePoolModal,
     setShowFreePoolModal,
-    // Custom Sub-Agents & YAML Skills
+    // Custom Sub-Agents, YAML Skills & Dev0 Sub-Agent Workflow
     customSubAgents,
     saveSubAgentTemplate,
     deleteSubAgentTemplate,
@@ -640,5 +889,11 @@ export const [AppProvider, useApp] = createContextHook(() => {
     toggleYamlSkill,
     showSubAgentStudioModal,
     setShowSubAgentStudioModal,
+    subAgentWorkflow,
+    updateSubAgentWorkflow,
+    togglePauseSubAgent,
+    addSubAgentCronJob,
+    toggleSubAgentCronJob,
+    deleteSubAgentCronJob,
   };
 });

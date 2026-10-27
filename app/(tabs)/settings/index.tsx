@@ -115,25 +115,110 @@ export default function SettingsScreen() {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [showProviderPicker, setShowProviderPicker] = useState<boolean>(false);
   const [showModelPicker, setShowModelPicker] = useState<boolean>(false);
+  const [modelSearchQuery, setModelSearchQuery] = useState<string>('');
   const [activeSection, setActiveSection] = useState<'main' | 'beta'>('main');
   const [expandedProviderInfo, setExpandedProviderInfo] = useState<string | null>(null);
   const [editingIdentityFile, setEditingIdentityFile] = useState<string | null>(null);
   const [identityEditContent, setIdentityEditContent] = useState<string>('');
 
+  const renderYellowHighlightedText = useCallback(
+    (text: string, query: string, baseStyle: any) => {
+      const cleanQuery = query.trim();
+      if (!cleanQuery) {
+        return <Text style={baseStyle}>{text}</Text>;
+      }
+      const lowerText = text.toLowerCase();
+      const lowerQuery = cleanQuery.toLowerCase();
+      const idx = lowerText.indexOf(lowerQuery);
+      if (idx === -1) {
+        return <Text style={[baseStyle, { color: '#FACC15' }]}>{text}</Text>;
+      }
+      const before = text.slice(0, idx);
+      const match = text.slice(idx, idx + cleanQuery.length);
+      const after = text.slice(idx + cleanQuery.length);
+      return (
+        <Text style={baseStyle}>
+          {before}
+          <Text
+            style={{
+              color: '#FACC15',
+              fontWeight: '900',
+              backgroundColor: 'rgba(250, 204, 21, 0.18)',
+            }}
+          >
+            {match}
+          </Text>
+          {after}
+        </Text>
+      );
+    },
+    [],
+  );
+
   const currentProvider = useMemo(() => {
     const base = AI_PROVIDERS.find(p => p.id === settings.selectedProvider) ?? AI_PROVIDERS[0];
     if (settings.selectedProvider === 'custom' && customModels.length > 0) {
-      return { ...base, models: customModels };
+      const mergedMap = new Map<string, { id: string; name: string }>();
+      for (const m of customModels) mergedMap.set(m.id, m);
+      for (const m of base.models) {
+        if (!mergedMap.has(m.id)) mergedMap.set(m.id, m);
+      }
+      return { ...base, models: Array.from(mergedMap.values()) };
     }
     if (settings.selectedProvider === 'openrouter' && openRouterModels.length > 0) {
-      return { ...base, models: openRouterModels };
+      const mergedMap = new Map<string, { id: string; name: string }>();
+      for (const m of base.models) mergedMap.set(m.id, m);
+      for (const m of openRouterModels) {
+        if (!mergedMap.has(m.id)) mergedMap.set(m.id, m);
+      }
+      return { ...base, models: Array.from(mergedMap.values()) };
     }
     return base;
   }, [settings.selectedProvider, customModels, openRouterModels]);
   const currentModel = useMemo(
-    () => currentProvider?.models?.find(m => m.id === settings.selectedModel) ?? currentProvider?.models?.[0],
+    () =>
+      currentProvider?.models?.find(m => m.id === settings.selectedModel) ??
+      (settings.selectedModel ? { id: settings.selectedModel, name: settings.selectedModel } : currentProvider?.models?.[0]),
     [currentProvider, settings.selectedModel]
   );
+
+  const filteredProviderModels = useMemo(() => {
+    const allModels = currentProvider?.models ?? [];
+    const q = modelSearchQuery.trim().toLowerCase();
+    if (!q) return allModels;
+    return allModels.filter(
+      m => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
+    );
+  }, [currentProvider, modelSearchQuery]);
+
+  const refreshCustomEndpointModels = useCallback(async (endpointOverride?: string) => {
+    const ep = (endpointOverride ?? settings.customEndpoint ?? '').trim();
+    if (!ep) return;
+    setIsLoadingModels(true);
+    try {
+      const proxyRes = await fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: ep,
+          apiKey: settings.customKey || '',
+        }),
+      });
+      const data = await proxyRes.json();
+      if (Array.isArray(data?.data) && data.data.length > 0) {
+        setCustomModels(
+          data.data.map((m: any) => ({
+            id: String(m.id || m.name || 'local-model'),
+            name: String(m.name || m.id || 'local-model'),
+          })),
+        );
+      }
+    } catch {
+      // fallback to built-in local/LM Studio/Ollama catalog
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, [settings.customEndpoint, settings.customKey]);
 
   useEffect(() => {
     let active = true;
@@ -145,7 +230,7 @@ export default function SettingsScreen() {
           const res = await fetch('https://openrouter.ai/api/v1/models');
           const data = await res.json();
           if (active && data?.data) {
-            setOpenRouterModels(data.data.map((m: any) => ({ id: m.id, name: m.name })));
+            setOpenRouterModels(data.data.map((m: any) => ({ id: m.id, name: m.name || m.id })));
           }
         } catch (e) {
           console.log('[Settings] Error fetching OpenRouter models:', e);
@@ -153,39 +238,12 @@ export default function SettingsScreen() {
           if (active) setIsLoadingModels(false);
         }
       } else if (settings.selectedProvider === 'custom' && settings.customEndpoint) {
-        setIsLoadingModels(true);
-        try {
-          const proxyRes = await fetch('/api/models', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              endpoint: settings.customEndpoint,
-              apiKey: settings.customKey || '',
-            }),
-          });
-          const data = await proxyRes.json();
-          if (active && Array.isArray(data?.data) && data.data.length > 0) {
-            setCustomModels(
-              data.data.map((m: any) => ({
-                id: String(m.id || m.name || 'custom-model'),
-                name: String(m.name || m.id || 'custom-model'),
-              })),
-            );
-          } else if (active) {
-            setCustomModels([{ id: 'local-model', name: 'local-model (Default)' }]);
-          }
-        } catch {
-          if (active) {
-            setCustomModels([{ id: 'local-model', name: 'local-model (Default)' }]);
-          }
-        } finally {
-          if (active) setIsLoadingModels(false);
-        }
+        await refreshCustomEndpointModels(settings.customEndpoint);
       }
     };
     fetchModels();
     return () => { active = false; };
-  }, [settings.selectedProvider, settings.customEndpoint, settings.customKey, openRouterModels.length]);
+  }, [settings.selectedProvider, settings.customEndpoint, settings.customKey, openRouterModels.length, refreshCustomEndpointModels]);
 
   const toggleKeyVisibility = useCallback((key: string) => {
     setShowKeys(prev => ({ ...prev, [key]: !prev[key] }));
@@ -199,6 +257,7 @@ export default function SettingsScreen() {
         selectedModel: provider.models[0].id,
       });
     }
+    setModelSearchQuery('');
     setShowProviderPicker(false);
   }, [updateSettings]);
 
@@ -346,7 +405,7 @@ export default function SettingsScreen() {
                     <Text style={styles.activeProviderName}>{currentProvider?.name ?? 'Unknown'}</Text>
                   </View>
                   <Text style={styles.activeProviderModel}>
-                    {currentModel?.name ?? 'No Model'}
+                    {currentModel?.name ?? 'No Model'} ({currentModel?.id ?? settings.selectedModel})
                   </Text>
                   {providerInfo?.pricing && (
                     <View style={[
@@ -429,12 +488,96 @@ export default function SettingsScreen() {
 
               {settings.selectedProvider === 'custom' && (
                 <View style={styles.customSection}>
-                  <Text style={styles.fieldLabel}>Endpoint URL</Text>
+                  <Text style={styles.fieldLabel}>Local Model & LM Studio / Ollama Quick Presets</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                    {[
+                      {
+                        label: 'LM Studio (1234)',
+                        endpoint: 'http://localhost:1234/v1',
+                        model: 'lmstudio-community/qwen2.5-coder-14b-instruct',
+                      },
+                      {
+                        label: 'Ollama Local (11434)',
+                        endpoint: 'http://localhost:11434/v1',
+                        model: 'ollama/qwen2.5-coder:14b',
+                      },
+                      {
+                        label: 'Local Model / vLLM (8000)',
+                        endpoint: 'http://localhost:8000/v1',
+                        model: 'local-model',
+                      },
+                    ].map((preset) => {
+                      const activePreset = settings.customEndpoint === preset.endpoint;
+                      return (
+                        <TouchableOpacity
+                          key={preset.label}
+                          onPress={() => {
+                            updateSettings({
+                              customEndpoint: preset.endpoint,
+                              selectedModel: preset.model,
+                            });
+                            refreshCustomEndpointModels(preset.endpoint);
+                          }}
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                            borderRadius: 8,
+                            borderWidth: 1,
+                            borderColor: activePreset ? '#FACC15' : IDE.border,
+                            backgroundColor: activePreset ? 'rgba(250, 204, 21, 0.14)' : IDE.bg,
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              fontWeight: '700',
+                              color: activePreset ? '#FACC15' : IDE.text,
+                            }}
+                          >
+                            {preset.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Endpoint URL (OpenAI /v1 compatible)</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                    <TextInput
+                      style={[styles.inputField, { flex: 1 }]}
+                      value={settings.customEndpoint}
+                      onChangeText={(v) => updateSettings({ customEndpoint: v })}
+                      placeholder="http://localhost:1234/v1"
+                      placeholderTextColor={IDE.muted}
+                      autoCapitalize="none"
+                    />
+                    <TouchableOpacity
+                      onPress={() => refreshCustomEndpointModels(settings.customEndpoint)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 5,
+                        paddingHorizontal: 11,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        backgroundColor: IDE.primary + '20',
+                        borderWidth: 1,
+                        borderColor: IDE.primary,
+                      }}
+                    >
+                      <RefreshCw size={12} color={IDE.primary} />
+                      <Text style={{ fontSize: 11, fontWeight: '700', color: IDE.primary }}>
+                        Fetch Models
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Extra Local Model / LM Studio Model ID</Text>
                   <TextInput
                     style={styles.inputField}
-                    value={settings.customEndpoint}
-                    onChangeText={(v) => updateSettings({ customEndpoint: v })}
-                    placeholder="https://api.example.com"
+                    value={settings.selectedModel}
+                    onChangeText={(v) => updateSettings({ selectedModel: v })}
+                    placeholder="e.g., local-model, lmstudio-community/qwen2.5-coder-7b-instruct, ollama/llama3.3"
                     placeholderTextColor={IDE.muted}
                     autoCapitalize="none"
                   />
@@ -546,22 +689,85 @@ export default function SettingsScreen() {
 
             {showModelPicker && (
               <View style={styles.modelList}>
-                {(currentProvider?.models ?? []).map(m => {
-                  const isSelected = settings.selectedModel === m.id;
-                  return (
-                    <TouchableOpacity
-                      key={m.id}
-                      style={[styles.modelListItem, isSelected && styles.modelListItemActive]}
-                      onPress={() => handleModelChange(m.id)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.modelListName, isSelected && styles.modelListNameActive]}>
-                        {m.name}
-                      </Text>
-                      {isSelected && <Check size={14} color={IDE.primary} />}
-                    </TouchableOpacity>
-                  );
-                })}
+                {/* Search input with yellow results indicator */}
+                <View
+                  style={{
+                    paddingHorizontal: 10,
+                    paddingVertical: 8,
+                    borderBottomWidth: 1,
+                    borderBottomColor: IDE.border,
+                    backgroundColor: IDE.bg,
+                    gap: 6,
+                  }}
+                >
+                  <TextInput
+                    style={{
+                      backgroundColor: IDE.surface,
+                      borderWidth: 1,
+                      borderColor: modelSearchQuery.trim() ? '#FACC15' : IDE.border,
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 8,
+                      color: IDE.text,
+                      fontSize: 12,
+                    }}
+                    value={modelSearchQuery}
+                    onChangeText={setModelSearchQuery}
+                    placeholder={`Search ${currentProvider?.models?.length ?? 0} models by name or provider ID...`}
+                    placeholderTextColor={IDE.muted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  {modelSearchQuery.trim().length > 0 && (
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: '#FACC15' }}>
+                      Found {filteredProviderModels.length} matching model{filteredProviderModels.length === 1 ? '' : 's'} for &quot;{modelSearchQuery.trim()}&quot;
+                    </Text>
+                  )}
+                </View>
+
+                {filteredProviderModels.length === 0 ? (
+                  <View style={{ padding: 14, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, color: '#FACC15', fontWeight: '700' }}>
+                      No models matched &quot;{modelSearchQuery}&quot;.
+                    </Text>
+                  </View>
+                ) : (
+                  filteredProviderModels.map(m => {
+                    const isSelected = settings.selectedModel === m.id;
+                    const hasQuery = modelSearchQuery.trim().length > 0;
+                    return (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={[styles.modelListItem, isSelected && styles.modelListItemActive]}
+                        onPress={() => handleModelChange(m.id)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={{ flex: 1 }}>
+                          {renderYellowHighlightedText(
+                            m.name,
+                            modelSearchQuery,
+                            [
+                              styles.modelListName,
+                              isSelected && styles.modelListNameActive,
+                              hasQuery && { color: '#FACC15' },
+                            ],
+                          )}
+                          {renderYellowHighlightedText(
+                            `Provider ID: ${m.id}`,
+                            modelSearchQuery,
+                            {
+                              fontSize: 10,
+                              color: hasQuery ? '#FACC15' : IDE.muted,
+                              marginTop: 2,
+                              fontFamily: 'monospace',
+                            },
+                          )}
+                        </View>
+                        {isSelected && <Check size={14} color={IDE.primary} />}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
               </View>
             )}
           </View>

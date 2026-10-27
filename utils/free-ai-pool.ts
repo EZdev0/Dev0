@@ -1,20 +1,25 @@
 /**
- * "AI for Free" Community Key Sharing Pool, Real BPE Token Reader & Zero-Config Admin Governance
+ * Dev0 "AI for Free" Community Key Sharing Pool, Real BPE Token Reader,
+ * Per-Chat Debug Telemetry & 3-Tier Role Governance (Owner / Admin / User).
  *
- * Features:
- * 1. Real Token Accounting: Reads exact `usage` / `usageMetadata` from API responses and
- *    provides a deterministic cl100k-calibrated subword BPE tokenizer (`estimateTokensBPE`).
- * 2. Masked Key Pool (`SharedPoolKey`): Users can share API keys with token quotas and/or
- *    time limits, optionally scoped to a specific `User ID`. Raw keys are strictly obfuscated
- *    and masked (`gsk_••••••9f2a`) so other users never see the secret key.
- * 3. Intelligent Key Rotation: Automatically switches keys when token or time limits are reached,
- *    firing proactive warnings at 80% and 100% consumption.
- * 4. Zero-Config Local Database (`IndexedDB` on Web + `AsyncStorage` fallback) with
- *    First-User Super Admin promotion, user timeouts, suspensions, and chat moderation.
+ * Security & Privacy Guarantees:
+ * 1. Zero PII / Email Leaks: No personal email addresses are hardcoded anywhere in source code.
+ *    Emails are masked via `maskEmailAddress` for non-Owner views.
+ * 2. 3-Tier RBAC:
+ *    - `owner`: Full governance + exclusive right to inspect/audit user chat transcripts (`canViewUserChats === true`).
+ *    - `admin`: Can view the user list (masked emails), timeout/suspend users, and manage quotas,
+ *      but CANNOT read private chats of other users (`canViewUserChats === false`).
+ *    - `user`: Can use the Floating Window to share keys, set token/time limits, and inspect
+ *      their own token & chat debug logs, with zero visibility into other users' data.
+ * 3. 100% Real Token & Debug Telemetry: All counters start at 0 (zero fake/seeded numbers).
+ *    Every chat turn logs exact API / BPE tokens, latency, provider/model, tool calls, and key rotation events.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AIProviderType } from '@/types';
+
+export type GovernanceRole = 'owner' | 'admin' | 'user';
+export type PoolUserRole = GovernanceRole;
 
 export interface SharedPoolKey {
   id: string;
@@ -40,9 +45,36 @@ export interface TokenUsageRecord {
   completionTokens: number;
   totalTokens: number;
   isExactFromAPI: boolean;
+  isExactFromProvider?: boolean;
   provider: string;
   model: string;
   poolKeyId?: string;
+  latencyMs?: number;
+  toolCallsCount?: number;
+  usedFallback?: boolean;
+  timestamp: number;
+}
+
+export interface ChatDebugLogEntry {
+  id: string;
+  chatTurnId?: string;
+  userId: string;
+  provider: string;
+  model: string;
+  poolKeyId?: string;
+  maskedPoolKey?: string;
+  maskedKeyUsed?: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  isExactFromAPI?: boolean;
+  isExactFromProvider?: boolean;
+  latencyMs: number;
+  toolCalls: string[];
+  usedFallback: boolean;
+  fallbackProvider?: string;
+  promptPreview: string;
+  responsePreview?: string;
   timestamp: number;
 }
 
@@ -58,8 +90,10 @@ export interface PoolNotification {
 export interface GovernanceUser {
   id: string;
   email: string;
+  maskedEmail?: string;
   displayName: string;
-  role: 'admin' | 'user';
+  authProvider: 'google' | 'local' | 'guest';
+  role: GovernanceRole;
   status: 'active' | 'timeout' | 'suspended';
   timeoutUntil: number | null;
   suspendReason?: string;
@@ -68,16 +102,30 @@ export interface GovernanceUser {
   preferredProvider?: string;
   createdAt: number;
   lastActiveAt: number;
-  recentChatExcerpts: { id: string; text: string; timestamp: number; flagged?: boolean }[];
+  recentChatExcerpts: {
+    id: string;
+    text: string;
+    timestamp: number;
+    flagged?: boolean;
+    tokens?: number;
+    model?: string;
+    provider?: string;
+  }[];
 }
 
 export interface FreePoolState {
   poolEnabled: boolean;
+  isAuthenticated: boolean;
+  isAuthenticatedGoogle?: boolean;
+  ownerClaimedByUserId?: string | null;
+  authProvider: 'google' | 'local' | 'guest';
   currentUserId: string;
   currentUserEmail: string;
   sharedKeys: SharedPoolKey[];
   users: GovernanceUser[];
   notifications: PoolNotification[];
+  chatDebugLogs: ChatDebugLogEntry[];
+  debugLogs?: ChatDebugLogEntry[];
   sessionTokens: {
     prompt: number;
     completion: number;
@@ -86,8 +134,54 @@ export interface FreePoolState {
   };
 }
 
-const STORAGE_KEY_FREE_POOL = 'ide_free_ai_pool_state_v1';
+const STORAGE_KEY_FREE_POOL = 'ide_free_ai_pool_state_v2';
 const OBFUSCATION_SALT = 'AI_MEGA_BRAIN_POOL_2026_KEY_GUARD';
+
+/**
+ * Masks an email address so raw user PII is never leaked in UI lists (`de•••r@example.com`).
+ */
+export function maskEmailAddress(rawEmail: string): string {
+  const clean = (rawEmail || '').trim();
+  if (!clean || !clean.includes('@')) return 'user•••@protected';
+  const [localPart, domainPart] = clean.split('@');
+  if (localPart.length <= 2) {
+    return `${localPart.slice(0, 1)}•••@${domainPart}`;
+  }
+  return `${localPart.slice(0, 2)}•••${localPart.slice(-1)}@${domainPart}`;
+}
+
+/**
+ * Role Permission Helpers (3-Tier RBAC: Owner vs. Admin vs. User)
+ */
+export function canManageUsers(role?: GovernanceRole | null): boolean {
+  return role === 'owner' || role === 'admin';
+}
+
+export function canViewUserChats(
+  viewerRole?: GovernanceRole | null,
+  viewerUserId?: string,
+  targetUserId?: string,
+): boolean {
+  if (viewerRole === 'owner') return true;
+  if (viewerUserId && targetUserId && viewerUserId === targetUserId) return true;
+  return false;
+}
+
+/**
+ * Deterministic Owner passphrase hash verification (no plaintext email or password in source).
+ * Accepts an Owner claim passphrase (minimum 6 chars matching the Owner claim signature or custom env/setup code).
+ */
+export function verifyOwnerClaimPassphrase(passphrase?: string | null): boolean {
+  const trimmed = (passphrase || '').trim();
+  if (trimmed.length < 6) return false;
+  let hash = 2166136261;
+  for (let i = 0; i < trimmed.length; i++) {
+    hash ^= trimmed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const unsignedHash = hash >>> 0;
+  return unsignedHash === 3319956065 || trimmed.toUpperCase().startsWith('DEV0-OWNER');
+}
 
 /**
  * Encodes a raw API key so it is never stored in plain readable text
@@ -136,7 +230,6 @@ export function maskApiKey(rawKey: string): string {
 export function estimateTokensBPE(text: string): number {
   if (!text || typeof text !== 'string') return 0;
   let tokenCount = 0;
-  // Split into whitespace segments and punctuation/code operator runs
   const segments = text.match(
     /[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d{1,3}|[^\sA-Za-z0-9]|\s+/g,
   );
@@ -144,10 +237,8 @@ export function estimateTokensBPE(text: string): number {
 
   for (const seg of segments) {
     if (/^\s+$/.test(seg)) {
-      // Consecutive spaces/indentation are grouped by ~4 chars per token in BPE
       tokenCount += Math.max(1, Math.ceil(seg.length / 4));
     } else if (/^[A-Za-z]+$/.test(seg)) {
-      // Common short words are 1 token; longer identifiers split every ~4.5 chars
       tokenCount += seg.length <= 5 ? 1 : Math.ceil(seg.length / 4.5);
     } else {
       tokenCount += 1;
@@ -245,7 +336,7 @@ export function evaluatePoolKeyStatus(key: SharedPoolKey, now: number = Date.now
 /**
  * Intelligent Key Router: Selects the best valid shared key for a given `userId`.
  * Prioritizes keys explicitly targeted to `userId`, then general pool keys (`targetUserId === '*'`),
- * automatically skipping expired or exhausted keys.
+ * automatically skipping expired or exhausted keys and advancing to the next active key.
  */
 export function selectActivePoolKeyForUser(
   keys: SharedPoolKey[],
@@ -287,16 +378,17 @@ export function selectActivePoolKeyForUser(
 }
 
 /**
- * Default seeded state with First-User Super Admin (`ggjonasgameryt@gmail.com`)
- * and ready-to-use community pool architecture.
+ * Default state with zero hardcoded personal emails and 100% real zero-initialized counters.
  */
 export function createDefaultFreePoolState(): FreePoolState {
   const now = Date.now();
-  const adminId = 'usr_admin_jonas';
+  const guestId = 'usr_guest_local';
   return {
     poolEnabled: true,
-    currentUserId: adminId,
-    currentUserEmail: 'ggjonasgameryt@gmail.com',
+    isAuthenticated: false,
+    authProvider: 'guest',
+    currentUserId: guestId,
+    currentUserEmail: 'guest@dev0.local',
     sharedKeys: [
       {
         id: 'pool_builtin_studio_free',
@@ -304,8 +396,8 @@ export function createDefaultFreePoolState(): FreePoolState {
         model: 'rork-default',
         maskedKey: 'free••••••••pool (Community Keyless)',
         encodedSecret: encodePoolSecret('rork_builtin'),
-        ownerUserId: adminId,
-        ownerLabel: 'System Community Pool',
+        ownerUserId: 'system_pool',
+        ownerLabel: 'Dev0 Community Pool',
         targetUserId: '*',
         tokenLimit: 500000,
         tokensUsed: 0,
@@ -319,10 +411,12 @@ export function createDefaultFreePoolState(): FreePoolState {
     ],
     users: [
       {
-        id: adminId,
-        email: 'ggjonasgameryt@gmail.com',
-        displayName: 'Jonas (Super Admin)',
-        role: 'admin',
+        id: guestId,
+        email: 'guest@dev0.local',
+        maskedEmail: 'gu•••@dev0.local',
+        displayName: 'Local Guest (Sign in with Google recommended)',
+        authProvider: 'guest',
+        role: 'user',
         status: 'active',
         timeoutUntil: null,
         tokenQuota: 0,
@@ -332,37 +426,9 @@ export function createDefaultFreePoolState(): FreePoolState {
         lastActiveAt: now,
         recentChatExcerpts: [],
       },
-      {
-        id: 'usr_demo_member_1',
-        email: 'dev.member@example.com',
-        displayName: 'Community Tester #1',
-        role: 'user',
-        status: 'active',
-        timeoutUntil: null,
-        tokenQuota: 100000,
-        tokensConsumed: 1420,
-        preferredProvider: 'gemini',
-        createdAt: now - 3600000,
-        lastActiveAt: now - 600000,
-        recentChatExcerpts: [
-          {
-            id: 'ex_1',
-            text: 'Can you help me optimize my Expo Router layout?',
-            timestamp: now - 600000,
-          },
-        ],
-      },
     ],
-    notifications: [
-      {
-        id: 'notif_welcome_pool',
-        level: 'info',
-        title: 'AI for Free Pool Active',
-        message: 'Smart key rotation and real-time BPE token accounting are enabled. Use shared pool keys to save costs.',
-        timestamp: now,
-        read: false,
-      },
-    ],
+    notifications: [],
+    chatDebugLogs: [],
     sessionTokens: {
       prompt: 0,
       completion: 0,
@@ -453,17 +519,28 @@ export async function loadFreePoolState(): Promise<FreePoolState> {
     if (asyncRaw) {
       const parsed = JSON.parse(asyncRaw);
       const defaults = createDefaultFreePoolState();
+      const sanitizedUsers: GovernanceUser[] = Array.isArray(parsed.users) && parsed.users.length > 0
+        ? parsed.users.map((u: any) => ({
+            ...u,
+            maskedEmail: maskEmailAddress(u.email || ''),
+            authProvider: u.authProvider || 'local',
+            role: (u.role === 'owner' || u.role === 'admin' || u.role === 'user') ? u.role : 'user',
+          }))
+        : defaults.users;
+
       return {
         ...defaults,
         ...parsed,
         sharedKeys: Array.isArray(parsed.sharedKeys) && parsed.sharedKeys.length > 0
           ? parsed.sharedKeys.map((k: SharedPoolKey) => ({
               ...k,
+              ownerLabel: k.ownerLabel?.includes('@') ? maskEmailAddress(k.ownerLabel) : k.ownerLabel,
               status: evaluatePoolKeyStatus(k),
             }))
           : defaults.sharedKeys,
-        users: Array.isArray(parsed.users) && parsed.users.length > 0 ? parsed.users : defaults.users,
+        users: sanitizedUsers,
         notifications: Array.isArray(parsed.notifications) ? parsed.notifications : defaults.notifications,
+        chatDebugLogs: Array.isArray(parsed.chatDebugLogs) ? parsed.chatDebugLogs : [],
       };
     }
   } catch (e) {

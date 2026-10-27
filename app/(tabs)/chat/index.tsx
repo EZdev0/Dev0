@@ -44,7 +44,18 @@ export default function ChatScreen() {
     skipClarificationQuestions, submitClarificationAnswers,
   } = useAgent();
   const { allFilePaths, currentProject } = useProject();
-  const { settings, updateSettings, customSubAgents, setShowSubAgentStudioModal } = useApp();
+  const {
+    settings,
+    updateSettings,
+    customSubAgents,
+    setShowSubAgentStudioModal,
+    freePoolState,
+    setShowFreePoolModal,
+    subAgentWorkflow,
+    togglePauseSubAgent,
+    addSubAgentCronJob,
+    toggleSubAgentCronJob,
+  } = useApp();
 
   const [input, setInput] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
@@ -53,6 +64,12 @@ export default function ChatScreen() {
   const [showAtSuggestions, setShowAtSuggestions] = useState<boolean>(false);
   const [atQuery, setAtQuery] = useState<string>('');
   const [agentMode, setAgentModeState] = useState<boolean>(Boolean(settings?.agentMode));
+  const [showWorkflowGraphCard, setShowWorkflowGraphCard] = useState<boolean>(false);
+  const [workflowChangeRequest, setWorkflowChangeRequest] = useState<string>('');
+  const [cronNameInput, setCronNameInput] = useState<string>('');
+  const [cronTargetSlug, setCronTargetSlug] = useState<string>('auditor');
+  const [cronScheduleInput, setCronScheduleInput] = useState<string>('on_finish:developer');
+  const [cronTaskInput, setCronTaskInput] = useState<string>('Audit modified files and verify rules in .agents/auditor/STATUS.md');
 
   const setAgentMode = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
     setAgentModeState(prev => {
@@ -390,12 +407,316 @@ export default function ChatScreen() {
     />
   ));
 
+  const workflowGraphBanner = showWorkflowGraphCard ? (
+    <View
+      style={{
+        marginHorizontal: 12,
+        marginTop: 10,
+        marginBottom: 8,
+        padding: 12,
+        borderRadius: 12,
+        backgroundColor: IDE.surface,
+        borderWidth: 1,
+        borderColor: IDE.primary + '55',
+        gap: 10,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Brain size={15} color={IDE.accent} />
+          <Text style={{ fontSize: 13, fontWeight: '800', color: IDE.text }}>
+            Dev0 Sub-Agent Workflow & Cron Graph (.agents/)
+          </Text>
+        </View>
+        <TouchableOpacity onPress={() => setShowWorkflowGraphCard(false)}>
+          <X size={15} color={IDE.muted} />
+        </TouchableOpacity>
+      </View>
+
+      <Text style={{ fontSize: 11, color: IDE.textSecondary }}>
+        Dev0 orchestrates isolated Sub-Agents with hidden English docs (.agents/&lt;slug&gt;/README.md, RULES.md, STATUS.md, LOG.md), finish_task triggers, and Cron schedules.
+      </Text>
+
+      {/* Visual Dev0 -> Sub-Agent Nodes */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+        {subAgentWorkflow.nodes.map((node) => {
+          const isRunning = node.status === 'running';
+          const isSleeping = node.status === 'sleeping';
+          const isCompleted = node.status === 'completed';
+          const statusColor = isRunning
+            ? IDE.accent
+            : isSleeping
+              ? IDE.warning
+              : isCompleted
+                ? IDE.primary
+                : IDE.muted;
+          return (
+            <View
+              key={node.id}
+              style={{
+                width: 195,
+                padding: 10,
+                borderRadius: 10,
+                backgroundColor: IDE.bg,
+                borderWidth: 1,
+                borderColor: statusColor + '65',
+                gap: 5,
+              }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: IDE.text }} numberOfLines={1}>
+                  {node.name}
+                </Text>
+                <View
+                  style={{
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 5,
+                    backgroundColor: statusColor + '22',
+                  }}
+                >
+                  <Text style={{ fontSize: 9, fontWeight: '800', color: statusColor }}>
+                    {node.status.toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ fontSize: 10, color: IDE.primary, fontFamily: 'monospace' }}>
+                {node.workspaceDir}/STATUS.md
+              </Text>
+              <Text style={{ fontSize: 10, color: IDE.textSecondary }} numberOfLines={2}>
+                {node.lastSummary || node.currentTask || `Role: ${node.role}`}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                <TouchableOpacity
+                  onPress={() => togglePauseSubAgent(node.slug, 'Toggled from Dev0 Workflow Card')}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 5,
+                    borderRadius: 6,
+                    backgroundColor: isSleeping ? IDE.accent + '22' : IDE.warning + '22',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: '700',
+                      color: isSleeping ? IDE.accent : IDE.warning,
+                    }}
+                  >
+                    {isSleeping ? 'Wake Up' : 'Sleep / Pause'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() =>
+                    sendMessage(
+                      `Inspect .agents/${node.slug}/ workspace using inspect_subagent_workspace and run ${node.role} Sub-Agent if needed.`,
+                    )
+                  }
+                  style={{
+                    paddingHorizontal: 8,
+                    paddingVertical: 5,
+                    borderRadius: 6,
+                    backgroundColor: IDE.primary + '22',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.primary }}>
+                    Inspect
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
+        })}
+      </ScrollView>
+
+      {/* Active Cron Jobs */}
+      <View
+        style={{
+          padding: 9,
+          borderRadius: 8,
+          backgroundColor: IDE.bg,
+          borderWidth: 1,
+          borderColor: IDE.border,
+          gap: 6,
+        }}
+      >
+        <Text style={{ fontSize: 11, fontWeight: '800', color: IDE.text }}>
+          Sub-Agent Cron Jobs & Event Triggers ({subAgentWorkflow.cronJobs.length})
+        </Text>
+        {subAgentWorkflow.cronJobs.map((cj) => (
+          <View
+            key={cj.id}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 4,
+              borderBottomWidth: 1,
+              borderBottomColor: IDE.border,
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: IDE.text }}>
+                {cj.name} → <Text style={{ color: IDE.accent }}>.agents/{cj.targetSubAgentSlug}/</Text>
+              </Text>
+              <Text style={{ fontSize: 10, color: IDE.muted }}>
+                Schedule: {cj.scheduleExpression} • Runs: {cj.runCount}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => toggleSubAgentCronJob(cj.id)}
+              style={{
+                paddingHorizontal: 8,
+                paddingVertical: 4,
+                borderRadius: 6,
+                backgroundColor: cj.enabled ? IDE.accent + '22' : IDE.surface,
+              }}
+            >
+              <Text style={{ fontSize: 10, fontWeight: '800', color: cj.enabled ? IDE.accent : IDE.muted }}>
+                {cj.enabled ? 'ACTIVE' : 'PAUSED'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
+        {/* Quick Add Cron Job Row */}
+        <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+          <TextInput
+            style={{
+              flex: 1,
+              backgroundColor: IDE.surface,
+              borderWidth: 1,
+              borderColor: IDE.border,
+              borderRadius: 6,
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              color: IDE.text,
+              fontSize: 11,
+            }}
+            value={cronNameInput}
+            onChangeText={setCronNameInput}
+            placeholder="New Cron name (e.g. Audit on finish)"
+            placeholderTextColor={IDE.muted}
+          />
+          <TextInput
+            style={{
+              width: 115,
+              backgroundColor: IDE.surface,
+              borderWidth: 1,
+              borderColor: IDE.border,
+              borderRadius: 6,
+              paddingHorizontal: 8,
+              paddingVertical: 5,
+              color: IDE.text,
+              fontSize: 11,
+            }}
+            value={cronScheduleInput}
+            onChangeText={setCronScheduleInput}
+            placeholder="on_finish:developer"
+            placeholderTextColor={IDE.muted}
+          />
+          <TouchableOpacity
+            onPress={() => {
+              if (!cronNameInput.trim()) return;
+              addSubAgentCronJob({
+                name: cronNameInput.trim(),
+                targetSubAgentSlug: cronTargetSlug || 'auditor',
+                targetRole: cronTargetSlug || 'auditor',
+                scheduleExpression: cronScheduleInput.trim() || 'on_finish:developer',
+                triggerOnFinishOf: cronScheduleInput.startsWith('on_finish:')
+                  ? cronScheduleInput.replace('on_finish:', '').trim()
+                  : undefined,
+                taskInstruction: cronTaskInput,
+                createdBy: 'user',
+              });
+              setCronNameInput('');
+            }}
+            style={{
+              paddingHorizontal: 10,
+              justifyContent: 'center',
+              borderRadius: 6,
+              backgroundColor: IDE.accent,
+            }}
+          >
+            <Text style={{ fontSize: 10, fontWeight: '800', color: '#000' }}>+ Cron</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Request Changes / Adjust Workflow directly to Dev0 */}
+      <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
+        <TextInput
+          style={{
+            flex: 1,
+            backgroundColor: IDE.bg,
+            borderWidth: 1,
+            borderColor: IDE.border,
+            borderRadius: 8,
+            paddingHorizontal: 10,
+            paddingVertical: 7,
+            color: IDE.text,
+            fontSize: 11,
+          }}
+          value={workflowChangeRequest}
+          onChangeText={setWorkflowChangeRequest}
+          placeholder="Request workflow/Sub-Agent changes from Dev0 (e.g. 'Add a Tester cron after Developer finishes')..."
+          placeholderTextColor={IDE.muted}
+        />
+        <TouchableOpacity
+          onPress={() => {
+            if (!workflowChangeRequest.trim()) return;
+            const reqText = workflowChangeRequest.trim();
+            setWorkflowChangeRequest('');
+            sendMessage(
+              `[Dev0 Sub-Agent Workflow Change Request]\n${reqText}\nUpdate the relevant .agents/<slug>/ files or Cron jobs and call finish_task when done.`,
+            );
+          }}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 8,
+            backgroundColor: IDE.primary,
+          }}
+        >
+          <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>Send to Dev0</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  ) : null;
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 95 : 80}
     >
+      {/* Guest Sign-In Reminder Banner */}
+      {!freePoolState.isAuthenticatedGoogle && (
+        <TouchableOpacity
+          onPress={() => setShowFreePoolModal(true)}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: IDE.warning + '18',
+            borderBottomWidth: 1,
+            borderBottomColor: IDE.warning + '45',
+            paddingHorizontal: 12,
+            paddingVertical: 7,
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={{ fontSize: 11, color: IDE.text, flex: 1 }}>
+            🔒 Sandbox Guest Mode — Sign in with Google in <Text style={{ fontWeight: '800', color: IDE.warning }}>AI for Free</Text> to persist projects & use shared pool keys.
+          </Text>
+          <ChevronRight size={14} color={IDE.warning} />
+        </TouchableOpacity>
+      )}
+
+      {workflowGraphBanner}
+
       {showEmptyState ? (
         <ScrollView
           style={styles.emptyScroll}
@@ -405,18 +726,18 @@ export default function ChatScreen() {
           <View style={styles.emptyIcon}>
             <Sparkles size={32} color={IDE.primary} />
           </View>
-          <Text style={styles.emptyTitle}>Studio KI-Assistent</Text>
+          <Text style={styles.emptyTitle}>Dev0 • AI Orchestrator</Text>
           <Text style={styles.emptySubtitle}>
             {currentProject
-              ? 'Context: "' + currentProject.name + '".\nAsk me anything about your project!'
-              : 'Create a project in the Projects tab first.'}
+              ? 'Isolated Sandbox: "' + currentProject.name + '".\nAsk Dev0 anything or coordinate Sub-Agents (.agents/)!'
+              : 'Create an isolated sandbox project in the Projects tab first.'}
           </Text>
           {!hasApiKey && (
             <View style={styles.warningBanner}>
               <Text style={styles.warningText}>
                 ⚠️ No API key configured.{"\n"}
-                Go to Settings → API Keys.{"\n\n"}
-                💡 Wähle &quot;Studio KI&quot; als Anbieter für kostenlose Nutzung!
+                Go to Settings → AI for Free or API Keys.{"\n\n"}
+                💡 Choose &quot;Studio AI ★ Free&quot; or &quot;AI for Free&quot; Pool!
               </Text>
             </View>
           )}
@@ -429,8 +750,8 @@ export default function ChatScreen() {
             >
               <MessageSquare size={16} color={!agentMode ? IDE.primary : IDE.muted} />
               <View style={styles.modeInfoText}>
-                <Text style={[styles.modeInfoTitle, !agentMode && { color: IDE.primary }]}>Chat-Modus</Text>
-                <Text style={styles.modeInfoDesc}>Direkter Dialog mit der KI</Text>
+                <Text style={[styles.modeInfoTitle, !agentMode && { color: IDE.primary }]}>Dev0 Chat Mode</Text>
+                <Text style={styles.modeInfoDesc}>Direct dialog + .agents/ Sub-Agents & Cron</Text>
               </View>
               {!agentMode && <View style={styles.modeActiveIndicator} />}
             </TouchableOpacity>
@@ -441,8 +762,8 @@ export default function ChatScreen() {
             >
               <Brain size={16} color={agentMode ? IDE.accent : IDE.muted} />
               <View style={styles.modeInfoText}>
-                <Text style={[styles.modeInfoTitle, agentMode && { color: IDE.accent }]}>Agent-Modus</Text>
-                <Text style={styles.modeInfoDesc}>Main agent plans, sub-agents execute</Text>
+                <Text style={[styles.modeInfoTitle, agentMode && { color: IDE.accent }]}>Dev0 Planner Mode</Text>
+                <Text style={styles.modeInfoDesc}>Dev0 plans, Sub-Agents execute step-by-step</Text>
               </View>
               {agentMode && <View style={[styles.modeActiveIndicator, { backgroundColor: IDE.accent }]} />}
             </TouchableOpacity>
@@ -738,6 +1059,27 @@ export default function ChatScreen() {
             <Brain size={11} color={IDE.primary} />
             <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.primary }}>
               Sub-Agents ({customSubAgents.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setShowWorkflowGraphCard(prev => !prev)}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              backgroundColor: showWorkflowGraphCard ? IDE.accent + '25' : IDE.surface,
+              borderWidth: 1,
+              borderColor: showWorkflowGraphCard ? IDE.accent : IDE.border,
+              paddingHorizontal: 7,
+              paddingVertical: 3,
+              borderRadius: 6,
+            }}
+            activeOpacity={0.75}
+          >
+            <Zap size={10} color={IDE.accent} />
+            <Text style={{ fontSize: 10, fontWeight: '700', color: showWorkflowGraphCard ? IDE.accent : IDE.textSecondary }}>
+              Workflow & Cron ({subAgentWorkflow.cronJobs.length})
             </Text>
           </TouchableOpacity>
 

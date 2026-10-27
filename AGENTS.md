@@ -115,8 +115,8 @@ Every code or rule change must be validated against the following checks:
   - Enables local models (Ollama, LM Studio, custom endpoints) and open-weight models to reliably invoke tools via fenced JSON blocks, XML `<tool_call>`/`<tool>` tags, or ReAct `Action:` / `Action Input:` blocks with automatic JSON repair (`repairAndParseJSON`).
 - **YAML Skill Loader & Scoped Sub-Agent Studio (`utils/skill-loader.ts`, `components/SubAgentStudioModal.tsx`):**
   - Automatically parses YAML frontmatter (`--- ... ---`) from `.qoder/rules/*`, `.agents/*`, and project files, and provides a visual builder for custom Sub-Agent templates with glob file-scope enforcement (`isFileAllowedForSubAgent`).
-- **"AI for Free" Shared Key Pool & Zero-Config Admin Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`, `providers/AppProvider.tsx`):**
-  - Supports masked API key sharing with token/time limits and target `User ID` scoping, real API + BPE token accounting (`extractActualTokenUsage`, `estimateTokensBPE`), 80% quota warnings, automatic key rotation, and First-User (`ggjonasgameryt@gmail.com`) Super Admin user governance persisted via `IndexedDB` + `AsyncStorage`.
+- **"AI for Free" Shared Key Pool & Zero-PII 3-Tier RBAC Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`, `providers/AppProvider.tsx`):**
+  - Supports masked API key sharing with token/time limits and target `User ID` scoping, real API + BPE token accounting (`extractActualTokenUsage`, `estimateTokensBPE`), 80% quota warnings, automatic key rotation, and 3-Tier RBAC (`owner` / `admin` / `user`) with Google Sign-In and Owner Passphrase Claim persisted via `IndexedDB` + `AsyncStorage` with zero hardcoded PII.
 - **Root-Cause Bug Documentation (`bugs/*.md`) & CORS-Safe `/api/models` Proxy (`app/api/models+api.ts`, `components/HTMLPreview.tsx`):**
   - Eliminates `@rork-ai/toolkit-sdk` deprecation warnings, proxies custom `/v1/models` requests server-side, and enables WebAssembly (`window.runWasmBytes`) inside `HTMLPreview.tsx`.
 
@@ -124,10 +124,25 @@ Every code or rule change must be validated against the following checks:
 
 ## Sub-Agent Floating Question Relay, Strict Question Tool Guard & Netlify Hardening (v1.3.0)
 - **Strict Question Tool Guard (`utils/subagent-question-relay.ts`, `providers/ChatProvider.tsx`):**
-  - `hasPendingChatQuestions` uses `hasExplicitQuestionToolCall` so the `KI-Rückfragen offen / Überspringen & Direkt starten (Skip)` banner is strictly shown **only** when the AI invokes the `ask_user_question` tool (or during an active `clarifying` plan), never from plain-text `?` characters in normal chat messages.
+  - `hasPendingChatQuestions` uses `hasExplicitQuestionToolCall` so the `KI-Rückfragen offen / Überspringen & Direkt starten (Skip)` banner is strictly shown **only** when the AI invokes the `ask_user_question` tool (`toolCallId` present) or during an active `clarifying` plan, never from plain-text `?` characters in normal chat messages.
 - **Sub-Agent Floating Window -> Main Creator Relay -> Saved Sub-Agent List (`components/SubAgentFloatingQuestionModal.tsx`, `app/(tabs)/chat/index.tsx`, `components/MultiAgentUI.tsx`):**
-  - Launches a floating configuration and Q&A modal when Sub-Agent questions arise, relays structured answers directly to the Main Creator Agent (`buildMainCreatorRelayPrompt`), and persists the configured Sub-Agent into `customSubAgents` (`createSavedSubAgentFromQuestionResponse`) displayed in `ChatScreen`, `AgentDashboard`, and `SubAgentStudioModal`.
+  - Launches a floating configuration and Q&A modal when Sub-Agent questions arise via `ask_user_question`, relays structured answers directly to the Main Creator Agent (`buildMainCreatorRelayPrompt`), and persists the configured Sub-Agent into `customSubAgents` (`createSavedSubAgentFromQuestionResponse`) displayed in `ChatScreen`, `AgentDashboard`, and `SubAgentStudioModal`.
 - **Netlify & CI Build Hardening (`.npmrc`, `netlify.toml`, `package.json`, `.github/workflows/lint.yml`):**
   - Enforces Node 20 (`NODE_VERSION = "20"`), `legacy-peer-deps=true`, `node scripts/patch-modules.js && expo export -p web`, and `esbuild` Netlify Functions 2.0 bundling.
+
+---
+
+## Dev0 Sandboxed Workspaces, Docker Backend, 3-Tier RBAC, Per-Chat Telemetry & `.agents/` Cron Workflows (v1.5.0)
+- **Isolated User Sandboxes & Docker Container Backend (`utils/sandbox-workspace.ts`, `utils/sample-project.ts`, `app/api/sandbox+api.ts`, `Dockerfile.sandbox`, `docker-compose.sandbox.yml`):**
+  - Strips legacy `studio-ide` self-source exposure (`sanitizeUserSandboxProjects`) and stores each user's projects in an isolated IndexedDB/AsyncStorage namespace (`dev0_sandbox_projects_v2_<userId>`) or non-root Docker container volume (`/workspace/sandboxes/<userId>`).
+- **Zero-PII 3-Tier RBAC & Real Per-Chat Debug Telemetry (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`, `providers/ChatProvider.tsx`):**
+  - Enforces `owner` (`canViewUserChats === true`, `canManageUsers === true`), `admin` (`canManageUsers === true`, `canViewUserChats === false`), and `user` roles with masked emails (`maskEmailAddress`) and Google Sign-In.
+  - Initializes all counters at `0` and appends a verified `ChatDebugLogEntry` (latency, exact API vs. BPE tokens, tool calls, fallback, key rotation) after every chat turn.
+- **Provider Model Catalog Search Highlight & Local / LM Studio / Ollama Presets (`app/(tabs)/settings/index.tsx`, `types/index.ts`):**
+  - Displays exact provider model IDs with live yellow search highlighting (`#FACC15`) and provides 1-tap presets + live `/api/models` discovery for **LM Studio (`1234`)**, **Ollama (`11434`)**, and **Local OpenAI-Compatible (`8080`)** servers.
+- **Hidden `.agents/<slug>/` Workspaces, Mandatory `finish_task` Tool, Cron Jobs & Pause/Sleep Mode (`utils/subagent-workspace.ts`, `providers/ChatProvider.tsx`, `providers/AgentProvider.tsx`, `app/(tabs)/chat/index.tsx`):**
+  - Maintains hidden English `.agents/<slug>/README.md`, `RULES.md`, `STATUS.md`, and `LOG.md` files for every Sub-Agent, hidden from the normal user file tree (`filterVisibleUserFiles`) and Git-ignored.
+  - Adds `finish_task`, `create_cron_job`, `sleep_agent`, and `inspect_subagent_workspace` tools plus an interactive Workflow & Cron Graph Card in Chat for pausing, resuming, and scheduling Sub-Agents.
+
 
 

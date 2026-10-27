@@ -1,5 +1,5 @@
 import { FileNode } from '@/types';
-import { createSelfSourceProject } from '@/utils/self-source';
+import { createDockerSandboxTemplateFiles } from '@/utils/sandbox-workspace';
 
 let idCounter = 1;
 function nid(): string {
@@ -12,7 +12,8 @@ export function createSampleProject(projectType: string): FileNode[] {
     case 'android': return createAndroidProject();
     case 'web': return createWebProject();
     case 'python': return createPythonProject();
-    case 'studio-ide': return createSelfSourceProject();
+    case 'docker-sandbox':
+    case 'studio-ide': return createDockerSandboxTemplateFiles();
     default: return [];
   }
 }

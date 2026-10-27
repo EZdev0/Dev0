@@ -1,8 +1,34 @@
 # Changelog
 
-All notable changes, bug fixes, architectural improvements, and audits for **ZeroProCode IDE (`AI_mega_Brain_rork`)** are documented in this file.
+All notable changes, bug fixes, architectural improvements, and audits for **Dev0 (`AI_mega_Brain_rork`)** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+---
+
+## [1.5.0] - 2026-10-27
+
+### Added
+- **Sandboxed User Workspaces & Optional Docker Container Backend (`utils/sandbox-workspace.ts`, `utils/sample-project.ts`, `app/api/sandbox+api.ts`, `Dockerfile.sandbox`, `docker-compose.sandbox.yml`, `providers/ProjectProvider.tsx`)**:
+  - Replaced self-source project exposure (`studio-ide`) with isolated per-user IndexedDB/AsyncStorage workspaces (`dev0_sandbox_projects_v2_<userId>`) and an optional non-root Docker sandbox backend (`/api/sandbox`).
+  - Added automatic self-source stripping (`sanitizeUserSandboxProjects`) so neither users nor AI tools can read or modify the host application's source code.
+- **Zero-PII Google Sign-In, Owner Claim & 3-Tier RBAC in "AI for Free" (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`, `providers/AppProvider.tsx`)**:
+  - Removed all hardcoded email addresses from the repository and added `maskEmailAddress` privacy protection.
+  - Implemented 3-Tier RBAC: **Owner** (`canManageUsers: true`, `canViewUserChats: true`), **Admin** (`canManageUsers: true`, `canViewUserChats: false`), and **User** (`canManageUsers: false`, `canViewUserChats: false`).
+  - Added Google Sign-In and Owner Passphrase Claim (`verifyOwnerClaimPassphrase`) directly in the "AI for Free" modal and Settings tab.
+- **Real-Time Per-Chat Debug Telemetry & Automatic Free Pool Key Rotation (`utils/free-ai-pool.ts`, `providers/ChatProvider.tsx`, `components/FreeAIPoolModal.tsx`)**:
+  - Initialized all token and request counters at `0` with zero fake numbers.
+  - Recorded a verified `ChatDebugLogEntry` after every chat turn (latency in ms, exact API vs. BPE token source, prompt/completion/total tokens, tool calls, fallback, and pool key ID) and automatically rotated to the next active pool key upon reaching 100% of token or time quota.
+- **Provider Model Catalog Search with Yellow Match Highlight & Local/LM Studio/Ollama Presets (`app/(tabs)/settings/index.tsx`, `types/index.ts`)**:
+  - Added live model search across all providers that highlights matching model names and exact provider IDs in yellow (`#FACC15`) with a yellow match badge.
+  - Added dedicated 1-tap presets and dynamic `/api/models` discovery for **LM Studio (`http://localhost:1234/v1`)**, **Ollama (`http://localhost:11434/v1`)**, and **Local OpenAI-Compatible (`http://localhost:8080/v1`)** endpoints under Custom Provider.
+- **Hidden `.agents/<slug>/` Sub-Agent Workspaces, Mandatory `finish_task` Tool, Cron Jobs & Pause/Sleep Mode (`utils/subagent-workspace.ts`, `providers/ChatProvider.tsx`, `providers/AgentProvider.tsx`, `app/(tabs)/chat/index.tsx`)**:
+  - Every Sub-Agent automatically maintains hidden English documentation files (`.agents/<slug>/README.md`, `RULES.md`, `STATUS.md`, `LOG.md`) hidden from the user file tree (`filterVisibleUserFiles`) and excluded via `.gitignore`.
+  - Added `finish_task`, `create_cron_job`, `sleep_agent`, and `inspect_subagent_workspace` tools, plus an interactive **Sub-Agent Workflow, Cron & Pause Graph** card in ChatScreen.
+
+### Fixed
+- **Eliminated False-Positive `KI-Rückfragen offen (1)` Banner on Plain-Text Replies (`utils/subagent-question-relay.ts`, `providers/ChatProvider.tsx`)**:
+  - Removed heuristic `detectSubAgentQuestionFromTurn` calls on normal plain-text assistant responses and required an explicit `ask_user_question` `toolCallId` in `hasExplicitQuestionToolCall`.
 
 ---
 
@@ -41,7 +67,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Added floating **"AI for Free"** modal accessible from Settings and Tools.
   - Users can share keys to the pool with **Token Limits** and/or **Time Limits**, optionally scoped to a specific `User ID` (`*` or `usr_...`). Raw keys are encrypted at rest (`encodePoolSecret`) and masked (`gsk_••••••••••••9a1f`) so no other user can ever view the secret key.
   - Added `extractActualTokenUsage` + `estimateTokensBPE` (cl100k BPE subword tokenizer) for real token accounting, automatic 80% quota warnings, and zero-downtime key rotation when quotas or time limits expire.
-  - Zero-config local DB (`IndexedDB` + `AsyncStorage`) promotes the first user (`ggjonasgameryt@gmail.com`) to `Super Admin` with user timeouts, suspensions, token quota management, and chat moderation.
+  - Zero-config local DB (`IndexedDB` + `AsyncStorage`) supports Owner & Admin user governance with user timeouts, suspensions, token quota management, and chat moderation.
 - **CORS-Safe Custom Models Proxy & WebAssembly HTML Preview (`app/api/models+api.ts`, `components/HTMLPreview.tsx`, `types/index.ts`)**:
   - Added `/api/models` server proxy so custom OpenAI-compatible endpoints never fail with `NetworkError when attempting to fetch resource`.
   - Upgraded `HTMLPreview.tsx` with a cross-platform Web `<iframe srcDoc>` + native `WebView`, viewport switcher (`Mobile`, `Tablet`, `Desktop`), live console drawer, and `window.runWasmBytes` WebAssembly execution helper.

@@ -83,9 +83,9 @@ This audit investigated four high-priority issues reported in the **ZeroProCode 
 - **Problem**: Local and open-weight models (Ollama, LM Studio, Qwen, DeepSeek, Llama) often emit `<tool_call>`, `<tool>...</tool><args>...</args>`, or `Action: / Action Input:` blocks instead of native OpenAI `tool_calls`.
 - **Solution**: Implemented `parseToolCallsFromText` and `repairAndParseJSON` supporting all 3 tiers automatically whenever native `tool_calls` are absent.
 
-### 4.3 "AI for Free" Shared Key Pool, Real BPE Token Reader & Zero-Config Admin Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`)
-- **Problem**: Users needed a zero-config way to share API keys with token/time limits and target `User ID` scoping without exposing raw keys, alongside real token accounting and First-User (`ggjonasgameryt@gmail.com`) Super Admin governance.
-- **Solution**: Built `FreeAIPoolModal` and `utils/free-ai-pool.ts` with `IndexedDB` + `AsyncStorage` persistence, secret obfuscation + masking (`gsk_••••••••••••9a1f`), exact API `usage`/`usageMetadata` + cl100k BPE token counting (`estimateTokensBPE`), 80% quota warnings, automatic key rotation, and Super Admin user management.
+### 4.3 "AI for Free" Shared Key Pool, Real BPE Token Reader & Zero-PII 3-Tier RBAC Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`)
+- **Problem**: Users needed a zero-config way to share API keys with token/time limits and target `User ID` scoping without exposing raw keys or personal email addresses, alongside real token accounting and 3-Tier RBAC (`owner` / `admin` / `user`) governance.
+- **Solution**: Built `FreeAIPoolModal` and `utils/free-ai-pool.ts` with `IndexedDB` + `AsyncStorage` persistence, secret obfuscation + masking (`gsk_••••••••••••9a1f`), email masking (`maskEmailAddress`), exact API `usage`/`usageMetadata` + cl100k BPE token counting (`estimateTokensBPE`), 80% quota warnings, automatic key rotation, and Owner/Admin user management.
 
 ### 4.4 Deprecated SDK Removal, `/api/models` Proxy & WebAssembly Preview (`providers/ChatProvider.tsx`, `app/api/models+api.ts`, `components/HTMLPreview.tsx`)
 - **Solution**: Removed deprecated `createRorkTool` and `useRorkAgent` calls from `ChatProvider.tsx`, added `/api/models` to prevent CORS `NetworkError` on custom model endpoints, and upgraded `HTMLPreview.tsx` with Web `<iframe srcDoc>` + `window.runWasmBytes` WebAssembly support.

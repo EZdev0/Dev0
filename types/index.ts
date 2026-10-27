@@ -169,11 +169,11 @@ export interface AIProviderConfig {
 export const AI_PROVIDERS: AIProviderConfig[] = [
   {
     id: 'rork',
-    name: 'Studio KI',
+    name: 'Studio KI (Dev0 Free)',
     free: true,
     keyHint: 'Kein Schlüssel nötig – sofort nutzbar!',
     models: [
-      { id: 'rork-default', name: 'Studio KI (Gratis)' },
+      { id: 'rork-default', name: 'Dev0 Studio AI (Free)' },
     ],
   },
   {
@@ -182,9 +182,12 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     free: true,
     keyHint: 'console.groq.com/keys',
     models: [
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B' },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B (Schnell)' },
-      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B' },
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (llama-3.3-70b-versatile)' },
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant (llama-3.1-8b-instant)' },
+      { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill Llama 70B (deepseek-r1-distill-llama-70b)' },
+      { id: 'qwen-qwq-32b', name: 'Qwen QwQ 32B Reasoning (qwen-qwq-32b)' },
+      { id: 'gemma2-9b-it', name: 'Google Gemma 2 9B IT (gemma2-9b-it)' },
+      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B 32k (mixtral-8x7b-32768)' },
     ],
   },
   {
@@ -193,27 +196,36 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     free: true,
     keyHint: 'aistudio.google.com/app/apikey',
     models: [
-      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (2026 Recommended)' },
-      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Deep Reasoning)' },
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
-      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite (Fast)' },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (gemini-2.5-flash)' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro Deep Reasoning (gemini-2.5-pro)' },
+      { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite (gemini-2.5-flash-lite)' },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash (gemini-2.0-flash)' },
+      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite (gemini-2.0-flash-lite)' },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (gemini-1.5-pro)' },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (gemini-1.5-flash)' },
     ],
   },
   {
     id: 'openai',
     name: 'OpenAI',
     models: [
-      { id: 'gpt-4o', name: 'GPT-4o' },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+      { id: 'gpt-4o', name: 'GPT-4o Omni (gpt-4o)' },
+      { id: 'gpt-4.1', name: 'GPT-4.1 Flagship (gpt-4.1)' },
+      { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini (gpt-4.1-mini)' },
+      { id: 'gpt-4.1-nano', name: 'GPT-4.1 Nano (gpt-4.1-nano)' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini (gpt-4o-mini)' },
+      { id: 'o3-mini', name: 'OpenAI o3-mini Reasoning (o3-mini)' },
+      { id: 'o4-mini', name: 'OpenAI o4-mini Reasoning (o4-mini)' },
     ],
   },
   {
     id: 'anthropic',
     name: 'Anthropic',
     models: [
-      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
-      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
+      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4 (claude-sonnet-4-20250514)' },
+      { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet (claude-3-7-sonnet-20250219)' },
+      { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (claude-3-5-sonnet-20241022)' },
+      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (claude-3-5-haiku-20241022)' },
     ],
   },
   {
@@ -221,8 +233,11 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     name: 'NVIDIA NIM',
     keyHint: 'build.nvidia.com',
     models: [
-      { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
-      { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B' },
+      { id: 'meta/llama-3.3-70b-instruct', name: 'Llama 3.3 70B Instruct (meta/llama-3.3-70b-instruct)' },
+      { id: 'meta/llama-3.1-405b-instruct', name: 'Llama 3.1 405B Instruct (meta/llama-3.1-405b-instruct)' },
+      { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B Instruct (meta/llama-3.1-70b-instruct)' },
+      { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1 NIM (deepseek-ai/deepseek-r1)' },
+      { id: 'qwen/qwen2.5-coder-32b-instruct', name: 'Qwen 2.5 Coder 32B (qwen/qwen2.5-coder-32b-instruct)' },
     ],
   },
   {
@@ -231,18 +246,25 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     free: true,
     keyHint: 'openrouter.ai/keys',
     models: [
-      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Gratis)' },
-      { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B (Gratis)' },
-      { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 (Gratis)' },
-      { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Gratis)' },
-      { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Gratis)' },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B Free (meta-llama/llama-3.3-70b-instruct:free)' },
+      { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B Free (qwen/qwen-2.5-coder-32b-instruct:free)' },
+      { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 Reasoning Free (deepseek/deepseek-r1:free)' },
+      { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek V3 Chat Free (deepseek/deepseek-chat-v3-0324:free)' },
+      { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash Exp Free (google/gemini-2.0-flash-exp:free)' },
+      { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B Instruct Free (mistralai/mistral-7b-instruct:free)' },
+      { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B IT Free (google/gemma-2-9b-it:free)' },
     ],
   },
   {
     id: 'custom',
-    name: 'Benutzerdefiniert (Ollama / LM Studio)',
+    name: 'Benutzerdefiniert (Local Model / LM Studio / Ollama)',
     models: [
-      { id: 'custom', name: 'Eigenes / Lokales Modell' },
+      { id: 'lmstudio-local', name: 'LM Studio Local Model (lmstudio-local)' },
+      { id: 'qwen2.5-coder:7b', name: 'Ollama Qwen 2.5 Coder 7B (qwen2.5-coder:7b)' },
+      { id: 'llama3.2:latest', name: 'Ollama Llama 3.2 Local (llama3.2:latest)' },
+      { id: 'deepseek-r1:8b', name: 'Ollama DeepSeek R1 8B Local (deepseek-r1:8b)' },
+      { id: 'codellama:7b', name: 'Ollama CodeLlama 7B (codellama:7b)' },
+      { id: 'custom', name: 'Custom OpenAI-Compatible Endpoint Model (custom)' },
     ],
   },
 ];
@@ -294,8 +316,12 @@ export const TOOL_REGISTRY: ToolRegistryItem[] = [
   { name: 'update_memory_md', displayName: 'update_memory_md', description: 'Updates MEMORY.md (long-term memory, decisions, learned preferences).', category: 'learning', parameters: [{ name: 'content', type: 'string', description: 'New content for MEMORY.md' }], isBeta: true, defaultPermission: 'always' },
   { name: 'verify_file', displayName: 'verify_file', description: 'Verifies if a file exists and is correct.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'File path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'task_complete', displayName: 'task_complete', description: 'Marks an agent task as completed.', category: 'planning', parameters: [{ name: 'summary', type: 'string', description: 'Summary' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized or user-created sub-agent template.', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-agent role or template name' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'ask_user_question', displayName: 'ask_user_question', description: 'Opens a floating question window to ask the user clarifying questions (including Sub-Agent configuration questions) and relays answers back to the Main Creator Agent.', category: 'planning', parameters: [{ name: 'questions', type: 'array', description: 'List of questions to ask the user' }, { name: 'is_sub_agent', type: 'boolean', description: 'Whether the question is for/from a Sub-Agent' }, { name: 'sub_agent_role', type: 'string', description: 'Sub-Agent role (developer, localizer, analyst, tester, researcher, critic)' }, { name: 'sub_agent_name', type: 'string', description: 'Suggested Sub-Agent name' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'finish_task', displayName: 'finish_task', description: 'Mandatory Sub-Agent completion tool. Updates .agents/<name>/STATUS.md & LOG.md in English and triggers dependent Cron jobs.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Sub-Agent name or role (e.g. teamworker, auditor)' }, { name: 'summary', type: 'string', description: 'English completion summary' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'create_cron_job', displayName: 'create_cron_job', description: 'Schedules a recurring or event-triggered Sub-Agent Cron job (e.g., run auditor when teamworker calls finish_task).', category: 'system', parameters: [{ name: 'name', type: 'string', description: 'Cron job name' }, { name: 'target_role', type: 'string', description: 'Target Sub-Agent role' }, { name: 'task', type: 'string', description: 'Task instruction' }, { name: 'trigger_type', type: 'string', description: 'on_finish_task, interval, or after_delay' }, { name: 'depends_on_agent', type: 'string', description: 'Agent slug that triggers this job upon finish_task' }, { name: 'reason', type: 'string', description: 'Why this Cron job is needed' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'sleep_agent', displayName: 'sleep_agent', description: 'Pauses (sleeps) or wakes up a Sub-Agent and records its state in .agents/<name>/STATUS.md.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Sub-Agent name or role' }, { name: 'reason', type: 'string', description: 'Why the Sub-Agent is sleeping or waking' }, { name: 'wake', type: 'boolean', description: 'True to wake up, false to put to sleep' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'inspect_subagent_workspace', displayName: 'inspect_subagent_workspace', description: 'Inspects the hidden .agents/<name>/ English documentation folders, Sub-Agent statuses, and active Cron jobs.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Optional Sub-Agent name filter' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized or user-created sub-agent template (e.g. teamworker, auditor, developer, localizer).', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-agent role or template name' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'ask_user_question', displayName: 'ask_user_question', description: 'Opens a floating question window to ask the user clarifying questions (including Sub-Agent configuration questions) and relays answers back to Dev0.', category: 'planning', parameters: [{ name: 'questions', type: 'array', description: 'List of questions to ask the user' }, { name: 'is_sub_agent', type: 'boolean', description: 'Whether the question is for/from a Sub-Agent' }, { name: 'sub_agent_role', type: 'string', description: 'Sub-Agent role (teamworker, auditor, developer, localizer, analyst, tester, researcher, critic)' }, { name: 'sub_agent_name', type: 'string', description: 'Suggested Sub-Agent name' }], isBeta: false, defaultPermission: 'always' },
 ];
 
 export const TOOL_CATEGORIES: { id: string; label: string; icon: string }[] = [
@@ -384,7 +410,7 @@ export const PROJECT_TYPES = [
   { id: 'android', name: 'Android (Kotlin)', icon: '📱' },
   { id: 'web', name: 'Web (TypeScript)', icon: '🌐' },
   { id: 'python', name: 'Python', icon: '🐍' },
-  { id: 'studio-ide', name: 'Dev0 (Source)', icon: '🛠️' },
+  { id: 'docker-sandbox', name: 'Docker Sandbox (Isolated)', icon: '🐳' },
   { id: 'empty', name: 'Leeres Projekt', icon: '📁' },
 ];
 

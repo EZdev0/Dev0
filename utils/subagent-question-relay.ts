@@ -55,7 +55,11 @@ export function hasExplicitQuestionToolCall(
   messages: ChatMessage[],
   activePendingQuestion?: SubAgentQuestionRequest | null,
 ): boolean {
-  if (activePendingQuestion && activePendingQuestion.questions.length > 0) {
+  if (
+    activePendingQuestion &&
+    Boolean(activePendingQuestion.toolCallId) &&
+    activePendingQuestion.questions.length > 0
+  ) {
     return true;
   }
   if (!Array.isArray(messages) || messages.length === 0) {
