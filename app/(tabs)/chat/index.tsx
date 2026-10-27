@@ -27,13 +27,19 @@ export default function ChatScreen() {
   const router = useRouter();
   const {
     messages, isLoading, isThinking, thinkingPhase,
-    sendMessage, stopGeneration, clearChat, lastFallbackInfo,
+    sendMessage, updateDraftPlanOnMessage, proceedWithDraftPlan,
+    stopGeneration, clearChat, lastFallbackInfo,
+    isChatAgentMode, setIsChatAgentMode,
     pendingApproval, approvePendingTool,
     hasPendingChatQuestions, skipClarificationQuestions: skipChatClarification,
     pendingSubAgentQuestion,
     openSubAgentFloatingLauncher,
     submitSubAgentQuestionResponse,
     closeSubAgentQuestionModal,
+    subAgentTranscripts,
+    viewingSubAgentSlug,
+    setViewingSubAgentSlug,
+    deleteSubAgentTemplate,
   } = useChat();
   const {
     activePlan, isPlanning, isExecuting,
@@ -43,7 +49,7 @@ export default function ChatScreen() {
     clarificationQuestions, setClarificationQuestions,
     skipClarificationQuestions, submitClarificationAnswers,
   } = useAgent();
-  const { allFilePaths, currentProject } = useProject();
+  const { allFilePaths, currentProject, getFileContent } = useProject();
   const {
     settings,
     updateSettings,
@@ -75,13 +81,16 @@ export default function ChatScreen() {
     setAgentModeState(prev => {
       const next = typeof val === 'function' ? val(prev) : val;
       updateSettings({ agentMode: next });
+      setIsChatAgentMode(next);
       return next;
     });
-  }, [updateSettings]);
+  }, [updateSettings, setIsChatAgentMode]);
 
   useEffect(() => {
-    setAgentModeState(Boolean(settings?.agentMode));
-  }, [settings?.agentMode]);
+    const next = Boolean(settings?.agentMode);
+    setAgentModeState(next);
+    setIsChatAgentMode(next);
+  }, [settings?.agentMode, setIsChatAgentMode]);
 
   const [showAttachMenu, setShowAttachMenu] = useState<boolean>(false);
   const flatListRef = useRef<FlatList<ChatMessage>>(null);
@@ -148,15 +157,15 @@ export default function ChatScreen() {
     setShowAttachMenu(false);
     Keyboard.dismiss();
 
-    if (agentMode) {
+    if (agentMode && currentProject) {
       await createPlan(textToSend);
     } else {
-      sendMessage(textToSend, filesToSend);
+      sendMessage(textToSend, filesToSend, agentMode && Boolean(currentProject));
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 300);
     }
-  }, [input, attachedFiles, sendMessage, agentMode, createPlan]);
+  }, [input, attachedFiles, sendMessage, agentMode, currentProject, createPlan]);
 
   const handleAttachFile = useCallback((path: string) => {
     setAttachedFiles(prev => {
@@ -217,7 +226,7 @@ export default function ChatScreen() {
       return;
     }
     const formattedAnswers = answers
-      .map((qa, i) => `${i + 1}. ${qa.question}\n   Antwort: ${qa.answer?.trim() || 'Übersprungen – bitte sinnvollste Best-Practice-Annahme treffen.'}`)
+      .map((qa, i) => `${i + 1}. ${qa.question}\n   Answer: ${qa.answer?.trim() || 'Skipped — please make the most sensible best-practice assumption.'}`)
       .join('\n');
     await submitClarificationAnswers(formattedAnswers, activePlan?.id, false);
   }, [activePlan?.id, skipClarificationQuestions, submitClarificationAnswers]);
@@ -230,22 +239,35 @@ export default function ChatScreen() {
   const handleToggleAgentMode = useCallback(() => {
     setAgentMode(p => !p);
     setShowAttachMenu(false);
-  }, []);
+  }, [setAgentMode]);
 
   const handlePaperclipPress = useCallback(() => {
     setShowAttachMenu(p => !p);
   }, []);
 
+  const handleProceedWithDraftPlan = useCallback(
+    async (plan: any) => {
+      setAgentMode(true);
+      await proceedWithDraftPlan(plan);
+    },
+    [setAgentMode, proceedWithDraftPlan],
+  );
 
   const renderMessage = useCallback(({ item, index }: { item: ChatMessage, index: number }) => {
     if (!item) return null;
     return (
       <View>
         {index > 0 && index % 5 === 0 && <SponsorBanner />}
-        <ChatBubble message={item} />
+        <ChatBubble
+          message={item}
+          onProceedDraftPlan={handleProceedWithDraftPlan}
+          onUpdateDraftPlan={(msgId, updated, aiInstruction) =>
+            updateDraftPlanOnMessage(msgId, updated, aiInstruction)
+          }
+        />
       </View>
     );
-  }, [settings?.hideSponsor]);
+  }, [settings?.hideSponsor, handleProceedWithDraftPlan, updateDraftPlanOnMessage]);
 
 
   const hasApiKey = useMemo(() => {
@@ -369,8 +391,8 @@ export default function ChatScreen() {
     return [
       { text: 'Show me the project structure', icon: <Search size={14} color={IDE.muted} />, agent: false },
       { text: 'Analyze my project and suggest improvements', icon: <PenTool size={14} color={IDE.primary} />, agent: true },
-      { text: 'Finde alle TODO-Kommentare', icon: <Search size={14} color={IDE.warning} />, agent: false },
-      { text: 'Explain the code', icon: <Code size={14} color={IDE.keyword} />, agent: false },
+      { text: 'Find all TODO comments', icon: <Search size={14} color={IDE.warning} />, agent: false },
+      { text: 'Draft an execution plan for Agent Mode', icon: <Code size={14} color={IDE.keyword} />, agent: false },
     ];
   }, [currentProject, allFilePaths]);
 
@@ -438,98 +460,100 @@ export default function ChatScreen() {
       </Text>
 
       {/* Visual Dev0 -> Sub-Agent Nodes */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        {subAgentWorkflow.nodes.map((node) => {
-          const isRunning = node.status === 'running';
-          const isSleeping = node.status === 'sleeping';
-          const isCompleted = node.status === 'completed';
-          const statusColor = isRunning
-            ? IDE.accent
-            : isSleeping
-              ? IDE.warning
-              : isCompleted
-                ? IDE.primary
-                : IDE.muted;
-          return (
-            <View
-              key={node.id}
-              style={{
-                width: 195,
-                padding: 10,
-                borderRadius: 10,
-                backgroundColor: IDE.bg,
-                borderWidth: 1,
-                borderColor: statusColor + '65',
-                gap: 5,
-              }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: IDE.text }} numberOfLines={1}>
-                  {node.name}
-                </Text>
-                <View
-                  style={{
-                    paddingHorizontal: 6,
-                    paddingVertical: 2,
-                    borderRadius: 5,
-                    backgroundColor: statusColor + '22',
-                  }}
-                >
-                  <Text style={{ fontSize: 9, fontWeight: '800', color: statusColor }}>
-                    {node.status.toUpperCase()}
+      {subAgentWorkflow.nodes.length === 0 ? (
+        <Text style={{ fontSize: 11, color: IDE.muted }}>
+          No active Sub-Agent nodes running yet. Launch a Sub-Agent below or let Dev0 delegate tasks in Agent Mode.
+        </Text>
+      ) : (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          {subAgentWorkflow.nodes.map((node) => {
+            const isRunning = node.status === 'running';
+            const isSleeping = node.status === 'sleeping';
+            const isCompleted = node.status === 'completed';
+            const statusColor = isRunning
+              ? IDE.accent
+              : isSleeping
+                ? IDE.warning
+                : isCompleted
+                  ? IDE.primary
+                  : IDE.muted;
+            return (
+              <View
+                key={node.id}
+                style={{
+                  width: 210,
+                  padding: 10,
+                  borderRadius: 10,
+                  backgroundColor: IDE.bg,
+                  borderWidth: 1,
+                  borderColor: statusColor + '65',
+                  gap: 5,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: IDE.text }} numberOfLines={1}>
+                    {node.name}
                   </Text>
-                </View>
-              </View>
-              <Text style={{ fontSize: 10, color: IDE.primary, fontFamily: 'monospace' }}>
-                {node.workspaceDir}/STATUS.md
-              </Text>
-              <Text style={{ fontSize: 10, color: IDE.textSecondary }} numberOfLines={2}>
-                {node.lastSummary || node.currentTask || `Role: ${node.role}`}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
-                <TouchableOpacity
-                  onPress={() => togglePauseSubAgent(node.slug, 'Toggled from Dev0 Workflow Card')}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 5,
-                    borderRadius: 6,
-                    backgroundColor: isSleeping ? IDE.accent + '22' : IDE.warning + '22',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text
+                  <View
                     style={{
-                      fontSize: 10,
-                      fontWeight: '700',
-                      color: isSleeping ? IDE.accent : IDE.warning,
+                      paddingHorizontal: 6,
+                      paddingVertical: 2,
+                      borderRadius: 5,
+                      backgroundColor: statusColor + '22',
                     }}
                   >
-                    {isSleeping ? 'Wake Up' : 'Sleep / Pause'}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() =>
-                    sendMessage(
-                      `Inspect .agents/${node.slug}/ workspace using inspect_subagent_workspace and run ${node.role} Sub-Agent if needed.`,
-                    )
-                  }
-                  style={{
-                    paddingHorizontal: 8,
-                    paddingVertical: 5,
-                    borderRadius: 6,
-                    backgroundColor: IDE.primary + '22',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.primary }}>
-                    Inspect
-                  </Text>
-                </TouchableOpacity>
+                    <Text style={{ fontSize: 9, fontWeight: '800', color: statusColor }}>
+                      {node.status.toUpperCase()}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={{ fontSize: 10, color: IDE.primary, fontFamily: 'monospace' }}>
+                  {node.workspaceDir}/STATUS.md
+                </Text>
+                <Text style={{ fontSize: 10, color: IDE.textSecondary }} numberOfLines={2}>
+                  {node.lastSummary || node.currentTask || `Role: ${node.role}`}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                  <TouchableOpacity
+                    onPress={() => togglePauseSubAgent(node.slug, 'Toggled from Dev0 Workflow Card')}
+                    style={{
+                      flex: 1,
+                      paddingVertical: 5,
+                      borderRadius: 6,
+                      backgroundColor: isSleeping ? IDE.accent + '22' : IDE.warning + '22',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 10,
+                        fontWeight: '700',
+                        color: isSleeping ? IDE.accent : IDE.warning,
+                      }}
+                    >
+                      {isSleeping ? 'Wake Up' : 'Sleep'}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setViewingSubAgentSlug(node.slug)}
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 5,
+                      borderRadius: 6,
+                      backgroundColor: IDE.primary + '22',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.primary }}>
+                      Live Stream
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+            );
+          })}
+        </ScrollView>
+      )}
 
       {/* Active Cron Jobs */}
       <View
@@ -671,6 +695,8 @@ export default function ChatScreen() {
             setWorkflowChangeRequest('');
             sendMessage(
               `[Dev0 Sub-Agent Workflow Change Request]\n${reqText}\nUpdate the relevant .agents/<slug>/ files or Cron jobs and call finish_task when done.`,
+              [],
+              true,
             );
           }}
           style={{
@@ -685,6 +711,26 @@ export default function ChatScreen() {
       </View>
     </View>
   ) : null;
+
+  const viewedSubAgentNode = useMemo(() => {
+    if (!viewingSubAgentSlug) return null;
+    const node = subAgentWorkflow.nodes.find((n) => n.slug === viewingSubAgentSlug);
+    const tpl = customSubAgents.find(
+      (t) =>
+        t.role.toLowerCase().replace(/[^a-z0-9]+/g, '_') === viewingSubAgentSlug ||
+        t.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') === viewingSubAgentSlug,
+    );
+    return {
+      slug: viewingSubAgentSlug,
+      name: node?.name || tpl?.name || `${viewingSubAgentSlug} Sub-Agent`,
+      role: node?.role || tpl?.role || viewingSubAgentSlug,
+      status: node?.status || 'idle',
+      templateId: tpl?.id,
+      statusMd: getFileContent(`.agents/${viewingSubAgentSlug}/STATUS.md`) || '',
+      logMd: getFileContent(`.agents/${viewingSubAgentSlug}/LOG.md`) || '',
+      messages: subAgentTranscripts[viewingSubAgentSlug] || [],
+    };
+  }, [viewingSubAgentSlug, subAgentWorkflow.nodes, customSubAgents, getFileContent, subAgentTranscripts]);
 
   return (
     <KeyboardAvoidingView
@@ -729,8 +775,8 @@ export default function ChatScreen() {
           <Text style={styles.emptyTitle}>Dev0 • AI Orchestrator</Text>
           <Text style={styles.emptySubtitle}>
             {currentProject
-              ? 'Isolated Sandbox: "' + currentProject.name + '".\nAsk Dev0 anything or coordinate Sub-Agents (.agents/)!'
-              : 'Create an isolated sandbox project in the Projects tab first.'}
+              ? 'Isolated Sandbox: "' + currentProject.name + '".\nNormal Chat Mode generates downloadable ZIP bundles & Draft Plans; switch to Agent Mode for full project execution!'
+              : 'Normal Chat Mode active (ZIP bundles, Memory Graph, Cross-Chat recall & Execution Plan drafting).'}
           </Text>
           {!hasApiKey && (
             <View style={styles.warningBanner}>
@@ -750,8 +796,8 @@ export default function ChatScreen() {
             >
               <MessageSquare size={16} color={!agentMode ? IDE.primary : IDE.muted} />
               <View style={styles.modeInfoText}>
-                <Text style={[styles.modeInfoTitle, !agentMode && { color: IDE.primary }]}>Dev0 Chat Mode</Text>
-                <Text style={styles.modeInfoDesc}>Direct dialog + .agents/ Sub-Agents & Cron</Text>
+                <Text style={[styles.modeInfoTitle, !agentMode && { color: IDE.primary }]}>Normal Chat Mode (Isolated)</Text>
+                <Text style={styles.modeInfoDesc}>Creates downloadable ZIP bundles, Draft Plans, Cross-Chat recall & Memory Graph</Text>
               </View>
               {!agentMode && <View style={styles.modeActiveIndicator} />}
             </TouchableOpacity>
@@ -762,8 +808,8 @@ export default function ChatScreen() {
             >
               <Brain size={16} color={agentMode ? IDE.accent : IDE.muted} />
               <View style={styles.modeInfoText}>
-                <Text style={[styles.modeInfoTitle, agentMode && { color: IDE.accent }]}>Dev0 Planner Mode</Text>
-                <Text style={styles.modeInfoDesc}>Dev0 plans, Sub-Agents execute step-by-step</Text>
+                <Text style={[styles.modeInfoTitle, agentMode && { color: IDE.accent }]}>Dev0 Agent Mode (Full Tools & Git)</Text>
+                <Text style={styles.modeInfoDesc}>Full project filesystem, Git restore points & Sub-Agent orchestration</Text>
               </View>
               {agentMode && <View style={[styles.modeActiveIndicator, { backgroundColor: IDE.accent }]} />}
             </TouchableOpacity>
@@ -815,7 +861,7 @@ export default function ChatScreen() {
           ListFooterComponent={
             isThinking ? (
               <View style={styles.thinkingContainer}>
-                <ThinkingBlock thinking={thinkingPhase || ''} isLive phase={thinkingPhase} />
+                <ThinkingBlock thinking={thinkingPhase || 'Dev0 is thinking...'} isLive phase={thinkingPhase} />
               </View>
             ) : null
           }
@@ -845,7 +891,7 @@ export default function ChatScreen() {
             >
               <Brain size={16} color={agentMode ? IDE.accent : IDE.muted} />
               <Text style={[styles.attachMenuText, agentMode && { color: IDE.accent }]}>
-                {agentMode ? 'Disable Agent Mode' : 'Agent Mode (Planning)'}
+                {agentMode ? 'Switch to Normal Chat Mode' : 'Enable Agent Mode (Planning & Tools)'}
               </Text>
               {agentMode && (
                 <View style={styles.attachMenuActiveBadge}>
@@ -968,7 +1014,7 @@ export default function ChatScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
             <MessageSquare size={15} color={IDE.warning} />
             <Text style={{ fontSize: 12, color: IDE.text, fontWeight: '600', flex: 1 }} numberOfLines={2}>
-              KI-Rückfragen offen ({pendingSubAgentQuestion?.questions?.length || clarificationQuestions?.length || 1})
+              AI Clarification Questions Open ({pendingSubAgentQuestion?.questions?.length || clarificationQuestions?.length || 1})
             </Text>
           </View>
           {pendingSubAgentQuestion && (
@@ -992,7 +1038,7 @@ export default function ChatScreen() {
             >
               <Brain size={13} color="#fff" />
               <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
-                Floating Fenster
+                Floating Window
               </Text>
             </TouchableOpacity>
           )}
@@ -1014,7 +1060,7 @@ export default function ChatScreen() {
           >
             <Zap size={13} color="#fff" />
             <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
-              Überspringen & Direkt starten (Skip)
+              Skip & Start Immediately (Skip)
             </Text>
           </TouchableOpacity>
         </View>
@@ -1029,8 +1075,8 @@ export default function ChatScreen() {
         </View>
       )}
 
-      {/* Saved Sub-Agents Quick List Bar */}
-      {!keyboardVisible && customSubAgents && customSubAgents.length > 0 && (
+      {/* Sub-Agents & Workflow Quick List Bar */}
+      {!keyboardVisible && (
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -1058,7 +1104,7 @@ export default function ChatScreen() {
           >
             <Brain size={11} color={IDE.primary} />
             <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.primary }}>
-              Sub-Agents ({customSubAgents.length})
+              Sub-Agents ({customSubAgents?.length || 0})
             </Text>
           </TouchableOpacity>
 
@@ -1084,41 +1130,47 @@ export default function ChatScreen() {
           </TouchableOpacity>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, alignItems: 'center' }}>
-            {customSubAgents.map(tpl => (
-              <TouchableOpacity
-                key={tpl.id}
-                onPress={() =>
-                  openSubAgentFloatingLauncher({
-                    role: tpl.role,
-                    name: tpl.name,
-                    task: tpl.description,
-                    questions: [
-                      `Welche Aufgabe soll der gespeicherte Sub-Agent "${tpl.name}" (${tpl.role}) für den Main-Ersteller ausführen?`,
-                    ],
-                  })
-                }
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 4,
-                  backgroundColor: IDE.surface,
-                  borderWidth: 1,
-                  borderColor: IDE.border,
-                  paddingHorizontal: 8,
-                  paddingVertical: 3,
-                  borderRadius: 6,
-                }}
-                activeOpacity={0.75}
-              >
-                <Sparkles size={10} color={IDE.accent} />
-                <Text style={{ fontSize: 10, fontWeight: '600', color: IDE.text }} numberOfLines={1}>
-                  {tpl.name}
-                </Text>
-                <Text style={{ fontSize: 9, color: IDE.muted }}>
-                  ({tpl.role})
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {(customSubAgents || []).map(tpl => {
+              const slug = tpl.role.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+              const isRunningNode = subAgentWorkflow.nodes.some(n => n.slug === slug && n.status === 'running');
+              return (
+                <View
+                  key={tpl.id}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4,
+                    backgroundColor: isRunningNode ? IDE.accent + '18' : IDE.surface,
+                    borderWidth: 1,
+                    borderColor: isRunningNode ? IDE.accent : IDE.border,
+                    paddingHorizontal: 8,
+                    paddingVertical: 3,
+                    borderRadius: 6,
+                  }}
+                >
+                  <TouchableOpacity
+                    onPress={() => setViewingSubAgentSlug(slug)}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                    activeOpacity={0.75}
+                  >
+                    <Sparkles size={10} color={IDE.accent} />
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: IDE.text }} numberOfLines={1}>
+                      {tpl.name}
+                    </Text>
+                    <Text style={{ fontSize: 9, color: IDE.muted }}>
+                      ({tpl.role})
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => deleteSubAgentTemplate(tpl.id)}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    style={{ marginLeft: 3 }}
+                  >
+                    <X size={11} color={IDE.danger} />
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
             <TouchableOpacity
               onPress={() => openSubAgentFloatingLauncher()}
               style={{
@@ -1135,7 +1187,7 @@ export default function ChatScreen() {
               activeOpacity={0.75}
             >
               <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.accent }}>
-                + Sub-Agent starten
+                + Launch Sub-Agent
               </Text>
             </TouchableOpacity>
           </ScrollView>
@@ -1166,7 +1218,7 @@ export default function ChatScreen() {
 
         <TextInput
           style={styles.input}
-          placeholder={agentMode ? 'Describe goal... (@ for files)' : 'Ask AI... (@ for files)'}
+          placeholder={agentMode ? 'Describe goal in Agent Mode... (@ for files)' : 'Ask AI in Normal Chat Mode (ZIP & Plans)...'}
           placeholderTextColor={IDE.muted}
           value={input}
           onChangeText={handleInputChange}
@@ -1263,6 +1315,170 @@ export default function ChatScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Live Read-Only Sub-Agent Stream Modal */}
+      {viewedSubAgentNode && (
+        <Modal
+          visible={Boolean(viewedSubAgentNode)}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setViewingSubAgentSlug(null)}
+        >
+          <View style={fpStyles.overlay}>
+            <View
+              style={[
+                fpStyles.container,
+                { maxHeight: '85%', borderTopLeftRadius: 18, borderTopRightRadius: 18 },
+              ]}
+            >
+              <View style={fpStyles.header}>
+                <View style={{ flex: 1 }}>
+                  <Text style={fpStyles.title}>
+                    {viewedSubAgentNode.name} • Live Read-Only Stream
+                  </Text>
+                  <Text style={{ fontSize: 11, color: IDE.primary, fontFamily: 'monospace', marginTop: 2 }}>
+                    Workspace: .agents/{viewedSubAgentNode.slug}/ • Status: {viewedSubAgentNode.status.toUpperCase()}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const slug = viewedSubAgentNode.slug;
+                      const name = viewedSubAgentNode.name;
+                      setViewingSubAgentSlug(null);
+                      openSubAgentFloatingLauncher({
+                        role: slug,
+                        name,
+                        questions: [
+                          `What task should Main Creator Dev0 assign to Sub-Agent "${name}" (${slug})?`,
+                        ],
+                      });
+                    }}
+                    style={{
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 7,
+                      backgroundColor: IDE.primary,
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                      Relay Task via Dev0
+                    </Text>
+                  </TouchableOpacity>
+                  {viewedSubAgentNode.templateId && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (viewedSubAgentNode.templateId) {
+                          deleteSubAgentTemplate(viewedSubAgentNode.templateId);
+                        }
+                        setViewingSubAgentSlug(null);
+                      }}
+                      style={{
+                        padding: 6,
+                        borderRadius: 7,
+                        backgroundColor: IDE.danger + '22',
+                      }}
+                    >
+                      <Trash2 size={15} color={IDE.danger} />
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity onPress={() => setViewingSubAgentSlug(null)}>
+                    <X size={20} color={IDE.muted} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <ScrollView style={{ padding: 14, maxHeight: 420 }}>
+                {viewedSubAgentNode.messages.length === 0 ? (
+                  <View
+                    style={{
+                      padding: 14,
+                      borderRadius: 10,
+                      backgroundColor: IDE.bg,
+                      borderWidth: 1,
+                      borderColor: IDE.border,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: IDE.text }}>
+                      No live execution messages yet
+                    </Text>
+                    <Text style={{ fontSize: 11, color: IDE.muted, marginTop: 4 }}>
+                      When Main Creator Dev0 delegates a task to this Sub-Agent, its live reasoning, tool calls, and output appear here in real time.
+                    </Text>
+                  </View>
+                ) : (
+                  viewedSubAgentNode.messages.map((m) => (
+                    <ChatBubble key={m.id} message={m} />
+                  ))
+                )}
+
+                {Boolean(viewedSubAgentNode.statusMd) && (
+                  <View
+                    style={{
+                      padding: 12,
+                      borderRadius: 10,
+                      backgroundColor: IDE.bg,
+                      borderWidth: 1,
+                      borderColor: IDE.border,
+                      marginTop: 8,
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '800', color: IDE.accent, marginBottom: 4 }}>
+                      .agents/{viewedSubAgentNode.slug}/STATUS.md
+                    </Text>
+                    <Text style={{ fontSize: 11, color: IDE.textSecondary, fontFamily: 'monospace' }}>
+                      {viewedSubAgentNode.statusMd}
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+
+              {/* Grayed-out Disabled Input Bar (Read-Only Sub-Agent Stream) */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  padding: 12,
+                  backgroundColor: IDE.bg,
+                  borderTopWidth: 1,
+                  borderTopColor: IDE.border,
+                  opacity: 0.55,
+                  gap: 8,
+                }}
+              >
+                <TextInput
+                  style={{
+                    flex: 1,
+                    backgroundColor: IDE.surface,
+                    borderWidth: 1,
+                    borderColor: IDE.border,
+                    borderRadius: 14,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    fontSize: 12,
+                    color: IDE.muted,
+                  }}
+                  editable={false}
+                  value="Read-only Sub-Agent stream — Only Main Creator Dev0 can send instructions to this Sub-Agent"
+                />
+                <View
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: IDE.surface,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Send size={14} color={IDE.muted} />
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       <SubAgentFloatingQuestionModal
         visible={Boolean(pendingSubAgentQuestion)}

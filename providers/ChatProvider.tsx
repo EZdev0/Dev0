@@ -6,13 +6,17 @@ import {
   AIProviderType,
   InlineTodo,
   PendingToolApproval,
+  ChatZipArtifact,
+  DraftedAgentPlan,
   TOOL_REGISTRY,
   isLearningTool,
   isLearningEnabled,
+  isProjectFilesystemOrAgentOnlyTool,
 } from '@/types';
 import {
   callAI,
   TOOL_DEFINITIONS,
+  getAvailableTools,
   buildSystemPrompt,
   parseThinkingFromContent,
   resolveDefaultModel,
@@ -23,7 +27,11 @@ import {
   compressAndSanitizeMessagesForAPI,
 } from '@/utils/chat-compression';
 import { performWebSearch, performWebFetch } from '@/utils/web-tools';
-import { buildSynapseGraph, localizeCodeSubgraph } from '@/utils/synapse-graph';
+import {
+  buildSynapseGraph,
+  buildMemoryOnlySynapseGraph,
+  localizeCodeSubgraph,
+} from '@/utils/synapse-graph';
 import {
   discoverYamlSkills,
   buildActiveSkillsPromptBlock,
@@ -44,11 +52,25 @@ import {
   appendSubAgentLogMarkdown,
   evaluateCronJobsOnFinishTask,
 } from '@/utils/subagent-workspace';
+import {
+  createChatZipArchive,
+  readChatZipArchive,
+} from '@/utils/chat-zip';
+import {
+  saveCrossChatSessionSnapshot,
+  readOtherChatMessages,
+} from '@/utils/cross-chat-reader';
+import {
+  createRestorePoint,
+  listRestorePoints,
+  findRestorePoint,
+  formatGitStatusReport,
+} from '@/utils/git-restore';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
 export const SKIP_QUESTIONS_INSTRUCTION =
-  'Überspringe alle Rückfragen. Triff sinnvolle Standard-Annahmen und beginne SOFORT mit der Umsetzung.';
+  'Skip all clarification questions. Make sensible best-practice assumptions and begin execution immediately.';
 
 function genId(): string {
   return 'm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
@@ -63,10 +85,20 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   const [lastFallbackInfo, setLastFallbackInfo] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingToolApproval | null>(null);
   const [pendingSubAgentQuestion, setPendingSubAgentQuestion] = useState<SubAgentQuestionRequest | null>(null);
+  const [isChatAgentMode, setIsChatAgentMode] = useState<boolean>(false);
+  const [subAgentTranscripts, setSubAgentTranscripts] = useState<Record<string, ChatMessage[]>>({});
+  const [viewingSubAgentSlug, setViewingSubAgentSlug] = useState<string | null>(null);
+
   const pendingQuestionResolverRef = useRef<((relayText: string) => void) | null>(null);
   const abortRef = useRef<boolean>(false);
   const manualMessagesRef = useRef<ChatMessage[]>([]);
   manualMessagesRef.current = manualMessages;
+  const isChatAgentModeRef = useRef<boolean>(isChatAgentMode);
+  isChatAgentModeRef.current = isChatAgentMode;
+
+  const currentChatSessionIdRef = useRef<string>('chat_' + Date.now().toString(36));
+  const pendingZipArtifactsRef = useRef<ChatZipArtifact[]>([]);
+  const pendingDraftPlansRef = useRef<DraftedAgentPlan[]>([]);
 
   const {
     triggerSponsorInteraction,
@@ -80,6 +112,8 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     addTodo,
     updateTodoItem,
     addMemo,
+    updateMemo,
+    deleteMemo,
     agentMd,
     setAgentMd,
     soulMd,
@@ -93,6 +127,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     getToolPermission,
     customSubAgents,
     saveSubAgentTemplate,
+    deleteSubAgentTemplate,
     skillEnabledOverrides,
     subAgentWorkflow,
     updateSubAgentWorkflow,
@@ -105,6 +140,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
 
   const {
     currentProject,
+    restoreProjectFiles,
     getFileContent,
     updateFileContent,
     createFile,
@@ -144,7 +180,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           reason:
             'TOOL_BLOCKED: Tool "' +
             toolName +
-            '" ist vom Nutzer blockiert. Bitte informiere den Nutzer, dass dieses Tool freigeschaltet werden muss.',
+            '" is blocked by user settings. Please inform the user that this tool must be enabled in Tools settings.',
         };
       }
 
@@ -163,7 +199,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               } else {
                 resolve({
                   allowed: false,
-                  reason: 'TOOL_REJECTED: Nutzer hat Ausführung von "' + toolName + '" abgelehnt.',
+                  reason: 'TOOL_REJECTED: User declined execution of "' + toolName + '".',
                 });
               }
             },
@@ -187,14 +223,33 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     [pendingApproval],
   );
 
+  const appendSubAgentTranscriptMessage = useCallback((slug: string, msg: ChatMessage) => {
+    setSubAgentTranscripts((prev) => {
+      const existing = prev[slug] || [];
+      return {
+        ...prev,
+        [slug]: [...existing, msg],
+      };
+    });
+  }, []);
+
   const executeManualTool = useCallback(
     async (
       name: string,
       args: Record<string, any>,
       allowedFilePatterns?: string[],
       toolCallId?: string,
-    ): Promise<{ result: string; inlineTodos?: InlineTodo[] }> => {
+      forceAgentMode?: boolean,
+    ): Promise<{
+      result: string;
+      inlineTodos?: InlineTodo[];
+      zipArtifact?: ChatZipArtifact;
+      draftPlan?: DraftedAgentPlan;
+    }> => {
       console.log('[Chat] Executing tool:', name, JSON.stringify(args || {}).slice(0, 200));
+
+      const effectiveNormalChatMode =
+        !forceAgentMode && (!isChatAgentModeRef.current || !currentProject);
 
       // Layer 3 Guard: Strictly block execution of any Learn/Memo tools when disabled
       if (isLearningTool(name) && !isLearningEnabled(settingsRef.current)) {
@@ -204,6 +259,42 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             'ERROR: Unknown tool "' +
             name +
             '". Learning and memory tools are disabled in settings.',
+        };
+      }
+
+      // If in Normal Chat Mode and the model attempts write_file or create_file,
+      // automatically convert it into a downloadable ZIP bundle (`zip_create`)!
+      if (
+        effectiveNormalChatMode &&
+        (name === 'write_file' || name === 'create_file') &&
+        args?.path
+      ) {
+        const archiveName = String(args.path).split('/').pop()?.replace(/\.[^.]+$/, '') || 'chat-files';
+        const artifact = createChatZipArchive(
+          `${archiveName}.zip`,
+          [{ path: String(args.path), content: String(args.content ?? '') }],
+          `Generated in Chat: ${args.path}`,
+        );
+        pendingZipArtifactsRef.current = [...pendingZipArtifactsRef.current, artifact];
+        return {
+          result:
+            `[Normal Chat Mode -> Packaged into Downloadable ZIP Archive]\n` +
+            `Archive ID: ${artifact.id}\n` +
+            `Archive Name: ${artifact.archiveName}\n` +
+            `Files (${artifact.files.length}): ${artifact.files.map((f) => f.path).join(', ')}\n` +
+            `Size: ${artifact.sizeBytes} bytes. An interactive Download ZIP card has been attached to your chat message.`,
+          zipArtifact: artifact,
+        };
+      }
+
+      // Strictly block direct project filesystem / agent-only tools in Normal Chat Mode
+      if (effectiveNormalChatMode && isProjectFilesystemOrAgentOnlyTool(name)) {
+        return {
+          result:
+            `ERROR: Tool "${name}" is not available in Normal Chat Mode. ` +
+            `Use "zip_create" to package files for the user as a downloadable .zip archive, "zip_read" to inspect chat ZIPs, ` +
+            `"draft_agent_plan" to create an interactive execution plan card, "read_other_chat_messages" for cross-chat recall, ` +
+            `or "memory_search" / "memory_update" / "memory_graph_query" for the standalone Memory Graph.`,
         };
       }
 
@@ -221,18 +312,32 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         }
       }
 
-      if (
-        name !== 'think' &&
-        name !== 'get_active_tools' &&
-        name !== 'localize_code_graph' &&
-        name !== 'ask_user_question' &&
-        name !== 'ask_question' &&
-        name !== 'ask_clarification' &&
-        name !== 'finish_task' &&
-        name !== 'create_cron_job' &&
-        name !== 'sleep_agent' &&
-        name !== 'inspect_subagent_workspace'
-      ) {
+      const bypassPermTools = [
+        'think',
+        'get_active_tools',
+        'localize_code_graph',
+        'ask_user_question',
+        'ask_question',
+        'ask_clarification',
+        'finish_task',
+        'create_cron_job',
+        'sleep_agent',
+        'inspect_subagent_workspace',
+        'zip_create',
+        'zip_read',
+        'draft_agent_plan',
+        'read_other_chat_messages',
+        'memory_search',
+        'memory_update',
+        'memory_delete',
+        'memory_graph_query',
+        'git_status',
+        'git_create_restore_point',
+        'git_list_restore_points',
+        'git_restore_point',
+      ];
+
+      if (!bypassPermTools.includes(name)) {
         const permCheck = await checkToolPermission(name, args);
         if (!permCheck.allowed) {
           if (permCheck.reason === 'TOOL_HIDDEN') {
@@ -241,7 +346,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               result:
                 'ERROR: Unknown tool "' +
                 name +
-                '". Verfügbare Tools: ' +
+                '". Available tools: ' +
                 TOOL_REGISTRY.filter((t) => {
                   if (!activeLearning && isLearningTool(t.name)) return false;
                   const p = settingsRef.current.toolPermissions?.[t.name];
@@ -251,17 +356,296 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                   .join(', '),
             };
           }
-          return { result: permCheck.reason || 'Tool nicht erlaubt.' };
+          return { result: permCheck.reason || 'Tool execution not permitted.' };
         }
       }
 
-      const wrapResult = (res: { result: string; inlineTodos?: InlineTodo[] }) => ({
+      const wrapResult = (res: {
+        result: string;
+        inlineTodos?: InlineTodo[];
+        zipArtifact?: ChatZipArtifact;
+        draftPlan?: DraftedAgentPlan;
+      }) => ({
         ...res,
         result: truncateToolResult(res.result || '', MAX_TOOL_RESULT_LENGTH),
       });
 
       try {
         switch (name) {
+          case 'zip_create': {
+            const rawFiles = Array.isArray(args?.files) ? args.files : [];
+            if (rawFiles.length === 0 && args?.path && args?.content !== undefined) {
+              rawFiles.push({ path: String(args.path), content: String(args.content) });
+            }
+            if (rawFiles.length === 0) {
+              return {
+                result: 'ERROR: zip_create requires a non-empty "files" array of { path, content } objects.',
+              };
+            }
+            const archiveName = String(args?.archive_name || 'chat-bundle.zip').trim();
+            const description = args?.description ? String(args.description).trim() : undefined;
+            const artifact = createChatZipArchive(archiveName, rawFiles, description);
+            pendingZipArtifactsRef.current = [...pendingZipArtifactsRef.current, artifact];
+            return wrapResult({
+              result:
+                `ZIP Archive Created Successfully!\n` +
+                `- Archive ID: ${artifact.id}\n` +
+                `- Name: ${artifact.archiveName}\n` +
+                `- Files (${artifact.files.length}): ${artifact.files.map((f) => `${f.path} (${f.sizeBytes} B)`).join(', ')}\n` +
+                `- Total Archive Size: ${artifact.sizeBytes} bytes\n` +
+                `An interactive ZIP Download Graphic Card is now displayed in the chat message, and you can inspect its contents later with zip_read({ archive_id: "${artifact.id}" }).`,
+              zipArtifact: artifact,
+            });
+          }
+
+          case 'zip_read': {
+            const targetId = args?.archive_id ? String(args.archive_id).trim() : '';
+            const targetPath = args?.file_path ? String(args.file_path).trim() : undefined;
+            const allZips: ChatZipArtifact[] = [
+              ...manualMessagesRef.current
+                .map((m) => m.zipArtifact)
+                .filter((z): z is ChatZipArtifact => Boolean(z)),
+              ...pendingZipArtifactsRef.current,
+            ];
+            if (allZips.length === 0) {
+              return { result: 'No ZIP archives exist in this chat session yet.' };
+            }
+            const matchedZip =
+              (targetId &&
+                allZips.find(
+                  (z) =>
+                    z.id === targetId ||
+                    z.archiveName.toLowerCase() === targetId.toLowerCase(),
+                )) ||
+              allZips[allZips.length - 1];
+            return wrapResult({
+              result: readChatZipArchive(matchedZip, targetPath),
+            });
+          }
+
+          case 'draft_agent_plan': {
+            const title = String(args?.title || 'Agent Execution Plan').trim();
+            const summary = String(args?.summary || 'Structured implementation plan for Agent Mode.').trim();
+            const rawSteps = Array.isArray(args?.steps) ? args.steps : [];
+            const steps = rawSteps.map((s: any, idx: number) => ({
+              id: 'step_' + (idx + 1),
+              title: String(s?.title || s || `Step ${idx + 1}`).trim(),
+              description: String(s?.description || '').trim(),
+              agentRole: s?.agent_role ? String(s.agent_role).trim() : 'developer',
+            }));
+            const targetFiles = Array.isArray(args?.target_files)
+              ? args.target_files.map((f: any) => String(f))
+              : [];
+
+            const plan: DraftedAgentPlan = {
+              id: 'plan_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+              title,
+              summary,
+              steps:
+                steps.length > 0
+                  ? steps
+                  : [
+                      {
+                        id: 'step_1',
+                        title: 'Analyze requirements & localize files',
+                        description: summary,
+                        agentRole: 'localizer',
+                      },
+                    ],
+              targetFiles,
+              createdAt: Date.now(),
+              status: 'draft',
+            };
+            pendingDraftPlansRef.current = [...pendingDraftPlansRef.current, plan];
+            return wrapResult({
+              result:
+                `Interactive Agent Execution Plan Card ("${plan.title}") attached to chat message (${plan.steps.length} steps).\n` +
+                `The user can now click "Proceed in Agent Mode" to execute it or "Edit / Refine Plan" to customize it.`,
+              draftPlan: plan,
+            });
+          }
+
+          case 'read_other_chat_messages': {
+            const out = await readOtherChatMessages({
+              currentSessionId: currentChatSessionIdRef.current,
+              sessionId: args?.session_id ? String(args.session_id) : undefined,
+              query: args?.query ? String(args.query) : undefined,
+              maxSnippets: Number(args?.max_snippets) || 5,
+            });
+            return wrapResult({ result: out });
+          }
+
+          case 'memory_search': {
+            const query = String(args?.query || '').trim().toLowerCase();
+            if (memos.length === 0) {
+              return { result: 'Memory Graph is currently empty (0 stored memories).' };
+            }
+            const terms = query.split(/\s+/).filter(Boolean);
+            const matched =
+              terms.length === 0
+                ? memos
+                : memos.filter((m) =>
+                    terms.some((t) => m.content.toLowerCase().includes(t) || m.id.toLowerCase().includes(t)),
+                  );
+            if (matched.length === 0) {
+              return wrapResult({
+                result: `No memories matched query "${args?.query}". Total memories in graph: ${memos.length}.`,
+              });
+            }
+            return wrapResult({
+              result:
+                `### Memory Graph Search Results (${matched.length} / ${memos.length})\n` +
+                matched
+                  .map(
+                    (m) =>
+                      `- **ID:** \`${m.id}\` (${new Date(m.createdAt).toISOString().slice(0, 10)}): ${m.content}`,
+                  )
+                  .join('\n'),
+            });
+          }
+
+          case 'memory_update': {
+            if (!isLearningEnabled(settingsRef.current)) {
+              return { result: 'ERROR: Learning and memory tools are disabled in settings.' };
+            }
+            const content = String(args?.content || '').trim();
+            if (!content) {
+              return { result: 'ERROR: memory_update requires non-empty "content".' };
+            }
+            const existingId = args?.id ? String(args.id).trim() : '';
+            if (existingId && memos.some((m) => m.id === existingId)) {
+              updateMemo(existingId, content);
+              return wrapResult({
+                result: `Memory node "${existingId}" updated in the Synapse Memory Graph.`,
+              });
+            }
+            const newId = addMemo(content);
+            return wrapResult({
+              result: `New memory node "${newId}" added to the Synapse Memory Graph.`,
+            });
+          }
+
+          case 'memory_delete': {
+            const targetId = String(args?.id || '').trim();
+            if (!targetId) {
+              return { result: 'ERROR: memory_delete requires a memory "id".' };
+            }
+            const exists = memos.some((m) => m.id === targetId);
+            if (!exists) {
+              return { result: `Memory node "${targetId}" was not found.` };
+            }
+            deleteMemo(targetId);
+            return { result: `Memory node "${targetId}" deleted from the Synapse Memory Graph.` };
+          }
+
+          case 'memory_graph_query': {
+            const graph = buildMemoryOnlySynapseGraph({
+              memos,
+              projectName: currentProject?.name,
+            });
+            const query = String(args?.query || '').trim();
+            if (query) {
+              const loc = localizeCodeSubgraph(graph, query, 10);
+              return wrapResult({
+                result:
+                  `### Standalone Synapse Memory Graph (${graph.stats.totalMemories} memories, ${graph.edges.length} connections)\n\n` +
+                  loc.summaryMarkdown,
+              });
+            }
+            return wrapResult({
+              result:
+                `### Standalone Synapse Memory Graph Summary\n` +
+                `- Total Memories: ${graph.stats.totalMemories}\n` +
+                `- Total Nodes: ${graph.nodes.length}\n` +
+                `- Synapse Edges: ${graph.edges.length}\n` +
+                (memos.length > 0
+                  ? `\n#### Memory Nodes:\n` +
+                    memos.map((m) => `- \`${m.id}\`: ${m.content}`).join('\n')
+                  : '\n(No memories stored yet — use memory_update to add nodes.)'),
+            });
+          }
+
+          case 'git_status': {
+            if (!currentProject) {
+              return { result: 'ERROR: No active project open for Git status.' };
+            }
+            const points = await listRestorePoints(currentProject.id);
+            const report = formatGitStatusReport(currentProject.files, points[0] || null);
+            return wrapResult({ result: report });
+          }
+
+          case 'git_create_restore_point': {
+            if (!currentProject) {
+              return { result: 'ERROR: No active project open to create a restore point.' };
+            }
+            const label = String(args?.label || 'AI checkpoint before changes').trim();
+            const rp = await createRestorePoint({
+              projectId: currentProject.id,
+              label,
+              filesTree: currentProject.files,
+              author: 'ai',
+              userId: undefined,
+            });
+            return wrapResult({
+              result:
+                `Git Restore Point Created!\n` +
+                `- ID: ${rp.id}\n` +
+                `- Commit Hash: ${rp.commitHash}\n` +
+                `- Label: ${rp.label}\n` +
+                `- Files Captured: ${rp.fileCount} (${rp.totalBytes} bytes)\n` +
+                `- Diff vs Previous: +${rp.diffSummary.added.length} ~${rp.diffSummary.modified.length} -${rp.diffSummary.deleted.length}`,
+            });
+          }
+
+          case 'git_list_restore_points': {
+            if (!currentProject) {
+              return { result: 'ERROR: No active project open.' };
+            }
+            const points = await listRestorePoints(currentProject.id);
+            if (points.length === 0) {
+              return { result: 'No Git restore points created for this project yet.' };
+            }
+            return wrapResult({
+              result:
+                `### Project Git Restore Points (${points.length})\n` +
+                points
+                  .map(
+                    (p, idx) =>
+                      `${idx + 1}. **${p.label}** — ID: \`${p.id}\` | Commit: \`${p.commitHash}\` | Author: ${p.author} | Files: ${p.fileCount} | ${new Date(p.timestamp).toLocaleString()}`,
+                  )
+                  .join('\n'),
+            });
+          }
+
+          case 'git_restore_point': {
+            if (!currentProject) {
+              return { result: 'ERROR: No active project open to restore.' };
+            }
+            const rpId = String(args?.restore_point_id || '').trim();
+            if (!rpId) {
+              return { result: 'ERROR: restore_point_id is required.' };
+            }
+            const targetPoint = await findRestorePoint(currentProject.id, rpId);
+            if (!targetPoint) {
+              return {
+                result: `ERROR: Restore point "${rpId}" not found. Call git_list_restore_points first.`,
+              };
+            }
+            // Auto-create a safety backup before rolling back
+            await createRestorePoint({
+              projectId: currentProject.id,
+              label: `Auto-backup before rollback to ${targetPoint.commitHash}`,
+              filesTree: currentProject.files,
+              author: 'auto',
+            });
+            restoreProjectFiles(targetPoint.filesTree);
+            return wrapResult({
+              result:
+                `Project successfully rolled back to restore point "${targetPoint.label}" (\`${targetPoint.commitHash}\`, ID: \`${targetPoint.id}\`).\n` +
+                `Restored ${targetPoint.fileCount} files.`,
+            });
+          }
+
           case 'ask_user_question':
           case 'ask_question':
           case 'ask_clarification': {
@@ -275,6 +659,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             });
             return wrapResult({ result: relayResult });
           }
+
           case 'finish_task': {
             const slug = normalizeSubAgentSlug(args?.agent_slug || 'developer');
             const summary = String(args?.summary || 'Task completed.').trim();
@@ -283,31 +668,37 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               : undefined;
             const now = Date.now();
 
-            const statusPath = `.agents/${slug}/STATUS.md`;
-            const logPath = `.agents/${slug}/LOG.md`;
-            const statusMd = buildSubAgentStatusMarkdown({
-              name: `${slug.toUpperCase()} Sub-Agent`,
-              slug,
-              role: slug,
-              status: 'completed',
-              currentTask: summary,
-              lastSummary: summary,
-            });
-            updateFileContent(statusPath, statusMd);
-            const existingLog = getFileContent(logPath) || `# ${slug} Execution Log\n`;
-            updateFileContent(
-              logPath,
-              appendSubAgentLogMarkdown(
-                existingLog,
-                `finish_task invoked: ${summary}${nextAgent ? ` (Next recommended: ${nextAgent})` : ''}`,
-              ),
-            );
+            if (currentProject) {
+              const statusPath = `.agents/${slug}/STATUS.md`;
+              const logPath = `.agents/${slug}/LOG.md`;
+              const statusMd = buildSubAgentStatusMarkdown({
+                name: `${slug.toUpperCase()} Sub-Agent`,
+                slug,
+                role: slug,
+                status: 'completed',
+                currentTask: summary,
+                lastSummary: summary,
+              });
+              updateFileContent(statusPath, statusMd);
+              const existingLog = getFileContent(logPath) || `# ${slug} Execution Log\n`;
+              updateFileContent(
+                logPath,
+                appendSubAgentLogMarkdown(
+                  existingLog,
+                  `finish_task invoked: ${summary}${nextAgent ? ` (Next recommended: ${nextAgent})` : ''}`,
+                ),
+              );
+            }
 
             let triggeredCronNames: string[] = [];
+            let triggeredCronDetails: string[] = [];
             updateSubAgentWorkflow((prev) => {
               const evalCron = evaluateCronJobsOnFinishTask(prev.cronJobs, slug, now);
               triggeredCronNames = evalCron.triggeredJobs.map(
                 (j) => `${j.name} -> ${j.targetSubAgentSlug}`,
+              );
+              triggeredCronDetails = evalCron.triggeredJobs.map(
+                (j) => `[CRON WAKEUP] Job "${j.name}" triggered for Sub-Agent "${j.targetSubAgentSlug}": ${j.taskInstruction}`,
               );
               const exists = prev.nodes.some((n) => n.slug === slug);
               const nextNodes = exists
@@ -343,14 +734,15 @@ export const [ChatProvider, useChat] = createContextHook(() => {
 
             return wrapResult({
               result:
-                `[finish_task recorded in .agents/${slug}/STATUS.md]\n` +
+                `[finish_task recorded in .agents/${slug}/STATUS.md — Main Agent Cron Wakeup Signaled]\n` +
                 `Summary: ${summary}\n` +
                 (nextAgent ? `Recommended Next Sub-Agent: ${nextAgent}\n` : '') +
                 (triggeredCronNames.length > 0
-                  ? `Triggered Cron Jobs: ${triggeredCronNames.join(', ')}`
-                  : 'No dependent Cron jobs triggered.'),
+                  ? `Triggered Cron Jobs (${triggeredCronNames.length}): ${triggeredCronNames.join(', ')}\n${triggeredCronDetails.join('\n')}`
+                  : 'Main Creator Agent notified of Sub-Agent completion.'),
             });
           }
+
           case 'create_cron_job': {
             const jobName = String(args?.name || 'Automated Sub-Agent Check').trim();
             const targetSlug = normalizeSubAgentSlug(args?.target_sub_agent || 'auditor');
@@ -372,20 +764,23 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               createdBy: 'dev0',
             });
 
-            const logPath = `.agents/${targetSlug}/LOG.md`;
-            const existingLog = getFileContent(logPath) || `# ${targetSlug} Execution Log\n`;
-            updateFileContent(
-              logPath,
-              appendSubAgentLogMarkdown(
-                existingLog,
-                `Cron job "${createdJob.name}" scheduled (${createdJob.scheduleExpression}): ${taskInstr}`,
-              ),
-            );
+            if (currentProject) {
+              const logPath = `.agents/${targetSlug}/LOG.md`;
+              const existingLog = getFileContent(logPath) || `# ${targetSlug} Execution Log\n`;
+              updateFileContent(
+                logPath,
+                appendSubAgentLogMarkdown(
+                  existingLog,
+                  `Cron job "${createdJob.name}" scheduled (${createdJob.scheduleExpression}): ${taskInstr}`,
+                ),
+              );
+            }
 
             return wrapResult({
               result: `Cron job "${createdJob.name}" (ID: ${createdJob.id}) created for Sub-Agent "${targetSlug}" with schedule "${schedule}".`,
             });
           }
+
           case 'sleep_agent': {
             const slug = normalizeSubAgentSlug(args?.agent_slug || 'developer');
             const action = String(args?.action || 'sleep').toLowerCase() === 'wake' ? 'wake' : 'sleep';
@@ -407,22 +802,25 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               ),
             }));
 
-            const statusPath = `.agents/${slug}/STATUS.md`;
-            updateFileContent(
-              statusPath,
-              buildSubAgentStatusMarkdown({
-                name: `${slug.toUpperCase()} Sub-Agent`,
-                slug,
-                role: slug,
-                status: action === 'sleep' ? 'sleeping' : 'idle',
-                sleepReason: action === 'sleep' ? reason : undefined,
-              }),
-            );
+            if (currentProject) {
+              const statusPath = `.agents/${slug}/STATUS.md`;
+              updateFileContent(
+                statusPath,
+                buildSubAgentStatusMarkdown({
+                  name: `${slug.toUpperCase()} Sub-Agent`,
+                  slug,
+                  role: slug,
+                  status: action === 'sleep' ? 'sleeping' : 'idle',
+                  sleepReason: action === 'sleep' ? reason : undefined,
+                }),
+              );
+            }
 
             return wrapResult({
               result: `Sub-Agent "${slug}" is now ${action === 'sleep' ? 'SLEEPING (paused)' : 'AWAKE (idle)'}. Reason: ${reason}`,
             });
           }
+
           case 'inspect_subagent_workspace': {
             const rawSlug = args?.agent_slug ? normalizeSubAgentSlug(String(args.agent_slug)) : '';
             if (rawSlug) {
@@ -433,12 +831,15 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                 result: `### Workspace .agents/${rawSlug}/\n\n${status}\n\n${readme}\n\n${log}`,
               });
             }
-            const nodesSummary = subAgentWorkflow.nodes
-              .map(
-                (n) =>
-                  `- **${n.name}** (\`.agents/${n.slug}/\`): status=\`${n.status}\`${n.currentTask ? `, task="${n.currentTask}"` : ''}${n.lastSummary ? `, lastSummary="${n.lastSummary}"` : ''}`,
-              )
-              .join('\n');
+            const nodesSummary =
+              subAgentWorkflow.nodes.length > 0
+                ? subAgentWorkflow.nodes
+                    .map(
+                      (n) =>
+                        `- **${n.name}** (\`.agents/${n.slug}/\`): status=\`${n.status}\`${n.currentTask ? `, task="${n.currentTask}"` : ''}${n.lastSummary ? `, lastSummary="${n.lastSummary}"` : ''}`,
+                    )
+                    .join('\n')
+                : '(No active Sub-Agent workspaces initialized yet)';
             const cronSummary =
               subAgentWorkflow.cronJobs.length > 0
                 ? subAgentWorkflow.cronJobs
@@ -452,15 +853,22 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               result: `## Dev0 Hidden .agents/ Workspaces\n${nodesSummary}\n\n## Active Cron Jobs\n${cronSummary}`,
             });
           }
+
           case 'get_active_tools': {
             const activeLearning = isLearningEnabled(settingsRef.current);
-            const available = TOOL_DEFINITIONS.filter((t) => {
-              if (!activeLearning && isLearningTool(t.name)) return false;
-              const p = getToolPermission(t.name);
-              return p !== 'removed' && p !== 'blocked';
+            const available = getAvailableTools({
+              betaAgentLearning: activeLearning,
+              learningEnabled: activeLearning,
+              yoloMode: settingsRef.current.yoloMode,
+              betaWebSearch: settingsRef.current.betaWebSearch,
+              betaWebFetch: settingsRef.current.betaWebFetch,
+              toolPermissions: settingsRef.current.toolPermissions,
+              chatModeOnly: effectiveNormalChatMode,
+              agentMode: !effectiveNormalChatMode,
             }).map((t) => t.name);
             return wrapResult({ result: 'Active tools: ' + available.join(', ') });
           }
+
           case 'localize_code_graph': {
             if (!args?.query) return { result: 'ERROR: query parameter is required.' };
             const activeLearning = isLearningEnabled(settingsRef.current);
@@ -472,6 +880,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             const loc = localizeCodeSubgraph(graph, String(args.query), Number(args.max_nodes) || 12);
             return wrapResult({ result: loc.summaryMarkdown });
           }
+
           case 'sub_agent': {
             const roleOrId = String(args?.role || 'developer').trim();
             const taskDesc = String(args?.task || '').trim();
@@ -494,18 +903,20 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               });
               return wrapResult({ result: relayResult });
             }
-            let matchedTemplate =
-              customSubAgents.find(
-                (t) =>
-                  t.id.toLowerCase() === roleOrId.toLowerCase() ||
-                  t.name.toLowerCase() === roleOrId.toLowerCase() ||
-                  t.role.toLowerCase() === roleOrId.toLowerCase(),
-              );
+            let matchedTemplate = customSubAgents.find(
+              (t) =>
+                t.id.toLowerCase() === roleOrId.toLowerCase() ||
+                t.name.toLowerCase() === roleOrId.toLowerCase() ||
+                t.role.toLowerCase() === roleOrId.toLowerCase(),
+            );
 
             if (!matchedTemplate) {
-              // Persist newly invoked Sub-Agent role into the saved Sub-Agent list automatically
               const autoSaved: any = {
-                id: 'tpl_saved_' + roleOrId.toLowerCase().replace(/[^a-z0-9]+/g, '_') + '_' + Date.now().toString(36).slice(-4),
+                id:
+                  'tpl_saved_' +
+                  roleOrId.toLowerCase().replace(/[^a-z0-9]+/g, '_') +
+                  '_' +
+                  Date.now().toString(36).slice(-4),
                 name: `${roleOrId.charAt(0).toUpperCase() + roleOrId.slice(1)} Sub-Agent`,
                 role: roleOrId.toLowerCase(),
                 description: taskDesc.slice(0, 140),
@@ -540,19 +951,21 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             }
 
             const agentSlug = normalizeSubAgentSlug(matchedTemplate?.role || roleOrId);
-            const workspaceFiles = buildSubAgentWorkspaceFiles({
-              name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
-              role: matchedTemplate?.role || roleOrId,
-              description: matchedTemplate?.description || taskDesc,
-              systemPrompt: matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.',
-              rules: matchedTemplate?.rules || ['Always read files before modifying them.'],
-              allowedTools: matchedTemplate?.allowedTools || ['read_file', 'finish_task'],
-              allowedFiles: matchedTemplate?.allowedFiles || ['*'],
-              currentTask: taskDesc,
-              status: 'running',
-            });
-            for (const wf of workspaceFiles) {
-              updateFileContent(wf.path, wf.content);
+            if (currentProject) {
+              const workspaceFiles = buildSubAgentWorkspaceFiles({
+                name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
+                role: matchedTemplate?.role || roleOrId,
+                description: matchedTemplate?.description || taskDesc,
+                systemPrompt: matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.',
+                rules: matchedTemplate?.rules || ['Always read files before modifying them.'],
+                allowedTools: matchedTemplate?.allowedTools || ['read_file', 'finish_task'],
+                allowedFiles: matchedTemplate?.allowedFiles || ['*'],
+                currentTask: taskDesc,
+                status: 'running',
+              });
+              for (const wf of workspaceFiles) {
+                updateFileContent(wf.path, wf.content);
+              }
             }
 
             updateSubAgentWorkflow((prev) => {
@@ -619,9 +1032,15 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               `Allowed file patterns: ${(matchedTemplate?.allowedFiles || ['*']).join(', ')}\n` +
               `Project tree:\n${truncateToolResult(getProjectTree(), 2500)}`;
 
-            let subMsgs: ChatMessage[] = [
-              { id: genId(), role: 'user', content: taskDesc, timestamp: Date.now() },
-            ];
+            const initialUserMsg: ChatMessage = {
+              id: genId(),
+              role: 'user',
+              content: `[Delegated by Main Agent Dev0]: ${taskDesc}`,
+              timestamp: Date.now(),
+            };
+            let subMsgs: ChatMessage[] = [initialUserMsg];
+            appendSubAgentTranscriptMessage(agentSlug, initialUserMsg);
+
             const fallbackSettings = settingsRef.current.autoFallback
               ? getFallbackSettings()
               : undefined;
@@ -640,28 +1059,45 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               );
               const latencyMs = Date.now() - t0;
               if (subResp.tokenUsage) {
-                recordPoolTokenUsage(subResp.tokenUsage, resolvedAuth.poolKeyId, `[Sub-Agent ${agentSlug}] ${taskDesc}`, {
-                  provider: resolvedAuth.provider,
-                  model: resolvedAuth.model,
-                  latencyMs,
-                  toolCalls: (subResp.toolCalls || []).map((t) => t.name),
-                  usedFallback: subResp.usedFallback,
-                  fallbackProvider: subResp.fallbackProvider,
-                });
-              }
-              if (!subResp.toolCalls || subResp.toolCalls.length === 0) {
-                const finalOut = subResp.content || 'Completed.';
-                updateFileContent(
-                  `.agents/${agentSlug}/STATUS.md`,
-                  buildSubAgentStatusMarkdown({
-                    name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
-                    slug: agentSlug,
-                    role: matchedTemplate?.role || roleOrId,
-                    status: 'completed',
-                    currentTask: taskDesc,
-                    lastSummary: finalOut.slice(0, 240),
-                  }),
+                recordPoolTokenUsage(
+                  subResp.tokenUsage,
+                  resolvedAuth.poolKeyId,
+                  `[Sub-Agent ${agentSlug}] ${taskDesc}`,
+                  {
+                    provider: resolvedAuth.provider,
+                    model: resolvedAuth.model,
+                    latencyMs,
+                    toolCalls: (subResp.toolCalls || []).map((t) => t.name),
+                    usedFallback: subResp.usedFallback,
+                    fallbackProvider: subResp.fallbackProvider,
+                  },
                 );
+              }
+              const parsedSub = parseThinkingFromContent(subResp.content || '');
+              if (!subResp.toolCalls || subResp.toolCalls.length === 0) {
+                const finalOut = parsedSub.cleanContent || 'Completed.';
+                const finalSubAssistantMsg: ChatMessage = {
+                  id: genId(),
+                  role: 'assistant',
+                  content: finalOut,
+                  thinking: parsedSub.thinking || undefined,
+                  timestamp: Date.now(),
+                };
+                appendSubAgentTranscriptMessage(agentSlug, finalSubAssistantMsg);
+
+                if (currentProject) {
+                  updateFileContent(
+                    `.agents/${agentSlug}/STATUS.md`,
+                    buildSubAgentStatusMarkdown({
+                      name: matchedTemplate?.name || `${roleOrId} Sub-Agent`,
+                      slug: agentSlug,
+                      role: matchedTemplate?.role || roleOrId,
+                      status: 'completed',
+                      currentTask: taskDesc,
+                      lastSummary: finalOut.slice(0, 240),
+                    }),
+                  );
+                }
                 updateSubAgentWorkflow((prev) => ({
                   ...prev,
                   activeSubAgentSlug: null,
@@ -669,7 +1105,12 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                   updatedAt: Date.now(),
                   nodes: prev.nodes.map((n) =>
                     n.slug === agentSlug
-                      ? { ...n, status: 'completed' as const, lastSummary: finalOut.slice(0, 200), updatedAt: Date.now() }
+                      ? {
+                          ...n,
+                          status: 'completed' as const,
+                          lastSummary: finalOut.slice(0, 200),
+                          updatedAt: Date.now(),
+                        }
                       : n,
                   ),
                 }));
@@ -685,30 +1126,36 @@ export const [ChatProvider, useChat] = createContextHook(() => {
                 ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
                 ...(tc.extra_content ? { extra_content: tc.extra_content } : {}),
               }));
-              subMsgs.push({
+              const stepAssistantMsg: ChatMessage = {
                 id: genId(),
                 role: 'assistant',
-                content: subResp.content || '',
+                content: parsedSub.cleanContent || '',
+                thinking: parsedSub.thinking || undefined,
                 toolCalls: subTcList,
                 timestamp: Date.now(),
-              });
+              };
+              subMsgs.push(stepAssistantMsg);
+              appendSubAgentTranscriptMessage(agentSlug, stepAssistantMsg);
+
               for (const stc of subTcList) {
                 const subExec = await executeManualTool(
                   stc.name,
                   stc.arguments,
                   matchedTemplate?.allowedFiles,
                   stc.id,
+                  true,
                 );
                 stc.result = subExec.result;
                 stc.status = subExec.result.startsWith('ERROR') ? 'error' : 'completed';
-                subMsgs.push({
+                const toolMsg: ChatMessage = {
                   id: genId(),
                   role: 'tool',
                   content: subExec.result,
                   toolCallId: stc.id,
                   toolName: stc.name,
                   timestamp: Date.now(),
-                });
+                };
+                subMsgs.push(toolMsg);
               }
             }
             const lastSubAssistant = [...subMsgs].reverse().find((m) => m.role === 'assistant');
@@ -720,7 +1167,12 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               updatedAt: Date.now(),
               nodes: prev.nodes.map((n) =>
                 n.slug === agentSlug
-                  ? { ...n, status: 'completed' as const, lastSummary: summaryOut.slice(0, 200), updatedAt: Date.now() }
+                  ? {
+                      ...n,
+                      status: 'completed' as const,
+                      lastSummary: summaryOut.slice(0, 200),
+                      updatedAt: Date.now(),
+                    }
                   : n,
               ),
             }));
@@ -728,10 +1180,11 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               result: `[Sub-Agent ${matchedTemplate?.name || roleOrId} (.agents/${agentSlug}/) Summary]:\n${summaryOut}`,
             });
           }
+
           case 'propose_agent_mode': {
             return {
               result:
-                'Tip: Click the "Create!" button or switch to Agent Mode for this complex task: ' +
+                'Tip: Click "Proceed in Agent Mode" or switch to Agent Mode for this complex task: ' +
                 (args?.reason || ''),
             };
           }
@@ -739,14 +1192,14 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             if (!args?.path) return { result: 'ERROR: No file path provided.' };
             const content = getFileContent(args.path);
             if (content === null)
-              return { result: 'ERROR: File "' + args.path + '" nicht gefunden.' };
+              return { result: 'ERROR: File "' + args.path + '" not found.' };
             return wrapResult({ result: content });
           }
           case 'read_lines': {
             if (!args?.path) return { result: 'ERROR: No file path provided.' };
             const content = getFileContent(args.path);
             if (content === null)
-              return { result: 'ERROR: File "' + args.path + '" nicht gefunden.' };
+              return { result: 'ERROR: File "' + args.path + '" not found.' };
             const lines = content.split('\n');
             const start = Math.max(0, (args.start_line || 1) - 1);
             const end = Math.min(lines.length, args.end_line || lines.length);
@@ -762,11 +1215,11 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             updateFileContent(args.path, args.content ?? '');
             return {
               result:
-                'Datei "' +
+                'File "' +
                 args.path +
-                '" geschrieben (' +
+                '" written (' +
                 (args.content || '').split('\n').length +
-                ' Zeilen).',
+                ' lines).',
             };
           }
           case 'create_file': {
@@ -792,8 +1245,16 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           }
           case 'delete_file': {
             if (!args?.path) return { result: 'ERROR: No file path provided.' };
+            if (currentProject) {
+              await createRestorePoint({
+                projectId: currentProject.id,
+                label: `Auto-checkpoint before deleting ${args.path}`,
+                filesTree: currentProject.files,
+                author: 'auto',
+              });
+            }
             deleteFile(args.path);
-            return { result: 'File "' + args.path + '" deleted.' };
+            return { result: 'File "' + args.path + '" deleted (restore point auto-saved).' };
           }
           case 'rename_file': {
             if (!args?.old_path || !args?.new_path)
@@ -933,6 +1394,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     },
     [
       currentProject,
+      restoreProjectFiles,
       discoveredSkills,
       customSubAgents,
       saveSubAgentTemplate,
@@ -952,6 +1414,8 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       addTodo,
       updateTodoItem,
       addMemo,
+      updateMemo,
+      deleteMemo,
       memos,
       checkToolPermission,
       getToolPermission,
@@ -969,12 +1433,21 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       updateSubAgentWorkflow,
       togglePauseSubAgent,
       addSubAgentCronJob,
+      appendSubAgentTranscriptMessage,
     ],
   );
 
   const runManualLoop = useCallback(
-    async (userText: string, attachedFiles: string[] = [], baseMessages?: ChatMessage[]) => {
+    async (
+      userText: string,
+      attachedFiles: string[] = [],
+      baseMessages?: ChatMessage[],
+      forceAgentMode?: boolean,
+    ) => {
       abortRef.current = false;
+      pendingZipArtifactsRef.current = [];
+      pendingDraftPlansRef.current = [];
+
       const currentMessages = baseMessages ?? manualMessagesRef.current;
       const userMsg: ChatMessage = {
         id: genId(),
@@ -989,11 +1462,23 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       const newMessages = hasTrailingUserMsg
         ? [...currentMessages]
         : [...currentMessages, userMsg];
+
+      // Add immediate thinking placeholder message so the ThinkingBlock is visible right from the start
+      const thinkingPlaceholderId = 'thinking_' + Date.now().toString(36);
+      const placeholderMsg: ChatMessage = {
+        id: thinkingPlaceholderId,
+        role: 'assistant',
+        content: '',
+        thinking: 'Analyzing request and preparing response...',
+        isThinking: true,
+        timestamp: Date.now(),
+      };
+
       manualMessagesRef.current = newMessages;
-      setManualMessages(newMessages);
+      setManualMessages([...newMessages, placeholderMsg]);
       setManualLoading(true);
       setIsThinking(true);
-      setThinkingPhase('Dev0 is analyzing request...');
+      setThinkingPhase('Dev0 is thinking...');
 
       try {
         const resolvedAuth = resolveEffectiveProviderAndKey();
@@ -1008,18 +1493,25 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           );
         }
 
-        const mentionedFiles = attachedFiles.map((path) => ({
-          path,
-          content: truncateToolResult(
-            getFileContent(path) || '(not found)',
-            MAX_TOOL_RESULT_LENGTH,
-          ),
-        }));
+        const effectiveNormalChatMode =
+          !forceAgentMode && (!isChatAgentModeRef.current || !currentProject);
+
+        const mentionedFiles = effectiveNormalChatMode
+          ? []
+          : attachedFiles.map((path) => ({
+              path,
+              content: truncateToolResult(
+                getFileContent(path) || '(not found)',
+                MAX_TOOL_RESULT_LENGTH,
+              ),
+            }));
 
         const activeLearning = isLearningEnabled(settings);
-        const yamlSkillsBlock = buildActiveSkillsPromptBlock(discoveredSkills);
+        const yamlSkillsBlock = effectiveNormalChatMode
+          ? ''
+          : buildActiveSkillsPromptBlock(discoveredSkills);
         const customAgentsBlock =
-          customSubAgents.length > 0
+          !effectiveNormalChatMode && customSubAgents.length > 0
             ? '\n## Available Custom Sub-Agent Templates (callable via sub_agent tool)\n' +
               customSubAgents
                 .map(
@@ -1033,7 +1525,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         const systemPrompt =
           buildSystemPrompt({
             persona: settings.persona,
-            projectTree: getProjectTree(),
+            projectTree: effectiveNormalChatMode ? undefined : getProjectTree(),
             memos: activeLearning ? memos : [],
             todos,
             mentionedFiles,
@@ -1048,6 +1540,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             betaAgentLearning: activeLearning,
             learningEnabled: activeLearning,
             toolPermissions: settings.toolPermissions,
+            isNormalChatMode: effectiveNormalChatMode,
           }) +
           yamlSkillsBlock +
           customAgentsBlock;
@@ -1060,15 +1553,18 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         const maxIterations = 15;
         let collectedTodos: InlineTodo[] = [];
 
-        const filteredTools = TOOL_DEFINITIONS.filter((t) => {
-          if (!activeLearning && isLearningTool(t.name)) return false;
-          if (!settings.yoloMode) {
-            if (t.name === 'web_search' && !settings.betaWebSearch) return false;
-            if (t.name === 'web_fetch' && !settings.betaWebFetch) return false;
-          }
+        const filteredTools = getAvailableTools({
+          betaAgentLearning: activeLearning,
+          learningEnabled: activeLearning,
+          yoloMode: settings.yoloMode,
+          betaWebSearch: settings.betaWebSearch,
+          betaWebFetch: settings.betaWebFetch,
+          toolPermissions: settings.toolPermissions,
+          chatModeOnly: effectiveNormalChatMode,
+          agentMode: !effectiveNormalChatMode,
+        }).filter((t) => {
           const perm = getToolPermission(t.name);
-          if (perm === 'removed') return false;
-          return true;
+          return perm !== 'removed';
         });
 
         while (iterations < maxIterations && !abortRef.current) {
@@ -1077,7 +1573,6 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             iterations === 1 ? 'Dev0 is thinking...' : 'Processing tool results...',
           );
 
-          // Re-resolve active pool key on every iteration so exhausted keys automatically rotate to the next available key!
           const turnAuth = resolveEffectiveProviderAndKey();
           const turnProvider = turnAuth.provider || effectiveProvider;
           const turnApiKey = turnAuth.apiKey || apiKey || 'rork_builtin';
@@ -1130,17 +1625,34 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           const { thinking, cleanContent } = parseThinkingFromContent(response.content || '');
 
           if (validToolCalls.length === 0) {
+            const latestZip =
+              pendingZipArtifactsRef.current.length > 0
+                ? pendingZipArtifactsRef.current[pendingZipArtifactsRef.current.length - 1]
+                : undefined;
+            const latestPlan =
+              pendingDraftPlansRef.current.length > 0
+                ? pendingDraftPlansRef.current[pendingDraftPlansRef.current.length - 1]
+                : undefined;
+
             const assistantMsg: ChatMessage = {
               id: genId(),
               role: 'assistant',
               content: cleanContent,
               timestamp: Date.now(),
               thinking: thinking || undefined,
+              isThinking: false,
               todos: collectedTodos.length > 0 ? [...collectedTodos] : undefined,
+              zipArtifact: latestZip,
+              draftPlan: latestPlan,
             };
             conversationHistory = [...conversationHistory, assistantMsg];
             manualMessagesRef.current = conversationHistory;
             setManualMessages([...conversationHistory]);
+            saveCrossChatSessionSnapshot(
+              currentChatSessionIdRef.current,
+              undefined,
+              conversationHistory,
+            ).catch(console.log);
             break;
           }
 
@@ -1168,6 +1680,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             toolCalls,
             timestamp: Date.now(),
             thinking: thinkingContent || undefined,
+            isThinking: false,
           };
           conversationHistory = [...conversationHistory, assistantMsg];
           manualMessagesRef.current = conversationHistory;
@@ -1181,16 +1694,23 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             tc.status = 'running';
             setManualMessages([...conversationHistory, ...toolResultMessages]);
 
-            const { result, inlineTodos } = await executeManualTool(
+            const { result, inlineTodos, zipArtifact, draftPlan } = await executeManualTool(
               tc.name,
               tc.arguments,
               undefined,
               tc.id,
+              forceAgentMode,
             );
             const safeResult = truncateToolResult(result, MAX_TOOL_RESULT_LENGTH);
             tc.result = safeResult;
             tc.status = safeResult.startsWith('ERROR') ? 'error' : 'completed';
             if (inlineTodos) collectedTodos = [...collectedTodos, ...inlineTodos];
+            if (zipArtifact) {
+              assistantMsg.zipArtifact = zipArtifact;
+            }
+            if (draftPlan) {
+              assistantMsg.draftPlan = draftPlan;
+            }
 
             toolResultMessages.push({
               id: genId(),
@@ -1208,12 +1728,18 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           );
           manualMessagesRef.current = conversationHistory;
           setManualMessages([...conversationHistory]);
+          saveCrossChatSessionSnapshot(
+            currentChatSessionIdRef.current,
+            undefined,
+            conversationHistory,
+          ).catch(console.log);
         }
 
         if (iterations >= maxIterations) {
           setManualMessages((prev) => {
+            const cleaned = prev.filter((m) => !m.id.startsWith('thinking_'));
             const next = [
-              ...prev,
+              ...cleaned,
               {
                 id: genId(),
                 role: 'assistant' as const,
@@ -1228,8 +1754,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       } catch (e: any) {
         console.log('[Chat] Error:', e);
         setManualMessages((prev) => {
+          const cleaned = prev.filter((m) => !m.id.startsWith('thinking_'));
           const next = [
-            ...prev,
+            ...cleaned,
             {
               id: genId(),
               role: 'assistant' as const,
@@ -1248,6 +1775,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
       }
     },
     [
+      currentProject,
       settings,
       resolveEffectiveProviderAndKey,
       recordPoolTokenUsage,
@@ -1269,16 +1797,65 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   );
 
   const sendMessage = useCallback(
-    async (userText: string, attachedFiles: string[] = []) => {
+    async (userText: string, attachedFiles: string[] = [], forceAgentMode?: boolean) => {
       if (!userText.trim() && attachedFiles.length === 0) return;
 
       triggerSponsorInteraction();
       setError(null);
       setLastFallbackInfo(null);
 
-      await runManualLoop(userText, attachedFiles);
+      await runManualLoop(userText, attachedFiles, undefined, forceAgentMode);
     },
     [triggerSponsorInteraction, runManualLoop],
+  );
+
+  const updateDraftPlanOnMessage = useCallback(
+    (messageId: string, updatedPlan: DraftedAgentPlan, aiRefinementInstruction?: string) => {
+      setManualMessages((prev) => {
+        const next = prev.map((m) => (m.id === messageId ? { ...m, draftPlan: updatedPlan } : m));
+        manualMessagesRef.current = next;
+        return next;
+      });
+      if (aiRefinementInstruction && aiRefinementInstruction.trim()) {
+        sendMessage(
+          `Please refine the execution plan "${updatedPlan.title}" with the following changes and call draft_agent_plan again:\n${aiRefinementInstruction.trim()}`,
+        );
+      }
+    },
+    [sendMessage],
+  );
+
+  const proceedWithDraftPlan = useCallback(
+    async (plan: DraftedAgentPlan) => {
+      setIsChatAgentMode(true);
+      isChatAgentModeRef.current = true;
+      setManualMessages((prev) => {
+        const next = prev.map((m) =>
+          m.draftPlan?.id === plan.id
+            ? { ...m, draftPlan: { ...m.draftPlan, status: 'approved' as const } }
+            : m,
+        );
+        manualMessagesRef.current = next;
+        return next;
+      });
+      const stepsList = plan.steps
+        .map(
+          (s, i) =>
+            `${i + 1}. [${s.agentRole || 'developer'}] ${s.title}${s.description ? ` — ${s.description}` : ''}`,
+        )
+        .join('\n');
+      await sendMessage(
+        `[APPROVED EXECUTION PLAN — AGENT MODE ENABLED]\n` +
+          `Plan: ${plan.title}\n` +
+          `Summary: ${plan.summary}\n` +
+          `Steps:\n${stepsList}\n` +
+          (plan.targetFiles?.length ? `Target Files: ${plan.targetFiles.join(', ')}\n` : '') +
+          `Execute this plan step by step now.`,
+        [],
+        true,
+      );
+    },
+    [sendMessage],
   );
 
   const stopGeneration = useCallback(() => {
@@ -1291,6 +1868,14 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   }, [pendingApproval]);
 
   const clearChat = useCallback(() => {
+    if (manualMessagesRef.current.length > 0) {
+      saveCrossChatSessionSnapshot(
+        currentChatSessionIdRef.current,
+        undefined,
+        manualMessagesRef.current,
+      ).catch(console.log);
+    }
+    currentChatSessionIdRef.current = 'chat_' + Date.now().toString(36);
     manualMessagesRef.current = [];
     setManualMessages([]);
     setError(null);
@@ -1300,11 +1885,17 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   const startNewChat = useCallback(() => {
     const currentMsgs = manualMessagesRef.current;
     if (currentMsgs.length > 0) {
+      saveCrossChatSessionSnapshot(
+        currentChatSessionIdRef.current,
+        undefined,
+        currentMsgs,
+      ).catch(console.log);
+      currentChatSessionIdRef.current = 'chat_' + Date.now().toString(36);
       const next: ChatMessage[] = [
         {
           id: genId(),
           role: 'assistant',
-          content: '---\n\n**New chat started.**\n\n---',
+          content: '---\n\n**New chat started.** (Previous chat saved for Cross-Chat recall)\n\n---',
           timestamp: Date.now(),
         },
       ];
@@ -1450,7 +2041,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         pendingQuestionResolverRef.current = null;
         resolver(relayPrompt);
       } else {
-        sendMessage(relayPrompt);
+        setIsChatAgentMode(true);
+        isChatAgentModeRef.current = true;
+        sendMessage(relayPrompt, [], true);
       }
     },
     [pendingSubAgentQuestion, saveSubAgentTemplate, sendMessage],
@@ -1489,7 +2082,11 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     thinkingPhase,
     error,
     lastFallbackInfo,
+    isChatAgentMode,
+    setIsChatAgentMode,
     sendMessage,
+    updateDraftPlanOnMessage,
+    proceedWithDraftPlan,
     stopGeneration,
     clearChat,
     startNewChat,
@@ -1503,5 +2100,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     openSubAgentFloatingLauncher,
     submitSubAgentQuestionResponse,
     closeSubAgentQuestionModal,
+    subAgentTranscripts,
+    viewingSubAgentSlug,
+    setViewingSubAgentSlug,
+    deleteSubAgentTemplate,
   };
 });

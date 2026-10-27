@@ -56,7 +56,30 @@ describe('Synapse Memory Graph & Code Localization (RepoGraph / LocAgent)', () =
   ];
 
   it('indexes files, exported symbols, imports, calls, and linked memories into a SynapseGraph', () => {
-    const skills = discoverYamlSkills([]);
+    const projectSkillFiles = [
+      {
+        id: 'sk_dir',
+        name: '.qoder',
+        type: 'directory' as const,
+        children: [
+          {
+            id: 'sk_rules',
+            name: 'rules',
+            type: 'directory' as const,
+            children: [
+              {
+                id: 'sk_1',
+                name: 'lessons_learned.md',
+                type: 'file' as const,
+                content:
+                  '---\nname: Lessons Learned\ndescription: Core memory\ntrigger: always_on\nalwaysApply: true\n---\n# Lessons\nAlways verify.',
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    const skills = discoverYamlSkills(projectSkillFiles);
     const graph = buildSynapseGraph({
       project: mockProject,
       memos: mockMemos,
@@ -104,9 +127,18 @@ Always run tsc --noEmit before committing.`;
     expect(parsed.body).toContain('Always run tsc --noEmit');
   });
 
-  it('discovers skills from project files and built-in .qoder/rules', () => {
-    const skills = discoverYamlSkills([]);
-    expect(skills.length).toBeGreaterThanOrEqual(2);
+  it('discovers skills from project files and has zero hardcoded skills when project is empty', () => {
+    expect(discoverYamlSkills([])).toHaveLength(0);
+    const skills = discoverYamlSkills([
+      {
+        id: 'f_rule',
+        name: '.qoder/rules/lessons_learned.md',
+        type: 'file',
+        content:
+          '---\nname: Lessons Learned\ndescription: Memory rules\ntrigger: always_on\nalwaysApply: true\n---\n# Rules',
+      },
+    ]);
+    expect(skills.length).toBe(1);
     expect(skills.some((s) => s.sourcePath.includes('.qoder/rules/lessons_learned.md'))).toBe(true);
   });
 

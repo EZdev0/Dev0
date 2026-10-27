@@ -211,7 +211,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
       if (updated[index]) {
         updated[index] = {
           ...updated[index],
-          answer: 'Übersprungen – bitte sinnvollste Best-Practice-Annahme treffen.',
+          answer: 'Skipped — please make the most sensible best-practice assumption.',
         };
       }
       return updated;
@@ -308,7 +308,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 {isRunning
                   ? 'Agent working...'
                   : isClarifying
-                  ? 'Rückfragen vor dem Start'
+                  ? 'Clarifying questions before start'
                   : isDone && stats.error === 0
                   ? 'Task completed'
                   : isDone && stats.error > 0
@@ -321,7 +321,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
           <View style={styles.planHeaderRight}>
             <View style={[styles.counterBadge, stats.error > 0 && styles.counterBadgeError, isDone && stats.error === 0 && styles.counterBadgeSuccess]}>
               <Text style={[styles.counterText, stats.error > 0 && styles.counterTextError, isDone && stats.error === 0 && styles.counterTextSuccess]}>
-                {isClarifying ? 'Fragen' : stats.error > 0 ? (stats.completed + '/' + totalCount + ' · ' + stats.error + '✗') : (stats.completed + '/' + totalCount)}
+                {isClarifying ? 'Questions' : stats.error > 0 ? (stats.completed + '/' + totalCount + ' · ' + stats.error + '✗') : (stats.completed + '/' + totalCount)}
               </Text>
             </View>
             {collapsed ? <ChevronDown size={16} color={IDE.muted} /> : <ChevronUp size={16} color={IDE.muted} />}
@@ -335,7 +335,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 <View style={styles.clarifyingBannerTop}>
                   <MessageSquare size={15} color={IDE.warning} />
                   <Text style={styles.clarifyingBannerText}>
-                    Die KI hat {localQuestions.length || 'einige'} Rückfrage(n) zur Präzisierung. Du kannst sie beantworten oder direkt mit Best-Practice-Annahmen starten.
+                    The AI has {localQuestions.length || 'several'} clarifying question(s). Answer them below or start immediately with best-practice assumptions.
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -346,7 +346,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 >
                   <FastForward size={14} color="#fff" />
                   <Text style={styles.skipInlineButtonText}>
-                    Überspringen & Direkt starten (Skip)
+                    Skip & Start Immediately (Skip)
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -370,13 +370,13 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   {stats.running > 0 && (
                     <View style={styles.statItem}>
                       <View style={[styles.statDot, { backgroundColor: IDE.primary }]} />
-                      <Text style={styles.statText}>{stats.running} aktiv</Text>
+                      <Text style={styles.statText}>{stats.running} active</Text>
                     </View>
                   )}
                   {stats.pending > 0 && (
                     <View style={styles.statItem}>
                       <View style={[styles.statDot, { backgroundColor: IDE.warning }]} />
-                      <Text style={styles.statText}>{stats.pending} wartend</Text>
+                      <Text style={styles.statText}>{stats.pending} pending</Text>
                     </View>
                   )}
                   {stats.error > 0 && (
@@ -388,7 +388,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   {stats.thinking > 0 && (
                     <View style={styles.statItem}>
                       <View style={[styles.statDot, { backgroundColor: IDE.keyword }]} />
-                      <Text style={styles.statText}>{stats.thinking} Analyse</Text>
+                      <Text style={styles.statText}>{stats.thinking} analysis</Text>
                     </View>
                   )}
                 </View>
@@ -451,7 +451,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                         color: type === 'thinking' ? IDE.keyword : type === 'brainstorm' ? IDE.warning : type === 'web_search' ? '#2196F3' : type === 'sub_agent' ? IDE.accent : IDE.primary,
                         fontWeight: '700' as const,
                       }]}>
-                        {type === 'thinking' ? 'Analyse' : type === 'brainstorm' ? 'Brainstorm' : type === 'web_search' ? 'Web' : type === 'sub_agent' ? 'Agent' : 'Task'}
+                        {type === 'thinking' ? 'Analysis' : type === 'brainstorm' ? 'Brainstorm' : type === 'web_search' ? 'Web' : type === 'sub_agent' ? 'Agent' : 'Task'}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -468,14 +468,14 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   style={[styles.addInput, styles.addInputMulti]}
                   value={newDesc}
                   onChangeText={setNewDesc}
-                  placeholder="Beschreibung..."
+                  placeholder="Description..."
                   placeholderTextColor={IDE.muted}
                   multiline
                 />
                 <View style={styles.addTaskActions}>
                   <TouchableOpacity onPress={handleAddTask} style={styles.addConfirmBtn}>
                     <Plus size={14} color="#fff" />
-                    <Text style={styles.addConfirmText}>Hinzufügen</Text>
+                    <Text style={styles.addConfirmText}>Add</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => setShowAddTask(false)} style={styles.addCancelBtn}>
                     <X size={14} color={IDE.muted} />
@@ -494,7 +494,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                       activeOpacity={0.7}
                     >
                       <Plus size={14} color={IDE.primary} />
-                      <Text style={[styles.addTaskBtnText, { color: IDE.primary }]}>Aufgabe</Text>
+                      <Text style={[styles.addTaskBtnText, { color: IDE.primary }]}>Task</Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -574,7 +574,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
         )}
       </View>
 
-      {/* FIX 2: Einfacheres Swap Modal mit Cancel-Button */}
+      {/* Reorder / Swap Modal */}
       <Modal visible={swapModal.visible} transparent animationType="slide">
         <TouchableOpacity
           style={styles.swapOverlay}
@@ -584,7 +584,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
           <View style={styles.swapModal}>
             <View style={styles.swapModalHeader}>
               <GripVertical size={16} color={IDE.primary} />
-              <Text style={styles.swapModalTitle}>Position {swapModal.fromIndex + 1} verschieben</Text>
+              <Text style={styles.swapModalTitle}>Move position {swapModal.fromIndex + 1}</Text>
               <TouchableOpacity onPress={handleSwapCancel} style={styles.cancelBtnSmall}>
                 <X size={18} color={IDE.danger} />
               </TouchableOpacity>
@@ -626,7 +626,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   </Text>
                   {i === swapModal.fromIndex ? (
                     <View style={styles.currentBadgeSimple}>
-                      <Text style={styles.currentBadgeText}>Aktuell</Text>
+                      <Text style={styles.currentBadgeText}>Current</Text>
                     </View>
                   ) : (
                     <ArrowDown size={14} color={IDE.muted} style={{ transform: [{ rotate: i < swapModal.fromIndex ? '180deg' : '0deg' }] }} />
@@ -641,7 +641,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
         </TouchableOpacity>
       </Modal>
 
-      {/* Lösch-Bestätigung Modal */}
+      {/* Delete Confirmation Modal */}
       <Modal visible={deleteConfirm.visible} transparent animationType="fade">
         <TouchableOpacity
           style={styles.deleteOverlay}
@@ -654,7 +654,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
               <Text style={styles.deleteModalTitle}>Delete Task?</Text>
             </View>
             <Text style={styles.deleteModalText}>
-              Bist du sicher, dass du diesen Task entfernen möchtest? Dieser Schritt kann nicht rückgängig gemacht werden.
+              Are you sure you want to remove this task? This action cannot be undone.
             </Text>
             <View style={styles.deleteModalButtons}>
               <TouchableOpacity
@@ -676,7 +676,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
         </TouchableOpacity>
       </Modal>
 
-      {/* Klärungsfragen Modal */}
+      {/* Clarification Questions Modal */}
       {localQuestions.length > 0 && (
         <Modal visible={true} transparent animationType="slide" onRequestClose={handleSkipAllQuestions}>
           <KeyboardAvoidingView
@@ -687,7 +687,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
             <View style={styles.questionsContainer} pointerEvents="auto">
               <View style={styles.questionsHeader}>
                 <MessageSquare size={22} color={IDE.primary} />
-                <Text style={styles.questionsTitle}>Klärungsfragen</Text>
+                <Text style={styles.questionsTitle}>Clarification Questions</Text>
                 <TouchableOpacity
                   onPress={handleSkipAllQuestions}
                   style={styles.skipHeaderPill}
@@ -699,7 +699,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 </TouchableOpacity>
               </View>
               <Text style={styles.questionsSubtitle}>
-                Beantworte die Fragen für einen maßgeschneiderten Plan – oder überspringe sie für sofortige Ausführung mit Best-Practice-Annahmen:
+                Answer the questions for a tailored plan — or skip them to start immediately with best-practice assumptions:
               </Text>
               <ScrollView
                 style={styles.questionsScroll}
@@ -718,13 +718,13 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                         activeOpacity={0.7}
                         hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                       >
-                        <Text style={styles.skipSingleQuestionText}>Überspringen</Text>
+                        <Text style={styles.skipSingleQuestionText}>Skip</Text>
                       </TouchableOpacity>
                     </View>
                     <Text style={styles.questionText}>{q.question}</Text>
                     <TextInput
                       style={styles.answerInput}
-                      placeholder="Deine Antwort (optional)..."
+                      placeholder="Your answer (optional)..."
                       placeholderTextColor={IDE.muted}
                       value={q.answer}
                       onChangeText={(text) => handleAnswerQuestion(idx, text)}
@@ -743,7 +743,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                 >
                   <FastForward size={16} color="#fff" />
                   <Text style={styles.skipAllButtonText}>
-                    Überspringen & Direkt starten (Skip)
+                    Skip & Start Immediately (Skip)
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -751,7 +751,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
                   style={styles.submitAnswersButton}
                   activeOpacity={0.75}
                 >
-                  <Text style={styles.submitAnswersButtonText}>Antworten & Plan erstellen</Text>
+                  <Text style={styles.submitAnswersButtonText}>Submit Answers & Create Plan</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -763,7 +763,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
         <View style={styles.finalResponseContainer}>
           <View style={styles.finalResponseHeader}>
             <View style={styles.finalResponseDot} />
-            <Text style={styles.finalResponseLabel}>Ergebnis</Text>
+            <Text style={styles.finalResponseLabel}>Result</Text>
           </View>
           <Text style={styles.finalResponseText}>{formatFinalResponse(plan.finalResponse)}</Text>
 
@@ -776,7 +776,7 @@ const AgentPlanView = React.memo(({ plan, isExecuting, onExecute, onStop, onDism
               >
                 <Wrench size={12} color={IDE.muted} />
                 <Text style={styles.totalToolsHeaderText}>
-                  {totalToolCount} Tool{totalToolCount !== 1 ? 's' : ''} insgesamt verwendet
+                  {totalToolCount} Tool{totalToolCount !== 1 ? 's' : ''} used in total
                 </Text>
                 {toolsSummaryExpanded ? <ChevronUp size={12} color={IDE.muted} /> : <ChevronDown size={12} color={IDE.muted} />}
               </TouchableOpacity>

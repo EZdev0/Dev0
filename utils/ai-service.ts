@@ -1,4 +1,4 @@
-import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS, isLearningTool } from '@/types';
+import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS, isLearningTool, isProjectFilesystemOrAgentOnlyTool } from '@/types';
 import { MAX_TOOL_RESULT_LENGTH, truncateToolResult, compressAndSanitizeMessagesForAPI } from '@/utils/chat-compression';
 import { runSubAISearchAgent } from '@/utils/web-tools';
 import { extractActualTokenUsage, TokenUsageRecord } from '@/utils/free-ai-pool';
@@ -427,18 +427,235 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: [],
     },
   },
+  {
+    name: 'zip_create',
+    description: 'Packages one or more generated files into a real downloadable .zip archive rendered as an interactive ZIP Download Card in the chat. Use this in Normal Chat Mode whenever the user asks for files, snippets, or downloadable code bundles.',
+    parameters: {
+      type: 'object',
+      properties: {
+        archive_name: {
+          type: 'string',
+          description: 'Archive filename (e.g., "ui-components.zip")',
+        },
+        description: {
+          type: 'string',
+          description: 'Brief summary of what is inside the ZIP archive',
+        },
+        files: {
+          type: 'array',
+          description: 'Array of files to include ({ path, content })',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'Relative path inside the ZIP archive' },
+              content: { type: 'string', description: 'Full text content of the file' },
+            },
+            required: ['path', 'content'],
+          },
+        },
+      },
+      required: ['files'],
+    },
+  },
+  {
+    name: 'zip_read',
+    description: 'Lists files or reads a specific file slice from a ZIP archive previously created in the current chat session.',
+    parameters: {
+      type: 'object',
+      properties: {
+        zip_id: {
+          type: 'string',
+          description: 'Optional ZIP artifact ID (defaults to latest ZIP in chat)',
+        },
+        file_path: {
+          type: 'string',
+          description: 'Optional relative path inside the ZIP archive to read',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'draft_agent_plan',
+    description: 'Creates an interactive Execution Plan Graphic Card in the chat with "Proceed in Agent Mode" and "Edit / Refine Plan" buttons so the user can review, customize, and launch an Agent Mode workflow.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Concise title for the execution plan',
+        },
+        summary: {
+          type: 'string',
+          description: 'Overview of the architectural approach and goals',
+        },
+        steps: {
+          type: 'array',
+          description: 'Ordered execution steps ({ title, description, agent_role })',
+          items: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              description: { type: 'string' },
+              agent_role: { type: 'string' },
+            },
+            required: ['title'],
+          },
+        },
+        target_files: {
+          type: 'array',
+          description: 'Optional list of target file paths',
+          items: { type: 'string' },
+        },
+      },
+      required: ['title', 'steps'],
+    },
+  },
+  {
+    name: 'read_other_chat_messages',
+    description: 'Token-efficient BM25 keyword search across other stored chat sessions. Returns concise matching snippets (capped under 1,750 chars) without bloating the context window.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Keywords to search across other chat sessions (leave empty for a compact overview of recent sessions)',
+        },
+        max_snippets: {
+          type: 'number',
+          description: 'Maximum number of matching snippets to return (1-10, default 5)',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'memory_search',
+    description: 'Searches persistent Memory Graph nodes by keyword or topic (works with or without an active project).',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query or keyword to match in the Memory Graph',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'memory_update',
+    description: 'Updates an existing Memory Graph node by ID or creates a new persistent memory synapse.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Optional existing memory ID to update (omit to create a new memory node)',
+        },
+        content: {
+          type: 'string',
+          description: 'Memory content to store in the Synapse Memory Graph',
+        },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'memory_delete',
+    description: 'Deletes a persistent memory node from the Synapse Memory Graph by ID or matching text.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Memory ID (or substring) to delete',
+        },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'memory_graph_query',
+    description: 'Queries the standalone Synapse Memory Graph and returns connected memory nodes and semantic edges (works without an active project).',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Optional topic or keyword to localize within the Memory Graph',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'git_status',
+    description: 'Returns the current Built-in Git & Restore Point status (working tree changes since HEAD and active backend).',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'git_create_restore_point',
+    description: 'Creates a Built-in Git Restore Point snapshot in Browser storage and mirrors the commit to the Docker sandbox Git repository when active.',
+    parameters: {
+      type: 'object',
+      properties: {
+        label: {
+          type: 'string',
+          description: 'Commit message / restore point label describing the snapshot',
+        },
+      },
+      required: ['label'],
+    },
+  },
+  {
+    name: 'git_list_restore_points',
+    description: 'Lists all saved Git Restore Points for the active project with commit hashes, timestamps, and diff summaries.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'git_restore_point',
+    description: 'Rolls the active project files back to a specific Git Restore Point by ID or commit hash (automatically creating a safety pre-rollback snapshot first).',
+    parameters: {
+      type: 'object',
+      properties: {
+        id_or_hash: {
+          type: 'string',
+          description: 'Restore point ID or short commit hash (or "latest")',
+        },
+      },
+      required: ['id_or_hash'],
+    },
+  },
 ];
 
 export function getAvailableTools(options?: {
   learningEnabled?: boolean;
   betaAgentLearning?: boolean;
+  yoloMode?: boolean;
+  betaWebSearch?: boolean;
+  betaWebFetch?: boolean;
   toolPermissions?: Record<string, string>;
-}): ToolDefinition[] {
+  chatModeOnly?: boolean;
+  agentMode?: boolean;
+}): (ToolDefinition & { function: { name: string; description: string; parameters: ToolDefinition['parameters'] } })[] {
   const learningActive = Boolean(options?.learningEnabled ?? options?.betaAgentLearning ?? false);
   const perms = options?.toolPermissions || {};
+  const isNormalChat = options?.chatModeOnly === true || options?.agentMode === false;
 
   return TOOL_DEFINITIONS.filter(tool => {
     if (!learningActive && isLearningTool(tool.name)) {
+      return false;
+    }
+    if (isNormalChat && isProjectFilesystemOrAgentOnlyTool(tool.name)) {
       return false;
     }
     const perm = perms[tool.name];
@@ -446,16 +663,23 @@ export function getAvailableTools(options?: {
       return false;
     }
     return true;
-  });
+  }).map(tool => ({
+    ...tool,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  }));
 }
 
 export function buildSystemPrompt(options: {
-  persona: string;
-  projectTree: string;
-  memos: MemoEntry[];
-  todos: TodoItem[];
-  mentionedFiles: { path: string; content: string }[];
-  yoloMode: boolean;
+  persona?: string;
+  projectTree?: string;
+  memos?: MemoEntry[];
+  todos?: TodoItem[];
+  mentionedFiles?: { path: string; content: string }[];
+  yoloMode?: boolean;
   agentMd?: string;
   soulMd?: string;
   identityMd?: string;
@@ -466,8 +690,11 @@ export function buildSystemPrompt(options: {
   toolPermissions?: Record<string, string>;
   activeSkillsBlock?: string;
   synapseLocalizationBlock?: string;
+  isNormalChatMode?: boolean;
+  agentMode?: boolean;
 }): string {
   const learningActive = Boolean(options.learningEnabled ?? options.betaAgentLearning ?? false);
+  const isNormalChat = options.isNormalChatMode === true || options.agentMode === false;
 
   const personaPrompts: Record<string, string> = {
     standard: 'You are "Dev0", the flagship autonomous AI Coding & Multi-Agent Orchestrator in the Dev0 IDE.',
@@ -477,7 +704,15 @@ export function buildSystemPrompt(options: {
     fullstack: 'You are "Dev0" (Fullstack Architect), an experienced Fullstack Developer Assistant with expertise in frontend, backend, databases, Docker sandboxes, DevOps, and cloud architectures.',
   };
 
-  let prompt = personaPrompts[options.persona] || personaPrompts.standard;
+  let prompt = personaPrompts[options.persona || 'standard'] || personaPrompts.standard;
+  if (isNormalChat) {
+    prompt += `\n\n# NORMAL CHAT MODE (NO DIRECT PROJECT FILESYSTEM ACCESS)\n` +
+      `- You are currently in **NORMAL CHAT MODE** (not Agent Mode).\n` +
+      `- You do NOT have direct access to project filesystem tools (\`read_file\`, \`write_file\`, \`edit_file\`, \`delete_file\`, \`sub_agent\`, etc.).\n` +
+      `- To provide code or files for the user to download, call \`zip_create\` to package one or more files into a downloadable \`.zip\` bundle card in the chat, and use \`zip_read\` to inspect any ZIP archive stored in this chat.\n` +
+      `- To design a structured multi-step implementation plan that the user can launch in Agent Mode with one click ("Proceed in Agent Mode") or refine in a floating editor, call \`draft_agent_plan\`.\n` +
+      `- You can also read snippets from other chat sessions via \`read_other_chat_messages\` and manage the standalone Synapse Memory Graph via \`memory_search\`, \`memory_update\`, \`memory_delete\`, and \`memory_graph_query\`.`;
+  }
   prompt += `\n\n
 # ROLE & IDENTITY: Dev0
 You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an isolated user sandbox in the Dev0 IDE. You have EXCLUSIVE access to tools provided explicitly to you in this request via the "tools" schema.
@@ -888,18 +1123,18 @@ async function callOpenAI(apiKey: string, model: string, messages: ChatMessage[]
       response = await executeRequest(true);
       if (!response.ok) {
         const retryErrorText = await response.text().catch(() => 'Unknown error');
-        throw new AIError(response.status, 'Fehler (' + response.status + '): ' + retryErrorText.slice(0, 300));
+        throw new AIError(response.status, 'Error (' + response.status + '): ' + retryErrorText.slice(0, 300));
       }
     } else {
       console.log('[AI] OpenAI-compatible error:', response.status, errorText);
-      throw new AIError(response.status, 'Fehler (' + response.status + '): ' + errorText.slice(0, 300));
+      throw new AIError(response.status, 'Error (' + response.status + '): ' + errorText.slice(0, 300));
     }
   }
 
   const data = await response.json();
   const choice = data.choices?.[0];
 
-  if (!choice) throw new Error('Keine Antwort erhalten.');
+  if (!choice) throw new Error('No response received from model.');
 
   const rawContent = choice.message?.content || '';
   const nativeCalls = (choice.message?.tool_calls || []).map((tc: any) => {
@@ -994,7 +1229,7 @@ async function callOpenRouter(apiKey: string, model: string, messages: ChatMessa
   const data = await response.json();
   const choice = data.choices?.[0];
 
-  if (!choice) throw new Error('Keine Antwort von OpenRouter erhalten.');
+  if (!choice) throw new Error('No response received from OpenRouter.');
 
   const rawContent = choice.message?.content || '';
   const nativeCalls = (choice.message?.tool_calls || []).map((tc: any) => {
@@ -1712,7 +1947,7 @@ export async function callAI(
         }
 
         if (error.name === 'AbortError') {
-          throw new Error('Zeitüberschreitung: Die KI-Anfrage hat zu lange gedauert (120s).');
+          throw new Error('Request timeout: The AI request took too long (120s).');
         }
 
         if (isRateLimitError(error)) {
@@ -1745,11 +1980,11 @@ export async function callAI(
           }
 
           throw new Error(
-            'Rate-Limit erreicht bei ' + provider + '.\n\n'
-            + '💡 Tipps:\n'
-            + '• Warte 30-60 Sekunden und versuche es erneut\n'
-            + '• Wechsle zu einem anderen Anbieter (Groq, Gemini oder OpenRouter sind kostenlos)\n'
-            + '• Konfiguriere einen zweiten API-Schlüssel als Fallback'
+            'Rate limit reached on ' + provider + '.\n\n'
+            + '💡 Tips:\n'
+            + '• Wait 30–60 seconds and try again\n'
+            + '• Switch to another provider (Groq, Gemini, or OpenRouter have free tiers)\n'
+            + '• Configure a secondary API key or use the AI for Free shared pool'
           );
         }
 
@@ -1758,7 +1993,7 @@ export async function callAI(
             await sleep(2000);
             continue;
           }
-          throw new Error('Netzwerkfehler. Bitte überprüfe deine Internetverbindung.');
+          throw new Error('Network error. Please check your internet connection.');
         }
 
         if (attempt < maxRetries - 1) {
@@ -1768,7 +2003,7 @@ export async function callAI(
       }
     }
 
-    throw lastError || new Error('KI-Anfrage fehlgeschlagen nach ' + maxRetries + ' Versuchen.');
+    throw lastError || new Error('AI request failed after ' + maxRetries + ' attempts.');
   } finally {
     clearTimeout(timeout);
   }

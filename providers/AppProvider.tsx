@@ -698,6 +698,18 @@ export const [AppProvider, useApp] = createContextHook(() => {
     return item.id;
   }, [settings]);
 
+  const updateMemo = useCallback((id: string, content: string) => {
+    if (!isLearningEnabled(settings)) {
+      return false;
+    }
+    setMemos(prev => {
+      const updated = prev.map(m => (m.id === id ? { ...m, content } : m));
+      AsyncStorage.setItem('ide_memos', JSON.stringify(updated)).catch(console.log);
+      return updated;
+    });
+    return true;
+  }, [settings]);
+
   const deleteMemo = useCallback((id: string) => {
     setMemos(prev => {
       const updated = prev.filter(m => m.id !== id);
@@ -859,7 +871,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   return {
     settings, updateSettings, isLoaded, learningEnabled: learningActive,
     todos, addTodo, updateTodoItem, deleteTodo, clearAllTodos,
-    memos: learningActive ? memos : [], addMemo, deleteMemo, clearAllMemos,
+    memos: learningActive ? memos : [], addMemo, updateMemo, deleteMemo, clearAllMemos,
     getApiKey, getFallbackSettings, resolveEffectiveProviderAndKey,
     getToolPermission, setToolPermission,
     agentMd, setAgentMd, soulMd, setSoulMd,

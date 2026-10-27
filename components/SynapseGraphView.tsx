@@ -22,11 +22,14 @@ import {
   Sparkles,
   X,
   FolderPlus,
+  Trash2,
+  History,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { MemoEntry, Project } from '@/types';
 import {
   buildSynapseGraph,
+  buildMemoryOnlySynapseGraph,
   localizeCodeSubgraph,
   SynapseNode,
   SynapseNodeType,
@@ -42,6 +45,9 @@ interface SynapseGraphViewProps {
   onOpenCreateProject: () => void;
   onOpenFileInEditor: (filePath: string) => void;
   onAddLinkedMemo: (content: string) => void;
+  onDeleteMemo?: (memoId: string) => void;
+  onOpenGitRestoreModal?: () => void;
+  onOpenGitRestore?: () => void;
 }
 
 const NODE_COLORS: Record<SynapseNodeType, string> = {
@@ -53,7 +59,7 @@ const NODE_COLORS: Record<SynapseNodeType, string> = {
 };
 
 const NODE_LABELS: Record<SynapseNodeType, string> = {
-  project: 'Project Root',
+  project: 'Graph Core',
   file: 'Source File',
   function: 'Function / Symbol',
   memo: 'Memory Synapse',
@@ -65,26 +71,40 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
   projects,
   memos,
   skills,
-  onSelectProject,
   onOpenCreateProject,
   onOpenFileInEditor,
   onAddLinkedMemo,
+  onDeleteMemo,
+  onOpenGitRestoreModal,
+  onOpenGitRestore,
 }) => {
+  const effectiveOpenGitModal = onOpenGitRestoreModal || onOpenGitRestore;
+  const [activeGraphTab, setActiveGraphTab] = useState<'memory' | 'project'>(
+    project ? 'project' : 'memory'
+  );
   const [filterType, setFilterType] = useState<'all' | SynapseNodeType>('all');
   const [localizeQuery, setLocalizeQuery] = useState<string>('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [newMemoInput, setNewMemoInput] = useState<string>('');
+  const [standaloneMemoInput, setStandaloneMemoInput] = useState<string>('');
   const [memoSavedToast, setMemoSavedToast] = useState<string | null>(null);
 
-  const graph = useMemo(
+  const memoryGraph = useMemo(
+    () => buildMemoryOnlySynapseGraph({ memos, projectName: project?.name }),
+    [memos, project?.name],
+  );
+
+  const projectCodeGraph = useMemo(
     () => buildSynapseGraph({ project, memos, skills }),
     [project, memos, skills],
   );
 
+  const activeGraph = activeGraphTab === 'memory' ? memoryGraph : projectCodeGraph;
+
   const localization = useMemo(
-    () => localizeCodeSubgraph(graph, localizeQuery, 14),
-    [graph, localizeQuery],
+    () => localizeCodeSubgraph(activeGraph, localizeQuery, 14),
+    [activeGraph, localizeQuery],
   );
 
   const highlightedIds = useMemo(() => {
@@ -96,8 +116,8 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
   }, [localization]);
 
   const visibleNodes = useMemo(() => {
-    return graph.nodes.filter(n => {
-      if (filterType !== 'all' && n.type !== filterType && n.type !== 'project') {
+    return activeGraph.nodes.filter(n => {
+      if (activeGraphTab === 'project' && filterType !== 'all' && n.type !== filterType && n.type !== 'project') {
         return false;
       }
       if (localizeQuery.trim() && highlightedIds.size > 0) {
@@ -105,7 +125,7 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
       }
       return true;
     });
-  }, [graph.nodes, filterType, localizeQuery, highlightedIds]);
+  }, [activeGraph.nodes, activeGraphTab, filterType, localizeQuery, highlightedIds]);
 
   const visibleNodeIdSet = useMemo(
     () => new Set(visibleNodes.map(n => n.id)),
@@ -114,31 +134,31 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
 
   const visibleEdges = useMemo(
     () =>
-      graph.edges.filter(
+      activeGraph.edges.filter(
         e => visibleNodeIdSet.has(e.source) && visibleNodeIdSet.has(e.target),
       ),
-    [graph.edges, visibleNodeIdSet],
+    [activeGraph.edges, visibleNodeIdSet],
   );
 
   const selectedNode = useMemo(
-    () => graph.nodes.find(n => n.id === selectedNodeId) ?? null,
-    [graph.nodes, selectedNodeId],
+    () => activeGraph.nodes.find(n => n.id === selectedNodeId) ?? null,
+    [activeGraph.nodes, selectedNodeId],
   );
 
   const selectedNodeConnections = useMemo(() => {
     if (!selectedNode) return [];
     const list: { direction: 'in' | 'out'; relation: string; otherNode: SynapseNode }[] = [];
-    for (const edge of graph.edges) {
+    for (const edge of activeGraph.edges) {
       if (edge.source === selectedNode.id) {
-        const target = graph.nodes.find(n => n.id === edge.target);
+        const target = activeGraph.nodes.find(n => n.id === edge.target);
         if (target) list.push({ direction: 'out', relation: edge.relation, otherNode: target });
       } else if (edge.target === selectedNode.id) {
-        const source = graph.nodes.find(n => n.id === edge.source);
+        const source = activeGraph.nodes.find(n => n.id === edge.source);
         if (source) list.push({ direction: 'in', relation: edge.relation, otherNode: source });
       }
     }
     return list;
-  }, [selectedNode, graph]);
+  }, [selectedNode, activeGraph]);
 
   const handleAttachMemory = useCallback(() => {
     if (!newMemoInput.trim() || !selectedNode) return;
@@ -151,331 +171,446 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
     setTimeout(() => setMemoSavedToast(null), 3000);
   }, [newMemoInput, selectedNode, onAddLinkedMemo]);
 
-  if (!project || projects.length === 0) {
-    return (
-      <View style={styles.emptyGraphContainer}>
-        <View style={styles.emptyOrbOuter}>
-          <View style={styles.emptyOrbInner}>
-            <Brain size={42} color={IDE.primary} />
-          </View>
-        </View>
-        <Text style={styles.emptyTitle}>Synapse Memory Graph Ready</Text>
-        <Text style={styles.emptySubtitle}>
-          No projects found yet. Create your first project to index files, functions, imports, and linked AI memories as an interactive neural graph.
-        </Text>
-        <TouchableOpacity
-          style={styles.genesisButton}
-          onPress={onOpenCreateProject}
-          activeOpacity={0.75}
-        >
-          <FolderPlus size={18} color="#fff" />
-          <Text style={styles.genesisButtonText}>Create Project in Memory Graph</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  const handleCreateStandaloneMemo = useCallback(() => {
+    if (!standaloneMemoInput.trim()) return;
+    onAddLinkedMemo(standaloneMemoInput.trim());
+    setStandaloneMemoInput('');
+    setMemoSavedToast('New Memory Synapse added to Memory Graph');
+    setTimeout(() => setMemoSavedToast(null), 3000);
+  }, [standaloneMemoInput, onAddLinkedMemo]);
 
   return (
     <View style={styles.container}>
-      {/* Top Stats & Project Switcher Bar */}
-      <View style={styles.topStatsRow}>
-        <View style={styles.statGroup}>
-          <Text style={styles.statText}>
-            <Text style={styles.statNum}>{graph.stats.fileCount}</Text> Files ·{' '}
-            <Text style={styles.statNum}>{graph.stats.functionCount}</Text> Functions ·{' '}
-            <Text style={styles.statNum}>{graph.stats.memoCount}</Text> Memories ·{' '}
-            <Text style={styles.statNum}>{graph.stats.skillCount}</Text> Skills ·{' '}
-            <Text style={styles.statNum}>{graph.stats.edgeCount}</Text> Synapses
+      {/* Separate Tabs: Memory Graph (Works Without Project) vs. Project Code Graph */}
+      <View style={styles.graphTabsBar}>
+        <TouchableOpacity
+          style={[
+            styles.graphTabBtn,
+            activeGraphTab === 'memory' && styles.graphTabBtnActiveMemory,
+          ]}
+          onPress={() => {
+            setActiveGraphTab('memory');
+            setSelectedNodeId(null);
+          }}
+          activeOpacity={0.8}
+        >
+          <Brain size={15} color={activeGraphTab === 'memory' ? '#10B981' : IDE.muted} />
+          <Text
+            style={[
+              styles.graphTabBtnText,
+              activeGraphTab === 'memory' && { color: '#10B981', fontWeight: '700' },
+            ]}
+          >
+            Memory Graph ({memos.length})
           </Text>
-        </View>
+        </TouchableOpacity>
 
-        <View style={styles.zoomControls}>
-          <TouchableOpacity
-            style={styles.zoomBtn}
-            onPress={() => setZoom(z => Math.max(0.6, Number((z - 0.15).toFixed(2))))}
+        <TouchableOpacity
+          style={[
+            styles.graphTabBtn,
+            activeGraphTab === 'project' && styles.graphTabBtnActiveProject,
+          ]}
+          onPress={() => {
+            setActiveGraphTab('project');
+            setSelectedNodeId(null);
+          }}
+          activeOpacity={0.8}
+        >
+          <FileCode size={15} color={activeGraphTab === 'project' ? IDE.primary : IDE.muted} />
+          <Text
+            style={[
+              styles.graphTabBtnText,
+              activeGraphTab === 'project' && { color: IDE.primary, fontWeight: '700' },
+            ]}
           >
-            <ZoomOut size={15} color={IDE.textSecondary} />
-          </TouchableOpacity>
-          <Text style={styles.zoomLabel}>{Math.round(zoom * 100)}%</Text>
-          <TouchableOpacity
-            style={styles.zoomBtn}
-            onPress={() => setZoom(z => Math.min(1.6, Number((z + 0.15).toFixed(2))))}
-          >
-            <ZoomIn size={15} color={IDE.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.zoomBtn}
-            onPress={() => {
-              setZoom(1);
-              setFilterType('all');
-              setLocalizeQuery('');
-            }}
-          >
-            <RotateCcw size={14} color={IDE.textSecondary} />
-          </TouchableOpacity>
-        </View>
-      </View>
+            Project Code Graph {project ? `(${project.name})` : '(Requires Project)'}
+          </Text>
+        </TouchableOpacity>
 
-      {/* RepoGraph Code Localization Search Bar */}
-      <View style={styles.localizeBar}>
-        <Search size={15} color={IDE.primary} />
-        <TextInput
-          style={styles.localizeInput}
-          value={localizeQuery}
-          onChangeText={setLocalizeQuery}
-          placeholder="Localize function, file, import, or memory synapse..."
-          placeholderTextColor={IDE.muted}
-        />
-        {localizeQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setLocalizeQuery('')}>
-            <X size={15} color={IDE.muted} />
+        {project && effectiveOpenGitModal && (
+          <TouchableOpacity
+            style={styles.gitRestoreTopBtn}
+            onPress={effectiveOpenGitModal}
+            activeOpacity={0.8}
+          >
+            <History size={14} color="#F59E0B" />
+            <Text style={styles.gitRestoreTopBtnText}>Git & Restore</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Filter Bar */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterScroll}
-        contentContainerStyle={styles.filterContent}
-      >
-        {(
-          [
-            { id: 'all', label: 'All Synapses' },
-            { id: 'file', label: 'Files' },
-            { id: 'function', label: 'Functions & Hooks' },
-            { id: 'memo', label: 'Memories' },
-            { id: 'skill', label: 'YAML Skills' },
-          ] as const
-        ).map(f => {
-          const active = filterType === f.id;
-          return (
+      {/* If user is on Project Code Graph tab without an active project, show Empty State */}
+      {activeGraphTab === 'project' && (!project || projects.length === 0) ? (
+        <View style={styles.emptyGraphContainer}>
+          <View style={styles.emptyOrbOuter}>
+            <View style={styles.emptyOrbInner}>
+              <FileCode size={42} color={IDE.primary} />
+            </View>
+          </View>
+          <Text style={styles.emptyTitle}>Project Code Graph Requires an Active Project</Text>
+          <Text style={styles.emptySubtitle}>
+            No active project is selected yet. Create or open a project to index files, exported functions, imports, and call edges in the RepoGraph Code Graph — or switch to the standalone Memory Graph tab above.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
             <TouchableOpacity
-              key={f.id}
-              style={[styles.filterBtn, active && styles.filterBtnActive]}
-              onPress={() => setFilterType(f.id)}
+              style={styles.genesisButton}
+              onPress={onOpenCreateProject}
               activeOpacity={0.75}
             >
-              <Text style={[styles.filterBtnText, active && styles.filterBtnTextActive]}>
-                {f.label}
-              </Text>
+              <FolderPlus size={18} color="#fff" />
+              <Text style={styles.genesisButtonText}>Create New Project</Text>
             </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* Interactive 2D Neural Synapse Canvas */}
-      <ScrollView
-        horizontal
-        style={styles.canvasOuter}
-        contentContainerStyle={{ minWidth: 960 * zoom }}
-      >
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={{ minHeight: 720 * zoom }}
-        >
-          <View
-            style={[
-              styles.canvasSurface,
-              {
-                width: 960 * zoom,
-                height: 720 * zoom,
-              },
-            ]}
-          >
-            {/* Render Directed Synapse Edges as Geometric Vectors */}
-            {visibleEdges.map(edge => {
-              const src = visibleNodes.find(n => n.id === edge.source);
-              const dst = visibleNodes.find(n => n.id === edge.target);
-              if (!src || !dst) return null;
-
-              const x1 = src.x * zoom;
-              const y1 = src.y * zoom;
-              const x2 = dst.x * zoom;
-              const y2 = dst.y * zoom;
-              const dx = x2 - x1;
-              const dy = y2 - y1;
-              const length = Math.sqrt(dx * dx + dy * dy);
-              if (length < 2) return null;
-
-              const angleRad = Math.atan2(dy, dx);
-              const angleDeg = (angleRad * 180) / Math.PI;
-              const midX = (x1 + x2) / 2;
-              const midY = (y1 + y2) / 2;
-
-              const isSelectedEdge =
-                selectedNodeId === edge.source || selectedNodeId === edge.target;
-              const edgeColor =
-                edge.relation === 'remembers'
-                  ? '#10B981'
-                  : edge.relation === 'calls'
-                    ? '#F59E0B'
-                    : edge.relation === 'imports'
-                      ? '#6366F1'
-                      : edge.relation === 'governs'
-                        ? '#06B6D4'
-                        : '#334155';
-
-              return (
-                <View
-                  key={edge.id}
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: midX - length / 2,
-                    top: midY - (isSelectedEdge ? 1.5 : 0.75),
-                    width: length,
-                    height: isSelectedEdge ? 3 : 1.5,
-                    backgroundColor: isSelectedEdge ? edgeColor : edgeColor + '65',
-                    transform: [{ rotate: `${angleDeg}deg` }],
-                  }}
-                />
-              );
-            })}
-
-            {/* Render Interactive Synapse Nodes */}
-            {visibleNodes.map(node => {
-              const color = NODE_COLORS[node.type];
-              const isSelected = selectedNodeId === node.id;
-              const isHighlighted = highlightedIds.has(node.id);
-              const nx = node.x * zoom;
-              const ny = node.y * zoom;
-
-              return (
-                <TouchableOpacity
-                  key={node.id}
-                  activeOpacity={0.8}
-                  onPress={() => setSelectedNodeId(node.id)}
-                  style={[
-                    styles.synapseNode,
-                    {
-                      left: nx - 58,
-                      top: ny - 22,
-                      borderColor: isSelected
-                        ? '#FFFFFF'
-                        : isHighlighted
-                          ? color
-                          : color + '80',
-                      backgroundColor: isSelected ? color + '35' : '#111827F2',
-                    },
-                    node.type === 'project' && styles.projectRootNode,
-                  ]}
-                >
-                  <View style={styles.nodeHeaderRow}>
-                    {node.type === 'project' && <Sparkles size={13} color={color} />}
-                    {node.type === 'file' && <FileCode size={13} color={color} />}
-                    {node.type === 'function' && <Cpu size={13} color={color} />}
-                    {node.type === 'memo' && <Brain size={13} color={color} />}
-                    {node.type === 'skill' && <ShieldCheck size={13} color={color} />}
-                    <Text
-                      style={[
-                        styles.nodeLabel,
-                        isSelected && { color: '#FFFFFF', fontWeight: '700' },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {node.label}
-                    </Text>
-                  </View>
-                  <Text style={styles.nodeSubtitle} numberOfLines={1}>
-                    {node.type.toUpperCase()} · {node.degree} links
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+            <TouchableOpacity
+              style={[styles.genesisButton, { backgroundColor: '#10B981' }]}
+              onPress={() => setActiveGraphTab('memory')}
+              activeOpacity={0.75}
+            >
+              <Brain size={18} color="#fff" />
+              <Text style={styles.genesisButtonText}>Open Memory Graph</Text>
+            </TouchableOpacity>
           </View>
-        </ScrollView>
-      </ScrollView>
-
-      {/* Selected Synapse Node Inspector Drawer */}
-      {selectedNode && (
-        <View style={styles.inspectorDrawer}>
-          <View style={styles.inspectorHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inspectorTypeKicker}>
-                {NODE_LABELS[selectedNode.type]}
-                {selectedNode.filePath ? ` · ${selectedNode.filePath}` : ''}
-                {selectedNode.lineNumber ? `:${selectedNode.lineNumber}` : ''}
-              </Text>
-              <Text style={styles.inspectorTitle}>{selectedNode.label}</Text>
+        </View>
+      ) : (
+        <>
+          {/* Top Stats & Zoom Controls */}
+          <View style={styles.topStatsRow}>
+            <View style={styles.statGroup}>
+              {activeGraphTab === 'memory' ? (
+                <Text style={styles.statText}>
+                  <Text style={[styles.statNum, { color: '#10B981' }]}>{memoryGraph.stats.memoCount}</Text> Persistent Memories ·{' '}
+                  <Text style={styles.statNum}>{memoryGraph.stats.edgeCount}</Text> Neural Synapses · Standalone AI Memory Mode
+                </Text>
+              ) : (
+                <Text style={styles.statText}>
+                  <Text style={styles.statNum}>{projectCodeGraph.stats.fileCount}</Text> Files ·{' '}
+                  <Text style={styles.statNum}>{projectCodeGraph.stats.functionCount}</Text> Functions ·{' '}
+                  <Text style={styles.statNum}>{projectCodeGraph.stats.memoCount}</Text> Memories ·{' '}
+                  <Text style={styles.statNum}>{projectCodeGraph.stats.skillCount}</Text> Skills ·{' '}
+                  <Text style={styles.statNum}>{projectCodeGraph.stats.edgeCount}</Text> Synapses
+                </Text>
+              )}
             </View>
 
-            <View style={styles.inspectorActions}>
-              {selectedNode.filePath && !selectedNode.filePath.startsWith('.qoder') && (
-                <TouchableOpacity
-                  style={styles.openEditorBtn}
-                  onPress={() => onOpenFileInEditor(selectedNode.filePath!)}
-                >
-                  <ExternalLink size={14} color="#fff" />
-                  <Text style={styles.openEditorBtnText}>Open in Editor</Text>
-                </TouchableOpacity>
-              )}
+            <View style={styles.zoomControls}>
               <TouchableOpacity
-                style={styles.closeInspectorBtn}
-                onPress={() => setSelectedNodeId(null)}
+                style={styles.zoomBtn}
+                onPress={() => setZoom(z => Math.max(0.6, Number((z - 0.15).toFixed(2))))}
               >
-                <X size={16} color={IDE.muted} />
+                <ZoomOut size={15} color={IDE.textSecondary} />
+              </TouchableOpacity>
+              <Text style={styles.zoomLabel}>{Math.round(zoom * 100)}%</Text>
+              <TouchableOpacity
+                style={styles.zoomBtn}
+                onPress={() => setZoom(z => Math.min(1.6, Number((z + 0.15).toFixed(2))))}
+              >
+                <ZoomIn size={15} color={IDE.textSecondary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.zoomBtn}
+                onPress={() => {
+                  setZoom(1);
+                  setFilterType('all');
+                  setLocalizeQuery('');
+                }}
+              >
+                <RotateCcw size={14} color={IDE.textSecondary} />
               </TouchableOpacity>
             </View>
           </View>
 
-          {selectedNode.signature && (
-            <Text style={styles.signatureCode}>{selectedNode.signature}</Text>
-          )}
+          {/* Search & Quick Add Memory Bar */}
+          <View style={styles.localizeBar}>
+            <Search size={15} color={activeGraphTab === 'memory' ? '#10B981' : IDE.primary} />
+            <TextInput
+              style={styles.localizeInput}
+              value={localizeQuery}
+              onChangeText={setLocalizeQuery}
+              placeholder={
+                activeGraphTab === 'memory'
+                  ? 'Search persistent memories, rules, or semantic clusters...'
+                  : 'Localize function, file, import, or memory synapse...'
+              }
+              placeholderTextColor={IDE.muted}
+            />
+            {localizeQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setLocalizeQuery('')}>
+                <X size={15} color={IDE.muted} />
+              </TouchableOpacity>
+            )}
+          </View>
 
-          {selectedNode.snippet && (
-            <ScrollView style={styles.snippetBox} nestedScrollEnabled>
-              <Text style={styles.snippetText}>{selectedNode.snippet}</Text>
+          {activeGraphTab === 'memory' ? (
+            <View style={styles.quickMemoryBar}>
+              <Brain size={15} color="#10B981" />
+              <TextInput
+                style={styles.quickMemoryInput}
+                value={standaloneMemoInput}
+                onChangeText={setStandaloneMemoInput}
+                placeholder="Add a persistent memory node to the Memory Graph (no project required)..."
+                placeholderTextColor={IDE.muted}
+              />
+              <TouchableOpacity
+                style={styles.quickMemoryAddBtn}
+                onPress={handleCreateStandaloneMemo}
+                activeOpacity={0.8}
+              >
+                <Plus size={14} color="#fff" />
+                <Text style={styles.quickMemoryAddBtnText}>Add Memory</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.filterScroll}
+              contentContainerStyle={styles.filterContent}
+            >
+              {(
+                [
+                  { id: 'all', label: 'All Synapses' },
+                  { id: 'file', label: 'Files' },
+                  { id: 'function', label: 'Functions & Hooks' },
+                  { id: 'memo', label: 'Memories' },
+                  { id: 'skill', label: 'YAML Skills' },
+                ] as const
+              ).map(f => {
+                const active = filterType === f.id;
+                return (
+                  <TouchableOpacity
+                    key={f.id}
+                    style={[styles.filterBtn, active && styles.filterBtnActive]}
+                    onPress={() => setFilterType(f.id)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.filterBtnText, active && styles.filterBtnTextActive]}>
+                      {f.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           )}
 
-          {/* Connected Synapses List */}
-          {selectedNodeConnections.length > 0 && (
-            <View style={styles.connectionsSection}>
-              <Text style={styles.connectionsHeading}>
-                Connected Synapses ({selectedNodeConnections.length})
-              </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {selectedNodeConnections.map((conn, idx) => (
+          {/* Interactive 2D Neural Synapse Canvas */}
+          <ScrollView
+            horizontal
+            style={styles.canvasOuter}
+            contentContainerStyle={{ minWidth: 960 * zoom }}
+          >
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ minHeight: 720 * zoom }}
+            >
+              <View
+                style={[
+                  styles.canvasSurface,
+                  {
+                    width: 960 * zoom,
+                    height: 720 * zoom,
+                  },
+                ]}
+              >
+                {visibleEdges.map(edge => {
+                  const src = visibleNodes.find(n => n.id === edge.source);
+                  const dst = visibleNodes.find(n => n.id === edge.target);
+                  if (!src || !dst) return null;
+
+                  const x1 = src.x * zoom;
+                  const y1 = src.y * zoom;
+                  const x2 = dst.x * zoom;
+                  const y2 = dst.y * zoom;
+                  const dx = x2 - x1;
+                  const dy = y2 - y1;
+                  const length = Math.sqrt(dx * dx + dy * dy);
+                  if (length < 2) return null;
+
+                  const angleRad = Math.atan2(dy, dx);
+                  const angleDeg = (angleRad * 180) / Math.PI;
+                  const midX = (x1 + x2) / 2;
+                  const midY = (y1 + y2) / 2;
+
+                  const isSelectedEdge =
+                    selectedNodeId === edge.source || selectedNodeId === edge.target;
+                  const edgeColor =
+                    edge.relation === 'remembers'
+                      ? '#10B981'
+                      : edge.relation === 'calls'
+                        ? '#F59E0B'
+                        : edge.relation === 'imports'
+                          ? '#6366F1'
+                          : edge.relation === 'governs'
+                            ? '#06B6D4'
+                            : '#334155';
+
+                  return (
+                    <View
+                      key={edge.id}
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        left: midX - length / 2,
+                        top: midY - (isSelectedEdge ? 1.5 : 0.75),
+                        width: length,
+                        height: isSelectedEdge ? 3 : 1.5,
+                        backgroundColor: isSelectedEdge ? edgeColor : edgeColor + '65',
+                        transform: [{ rotate: `${angleDeg}deg` }],
+                      }}
+                    />
+                  );
+                })}
+
+                {visibleNodes.map(node => {
+                  const color = NODE_COLORS[node.type];
+                  const isSelected = selectedNodeId === node.id;
+                  const isHighlighted = highlightedIds.has(node.id);
+                  const nx = node.x * zoom;
+                  const ny = node.y * zoom;
+
+                  return (
+                    <TouchableOpacity
+                      key={node.id}
+                      activeOpacity={0.8}
+                      onPress={() => setSelectedNodeId(node.id)}
+                      style={[
+                        styles.synapseNode,
+                        {
+                          left: nx - 58,
+                          top: ny - 22,
+                          borderColor: isSelected
+                            ? '#FFFFFF'
+                            : isHighlighted
+                              ? color
+                              : color + '80',
+                          backgroundColor: isSelected ? color + '35' : '#111827F2',
+                        },
+                        node.type === 'project' && styles.projectRootNode,
+                      ]}
+                    >
+                      <View style={styles.nodeHeaderRow}>
+                        {node.type === 'project' && <Sparkles size={13} color={color} />}
+                        {node.type === 'file' && <FileCode size={13} color={color} />}
+                        {node.type === 'function' && <Cpu size={13} color={color} />}
+                        {node.type === 'memo' && <Brain size={13} color={color} />}
+                        {node.type === 'skill' && <ShieldCheck size={13} color={color} />}
+                        <Text
+                          style={[
+                            styles.nodeLabel,
+                            isSelected && { color: '#FFFFFF', fontWeight: '700' },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {node.label}
+                        </Text>
+                      </View>
+                      <Text style={styles.nodeSubtitle} numberOfLines={1}>
+                        {node.type.toUpperCase()} · {node.degree} links
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+          </ScrollView>
+
+          {/* Selected Synapse Node Inspector Drawer */}
+          {selectedNode && (
+            <View style={styles.inspectorDrawer}>
+              <View style={styles.inspectorHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.inspectorTypeKicker}>
+                    {NODE_LABELS[selectedNode.type]}
+                    {selectedNode.filePath ? ` · ${selectedNode.filePath}` : ''}
+                    {selectedNode.lineNumber ? `:${selectedNode.lineNumber}` : ''}
+                  </Text>
+                  <Text style={styles.inspectorTitle}>{selectedNode.label}</Text>
+                </View>
+
+                <View style={styles.inspectorActions}>
+                  {selectedNode.type === 'memo' &&
+                    selectedNode.metadata?.memoId &&
+                    onDeleteMemo && (
+                      <TouchableOpacity
+                        style={[styles.openEditorBtn, { backgroundColor: '#EF4444' }]}
+                        onPress={() => {
+                          onDeleteMemo(selectedNode.metadata!.memoId);
+                          setSelectedNodeId(null);
+                        }}
+                      >
+                        <Trash2 size={13} color="#fff" />
+                        <Text style={styles.openEditorBtnText}>Delete Memory</Text>
+                      </TouchableOpacity>
+                    )}
+                  {selectedNode.filePath && !selectedNode.filePath.startsWith('.qoder') && (
+                    <TouchableOpacity
+                      style={styles.openEditorBtn}
+                      onPress={() => onOpenFileInEditor(selectedNode.filePath!)}
+                    >
+                      <ExternalLink size={14} color="#fff" />
+                      <Text style={styles.openEditorBtnText}>Open in Editor</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
-                    key={`${conn.otherNode.id}_${idx}`}
-                    style={styles.connectionChip}
-                    onPress={() => setSelectedNodeId(conn.otherNode.id)}
+                    style={styles.closeInspectorBtn}
+                    onPress={() => setSelectedNodeId(null)}
                   >
-                    <GitBranch size={12} color={NODE_COLORS[conn.otherNode.type]} />
-                    <Text style={styles.connectionChipText}>
-                      {conn.direction === 'out' ? `→ ${conn.relation}: ` : `← ${conn.relation} by: `}
-                      {conn.otherNode.label}
-                    </Text>
+                    <X size={16} color={IDE.muted} />
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
+                </View>
+              </View>
+
+              {selectedNode.signature && (
+                <Text style={styles.signatureCode}>{selectedNode.signature}</Text>
+              )}
+
+              {selectedNode.snippet && (
+                <ScrollView style={styles.snippetBox} nestedScrollEnabled>
+                  <Text style={styles.snippetText}>{selectedNode.snippet}</Text>
+                </ScrollView>
+              )}
+
+              {selectedNodeConnections.length > 0 && (
+                <View style={styles.connectionsSection}>
+                  <Text style={styles.connectionsHeading}>
+                    Connected Synapses ({selectedNodeConnections.length})
+                  </Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {selectedNodeConnections.map((conn, idx) => (
+                      <TouchableOpacity
+                        key={`${conn.otherNode.id}_${idx}`}
+                        style={styles.connectionChip}
+                        onPress={() => setSelectedNodeId(conn.otherNode.id)}
+                      >
+                        <GitBranch size={12} color={NODE_COLORS[conn.otherNode.type]} />
+                        <Text style={styles.connectionChipText}>
+                          {conn.direction === 'out'
+                            ? `→ ${conn.relation}: `
+                            : `← ${conn.relation} by: `}
+                          {conn.otherNode.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              <View style={styles.attachMemoRow}>
+                <TextInput
+                  style={styles.attachMemoInput}
+                  value={newMemoInput}
+                  onChangeText={setNewMemoInput}
+                  placeholder={`Attach memory or rule to ${selectedNode.label}...`}
+                  placeholderTextColor={IDE.muted}
+                />
+                <TouchableOpacity style={styles.attachMemoBtn} onPress={handleAttachMemory}>
+                  <Plus size={15} color="#fff" />
+                  <Text style={styles.attachMemoBtnText}>Save Synapse</Text>
+                </TouchableOpacity>
+              </View>
+
+              {memoSavedToast && <Text style={styles.memoToastText}>{memoSavedToast}</Text>}
             </View>
           )}
-
-          {/* Link a New Memory Synapse directly to this File/Function */}
-          <View style={styles.attachMemoRow}>
-            <TextInput
-              style={styles.attachMemoInput}
-              value={newMemoInput}
-              onChangeText={setNewMemoInput}
-              placeholder={`Attach memory or rule to ${selectedNode.label}...`}
-              placeholderTextColor={IDE.muted}
-            />
-            <TouchableOpacity
-              style={styles.attachMemoBtn}
-              onPress={handleAttachMemory}
-            >
-              <Plus size={15} color="#fff" />
-              <Text style={styles.attachMemoBtnText}>Save Synapse</Text>
-            </TouchableOpacity>
-          </View>
-
-          {memoSavedToast && (
-            <Text style={styles.memoToastText}>{memoSavedToast}</Text>
-          )}
-        </View>
+        </>
       )}
     </View>
   );
@@ -485,6 +620,91 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: IDE.bg,
+  },
+  graphTabsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: IDE.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: IDE.border,
+    flexWrap: 'wrap',
+  },
+  graphTabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: IDE.border,
+    backgroundColor: IDE.bg,
+  },
+  graphTabBtnActiveMemory: {
+    borderColor: '#10B981',
+    backgroundColor: '#10B98118',
+  },
+  graphTabBtnActiveProject: {
+    borderColor: IDE.primary,
+    backgroundColor: IDE.primary + '18',
+  },
+  graphTabBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: IDE.muted,
+  },
+  gitRestoreTopBtn: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B60',
+    backgroundColor: '#F59E0B15',
+  },
+  gitRestoreTopBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#F59E0B',
+  },
+  quickMemoryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 12,
+    marginTop: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: IDE.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#10B98140',
+  },
+  quickMemoryInput: {
+    flex: 1,
+    fontSize: 12,
+    color: IDE.text,
+    paddingVertical: 2,
+  },
+  quickMemoryAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#10B981',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  quickMemoryAddBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
   },
   emptyGraphContainer: {
     flex: 1,
@@ -522,7 +742,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: IDE.muted,
     textAlign: 'center',
-    maxWidth: 420,
+    maxWidth: 440,
     lineHeight: 19,
     marginBottom: 20,
   },

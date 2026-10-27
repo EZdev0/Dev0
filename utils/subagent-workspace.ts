@@ -312,68 +312,17 @@ export function evaluateCronJobsOnFinishTask(
   };
 }
 
+const LEGACY_DEFAULT_NODE_IDS = new Set(['node_teamworker', 'node_auditor', 'node_localizer']);
+const LEGACY_DEFAULT_CRON_IDS = new Set(['cron_default_audit_on_finish']);
+
 export function createDefaultWorkflowGraphState(): SubAgentWorkflowGraphState {
   const now = Date.now();
   return {
     orchestratorName: 'Dev0',
     activeSubAgentSlug: null,
     lastFinishedSubAgentSlug: null,
-    nodes: [
-      {
-        id: 'node_teamworker',
-        slug: 'teamworker',
-        name: 'Teamworker Sub-Agent',
-        role: 'developer',
-        status: 'idle',
-        currentTask: 'Coordinates multi-file implementation tasks delegated by Dev0',
-        workspaceDir: '.agents/teamworker',
-        allowedFiles: ['*'],
-        updatedAt: now,
-        cronJobIds: ['cron_default_audit_on_finish'],
-      },
-      {
-        id: 'node_auditor',
-        slug: 'auditor',
-        name: 'Security & Quality Auditor',
-        role: 'critic',
-        status: 'idle',
-        currentTask: 'Audits code changes after finish_task and verifies security rules',
-        workspaceDir: '.agents/auditor',
-        allowedFiles: ['*'],
-        updatedAt: now,
-        cronJobIds: [],
-      },
-      {
-        id: 'node_localizer',
-        slug: 'localizer',
-        name: 'RepoGraph Localizer',
-        role: 'localizer',
-        status: 'idle',
-        currentTask: 'Maps Synapse Graph dependencies and pinpoints target files',
-        workspaceDir: '.agents/localizer',
-        allowedFiles: ['*'],
-        updatedAt: now,
-        cronJobIds: [],
-      },
-    ],
-    cronJobs: [
-      {
-        id: 'cron_default_audit_on_finish',
-        name: 'Post-Task Auditor Trigger',
-        targetSubAgentSlug: 'auditor',
-        targetRole: 'critic',
-        scheduleExpression: 'on_finish:teamworker',
-        triggerOnFinishOf: 'teamworker',
-        taskInstruction:
-          'Inspect modified files and .agents/teamworker/STATUS.md after finish_task completion.',
-        enabled: true,
-        createdBy: 'dev0',
-        createdAt: now,
-        lastRunAt: null,
-        nextRunAt: null,
-        runCount: 0,
-      },
-    ],
+    nodes: [],
+    cronJobs: [],
     updatedAt: now,
   };
 }
@@ -385,14 +334,16 @@ export async function loadSubAgentWorkflowState(): Promise<SubAgentWorkflowGraph
     const raw = await AsyncStorage.getItem(STORAGE_KEY_SUBAGENT_WORKFLOW);
     if (raw) {
       const parsed = JSON.parse(raw);
-      const defaults = createDefaultWorkflowGraphState();
       return {
         orchestratorName: 'Dev0',
         activeSubAgentSlug: parsed.activeSubAgentSlug ?? null,
         lastFinishedSubAgentSlug: parsed.lastFinishedSubAgentSlug ?? null,
-        nodes:
-          Array.isArray(parsed.nodes) && parsed.nodes.length > 0 ? parsed.nodes : defaults.nodes,
-        cronJobs: Array.isArray(parsed.cronJobs) ? parsed.cronJobs : defaults.cronJobs,
+        nodes: Array.isArray(parsed.nodes)
+          ? parsed.nodes.filter((n: any) => n && !LEGACY_DEFAULT_NODE_IDS.has(n.id))
+          : [],
+        cronJobs: Array.isArray(parsed.cronJobs)
+          ? parsed.cronJobs.filter((c: any) => c && !LEGACY_DEFAULT_CRON_IDS.has(c.id))
+          : [],
         updatedAt: parsed.updatedAt || Date.now(),
       };
     }

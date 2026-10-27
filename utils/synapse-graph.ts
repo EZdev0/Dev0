@@ -54,6 +54,8 @@ export interface SynapseGraph {
     memoCount: number;
     skillCount: number;
     edgeCount: number;
+    totalMemories: number;
+    totalFiles: number;
   };
 }
 
@@ -254,6 +256,128 @@ function resolveImportToFilePath(
 }
 
 /**
+ * Builds a standalone Memory Synapse Graph that works WITH or WITHOUT an active project.
+ * Connects persistent AI memories (`MemoEntry`) around the central Dev0 Memory Core and
+ * links memories that share semantic keywords or tags.
+ */
+export function buildMemoryOnlySynapseGraph(options: {
+  memos: MemoEntry[];
+  projectName?: string;
+}): SynapseGraph {
+  const { memos = [], projectName } = options;
+  const nodes: SynapseNode[] = [];
+  const edges: SynapseEdge[] = [];
+
+  const centerX = 480;
+  const centerY = 340;
+  const hubId = 'proj_memory_core';
+
+  nodes.push({
+    id: hubId,
+    type: 'project',
+    label: 'Dev0 Memory Core',
+    subtitle: `${memos.length} persistent memories${projectName ? ` · ${projectName}` : ' · Global Brain'}`,
+    x: centerX,
+    y: centerY,
+    degree: 0,
+    metadata: { isMemoryCore: true },
+  });
+
+  const memoKeywordsMap = new Map<string, string[]>();
+
+  memos.forEach((memo, mIdx) => {
+    const angle = (2 * Math.PI * mIdx) / Math.max(1, memos.length);
+    const radius = memos.length <= 5 ? 175 : 190 + (mIdx % 2) * 55;
+    const mx = Math.round(centerX + Math.cos(angle) * radius);
+    const my = Math.round(centerY + Math.sin(angle) * radius);
+
+    const shortTitle =
+      memo.content
+        .split('\n')[0]
+        ?.replace(/^[#*\-\s[\]]+/, '')
+        .slice(0, 38) || `Memory #${mIdx + 1}`;
+
+    const memoNodeId = `memo_${memo.id}`;
+    const memoNode: SynapseNode = {
+      id: memoNodeId,
+      type: 'memo',
+      label: shortTitle,
+      subtitle: new Date(memo.createdAt || Date.now()).toLocaleDateString('en-US'),
+      snippet: memo.content,
+      x: mx,
+      y: my,
+      degree: 1,
+      metadata: { createdAt: memo.createdAt, memoId: memo.id },
+    };
+    nodes.push(memoNode);
+
+    edges.push({
+      id: `e_core_memo_${memo.id}`,
+      source: hubId,
+      target: memoNodeId,
+      relation: 'remembers',
+      label: 'stored memory',
+    });
+
+    const words = Array.from(
+      new Set(
+        memo.content
+          .toLowerCase()
+          .split(/[^a-z0-9_]+/)
+          .filter((w) => w.length >= 5)
+      )
+    ).slice(0, 12);
+    memoKeywordsMap.set(memoNodeId, words);
+  });
+
+  // Cross-link memories that share semantic keywords
+  const memoNodes = nodes.filter((n) => n.type === 'memo');
+  for (let i = 0; i < memoNodes.length; i++) {
+    for (let j = i + 1; j < memoNodes.length; j++) {
+      const a = memoNodes[i];
+      const b = memoNodes[j];
+      const wordsA = memoKeywordsMap.get(a.id) || [];
+      const wordsB = new Set(memoKeywordsMap.get(b.id) || []);
+      const shared = wordsA.filter((w) => wordsB.has(w));
+      if (shared.length > 0) {
+        edges.push({
+          id: `e_synapse_${a.id}_${b.id}`,
+          source: a.id,
+          target: b.id,
+          relation: 'remembers',
+          label: shared[0],
+        });
+      }
+    }
+  }
+
+  const degreeMap = new Map<string, number>();
+  for (const edge of edges) {
+    degreeMap.set(edge.source, (degreeMap.get(edge.source) || 0) + 1);
+    degreeMap.set(edge.target, (degreeMap.get(edge.target) || 0) + 1);
+  }
+  for (const node of nodes) {
+    node.degree = degreeMap.get(node.id) || 0;
+  }
+
+  return {
+    projectId: 'memory_core',
+    projectName: 'Dev0 Memory Graph',
+    nodes,
+    edges,
+    stats: {
+      fileCount: 0,
+      functionCount: 0,
+      memoCount: memos.length,
+      skillCount: 0,
+      edgeCount: edges.length,
+      totalMemories: memos.length,
+      totalFiles: 0,
+    },
+  };
+}
+
+/**
  * Builds the complete Synapse Memory Graph for a Project
  */
 export function buildSynapseGraph(options: {
@@ -271,7 +395,15 @@ export function buildSynapseGraph(options: {
       projectName: 'No Project',
       nodes: [],
       edges: [],
-      stats: { fileCount: 0, functionCount: 0, memoCount: 0, skillCount: 0, edgeCount: 0 },
+      stats: {
+        fileCount: 0,
+        functionCount: 0,
+        memoCount: 0,
+        skillCount: 0,
+        edgeCount: 0,
+        totalMemories: 0,
+        totalFiles: 0,
+      },
     };
   }
 
@@ -519,6 +651,8 @@ export function buildSynapseGraph(options: {
       memoCount: memos.length,
       skillCount: activeSkills.length,
       edgeCount: edges.length,
+      totalMemories: memos.length,
+      totalFiles: flatFiles.length,
     },
   };
 }

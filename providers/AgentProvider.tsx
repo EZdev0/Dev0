@@ -46,7 +46,7 @@ import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
 export const SKIP_QUESTIONS_INSTRUCTION =
-  'Fragen wurden vom Nutzer übersprungen. Triff eigenständig die sinnvollsten Best-Practice-Annahmen und führe die Aufgabe direkt vollständig aus.';
+  'Clarification questions were skipped by the user. Make reasonable best-practice assumptions autonomously and execute the task directly and completely.';
 
 function genId(): string {
   return 'ag_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);

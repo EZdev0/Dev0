@@ -92,7 +92,7 @@ function listDir(nodes: FileNode[], pathParts: string[]): string {
   let target = nodes;
   if (pathParts.length > 0) {
     const node = findNode(nodes, pathParts);
-    if (!node || node.type !== 'directory' || !node.children) return 'Verzeichnis nicht gefunden.';
+    if (!node || node.type !== 'directory' || !node.children) return 'Directory not found.';
     target = node.children;
   }
   const visibleTarget = pathParts.length === 0 ? filterVisibleUserFiles(target) : target;
@@ -102,7 +102,7 @@ function listDir(nodes: FileNode[], pathParts: string[]): string {
       return a.name.localeCompare(b.name);
     })
     .map(n => (n.type === 'directory' ? '📁 ' : '📄 ') + n.name)
-    .join('\n') || '(Leer)';
+    .join('\n') || '(Empty)';
 }
 
 function getAllFilePaths(nodes: FileNode[], basePath: string = ''): string[] {
@@ -408,10 +408,14 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
     });
   }, [updateFiles]);
 
+  const restoreProjectFiles = useCallback((snapshotFiles: FileNode[]) => {
+    updateFiles(() => cloneFiles(snapshotFiles));
+  }, [updateFiles]);
+
   const searchFilesInProject = useCallback((query: string, basePath?: string): string => {
     const projId = currentProjectIdRef.current;
     const proj = plansProjectsRef.current.find(p => p.id === projId);
-    if (!proj) return 'Kein Projekt geöffnet.';
+    if (!proj) return 'No project open.';
     const results: string[] = [];
     let target = proj.files;
     if (basePath) {
@@ -419,38 +423,38 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
       if (node?.type === 'directory' && node.children) target = node.children;
     }
     searchInFiles(target, query, basePath || '', results);
-    if (results.length === 0) return 'Keine Treffer gefunden.';
-    if (results.length > 50) return results.slice(0, 50).join('\n') + '\n... (' + results.length + ' Treffer insgesamt)';
+    if (results.length === 0) return 'No matches found.';
+    if (results.length > 50) return results.slice(0, 50).join('\n') + '\n... (' + results.length + ' matches total)';
     return results.join('\n');
   }, []);
 
   const getProjectTree = useCallback((): string => {
     const projId = currentProjectIdRef.current;
     const proj = plansProjectsRef.current.find(p => p.id === projId);
-    if (!proj) return '(Kein Projekt)';
+    if (!proj) return '(No project)';
     return buildTreeString(proj.files);
   }, []);
 
   const listDirectory = useCallback((path: string): string => {
     const projId = currentProjectIdRef.current;
     const proj = plansProjectsRef.current.find(p => p.id === projId);
-    if (!proj) return 'Kein Projekt geöffnet.';
+    if (!proj) return 'No project open.';
     return listDir(proj.files, splitPath(path));
   }, []);
 
   const getFileInfo = useCallback((path: string): string => {
-    if (!path) return 'Kein Dateipfad angegeben.';
+    if (!path) return 'No file path provided.';
     const projId = currentProjectIdRef.current;
     const proj = plansProjectsRef.current.find(p => p.id === projId);
-    if (!proj) return 'Kein Projekt geöffnet.';
+    if (!proj) return 'No project open.';
     const parts = splitPath(path);
     const node = findNode(proj.files, parts);
-    if (!node || node.type !== 'file') return 'Datei nicht gefunden: ' + path;
+    if (!node || node.type !== 'file') return 'File not found: ' + path;
     const content = node.content ?? '';
     const lines = content.split('\n').length;
     const chars = content.length;
-    const ext = path.split('.').pop() || 'unbekannt';
-    return 'Datei: ' + path + '\nZeilen: ' + lines + '\nZeichen: ' + chars + '\nTyp: ' + ext;
+    const ext = path.split('.').pop() || 'unknown';
+    return 'File: ' + path + '\nLines: ' + lines + '\nChars: ' + chars + '\nType: ' + ext;
   }, []);
 
   const allFilePaths = useMemo(() => {
@@ -460,7 +464,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
 
   return {
     projects, currentProject, currentProjectId, files, isLoaded, allFilePaths,
-    createProject, deleteProject, selectProject,
+    createProject, deleteProject, selectProject, restoreProjectFiles,
     getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory,
     searchFilesInProject, getProjectTree, listDirectory, getFileInfo,
   };

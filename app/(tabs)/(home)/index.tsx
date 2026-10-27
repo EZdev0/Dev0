@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   TextInput, Modal, FlatList, ActivityIndicator,
@@ -7,7 +7,7 @@ import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import {
   Plus, FolderOpen, Search, X, FilePlus, FolderPlus,
-  Download, FileJson, FileText, FolderArchive, CheckCircle, GitBranch,
+  Download, FileJson, FileText, FolderArchive, CheckCircle, GitBranch, RotateCcw, Trash2,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { useProject } from '@/providers/ProjectProvider';
@@ -19,14 +19,21 @@ import { SynapseGraphView } from '@/components/SynapseGraphView';
 import { discoverYamlSkills } from '@/utils/skill-loader';
 import { isBinaryFile } from '@/utils/file-icons';
 import { exportProjectAsZip, exportProjectAsText, exportProjectAsJson, countProjectFiles } from '@/utils/download';
+import {
+  GitRestorePoint,
+  createRestorePoint,
+  listRestorePoints,
+  deleteRestorePoint,
+  formatGitStatusReport,
+} from '@/utils/git-restore';
 
 export default function ProjectsScreen() {
   const router = useRouter();
   const {
     projects, currentProject, files, selectProject, createProject, deleteProject,
-    deleteFile, createFile, createDirectory, renameFile,
+    restoreProjectFiles, deleteFile, createFile, createDirectory, renameFile,
   } = useProject();
-  const { memos, addMemo, skillEnabledOverrides } = useApp();
+  const { memos, addMemo, deleteMemo, skillEnabledOverrides } = useApp();
   const [viewMode, setViewMode] = useState<'synapse' | 'tree'>('synapse');
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -47,6 +54,80 @@ export default function ProjectsScreen() {
   const [renameTarget, setRenameTarget] = useState<{ node: FileNode; path: string; newName: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'file' | 'project'; idOrPath: string; name: string } | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<{ title: string; message: string } | null>(null);
+
+  // Built-in Dual Git & Restore Points State
+  const [showGitModal, setShowGitModal] = useState<boolean>(false);
+  const [restorePoints, setRestorePoints] = useState<GitRestorePoint[]>([]);
+  const [commitLabelInput, setCommitLabelInput] = useState<string>('');
+  const [isGitBusy, setIsGitBusy] = useState<boolean>(false);
+
+  const refreshRestorePoints = useCallback(async () => {
+    if (!currentProject) {
+      setRestorePoints([]);
+      return;
+    }
+    const pts = await listRestorePoints(currentProject.id);
+    setRestorePoints(pts);
+  }, [currentProject]);
+
+  useEffect(() => {
+    refreshRestorePoints();
+  }, [refreshRestorePoints]);
+
+  const handleOpenGitModal = useCallback(async () => {
+    await refreshRestorePoints();
+    setShowGitModal(true);
+  }, [refreshRestorePoints]);
+
+  const handleCreateManualRestorePoint = useCallback(async () => {
+    if (!currentProject) return;
+    setIsGitBusy(true);
+    try {
+      await createRestorePoint({
+        projectId: currentProject.id,
+        label: commitLabelInput.trim() || 'Manual user restore point',
+        filesTree: currentProject.files,
+        author: 'user',
+      });
+      setCommitLabelInput('');
+      await refreshRestorePoints();
+    } finally {
+      setIsGitBusy(false);
+    }
+  }, [currentProject, commitLabelInput, refreshRestorePoints]);
+
+  const handleRollbackRestorePoint = useCallback(
+    async (rp: GitRestorePoint) => {
+      if (!currentProject) return;
+      setIsGitBusy(true);
+      try {
+        await createRestorePoint({
+          projectId: currentProject.id,
+          label: `Auto-backup before rollback to ${rp.commitHash}`,
+          filesTree: currentProject.files,
+          author: 'auto',
+        });
+        restoreProjectFiles(rp.filesTree);
+        await refreshRestorePoints();
+        setNoticeMessage({
+          title: 'Project Restored',
+          message: `Rolled back to "${rp.label}" (${rp.commitHash}, ${rp.fileCount} files).`,
+        });
+      } finally {
+        setIsGitBusy(false);
+      }
+    },
+    [currentProject, restoreProjectFiles, refreshRestorePoints],
+  );
+
+  const handleDeleteRestorePointItem = useCallback(
+    async (rpId: string) => {
+      if (!currentProject) return;
+      await deleteRestorePoint(currentProject.id, rpId);
+      await refreshRestorePoints();
+    },
+    [currentProject, refreshRestorePoints],
+  );
 
   const toggleDir = useCallback((node: FileNode) => {
     setExpandedDirs(prev => {
@@ -205,6 +286,7 @@ export default function ProjectsScreen() {
           onOpenCreateProject={() => setShowNewProject(true)}
           onOpenFileInEditor={(filePath) => router.push({ pathname: '/editor' as any, params: { path: filePath } })}
           onAddLinkedMemo={addMemo}
+          onDeleteMemo={deleteMemo}
         />
 
         <NewProjectModal
@@ -322,6 +404,16 @@ export default function ProjectsScreen() {
           <FolderPlus size={15} color={IDE.primary} />
           <Text style={styles.actionBarBtnText}>Folder</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionBarBtn}
+          onPress={handleOpenGitModal}
+          activeOpacity={0.7}
+        >
+          <GitBranch size={15} color={IDE.accent} />
+          <Text style={[styles.actionBarBtnText, { color: IDE.accent }]}>
+            Git ({restorePoints.length})
+          </Text>
+        </TouchableOpacity>
         <View style={styles.actionBarSpacer} />
         <TouchableOpacity
           style={[styles.actionBarBtn, styles.exportBtn]}
@@ -347,6 +439,8 @@ export default function ProjectsScreen() {
             router.push({ pathname: '/editor' as any, params: { path: filePath } });
           }}
           onAddLinkedMemo={addMemo}
+          onDeleteMemo={deleteMemo}
+          onOpenGitRestore={handleOpenGitModal}
         />
       ) : (
         <FlatList
@@ -390,6 +484,129 @@ export default function ProjectsScreen() {
           </Text>
         )}
       </View>
+
+      {/* Built-in Dual Git & Restore Points Modal */}
+      <Modal visible={showGitModal} transparent animationType="fade" onRequestClose={() => setShowGitModal(false)}>
+        <View style={modalStyles.overlay}>
+          <View style={[modalStyles.container, { maxWidth: 520, maxHeight: '85%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <GitBranch size={18} color={IDE.accent} />
+                <Text style={[modalStyles.title, { marginBottom: 0 }]}>
+                  Built-in Git & Restore Points
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowGitModal(false)}>
+                <X size={18} color={IDE.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ fontSize: 11, color: IDE.muted, marginBottom: 10, lineHeight: 16 }}>
+              Dual Git Engine: Creates instant browser snapshots AND syncs commits to the Docker sandbox when available. Both you and Dev0 (via git_create_restore_point / git_restore_point) can save and roll back restore points.
+            </Text>
+
+            {currentProject && (
+              <View style={{ backgroundColor: IDE.bg, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: IDE.border, marginBottom: 10 }}>
+                <Text style={{ fontSize: 11, color: IDE.textSecondary, fontFamily: 'monospace' }}>
+                  {formatGitStatusReport(currentProject.files, restorePoints[0] || null)}
+                </Text>
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TextInput
+                style={[modalStyles.input, { flex: 1, paddingVertical: 8, fontSize: 12 }]}
+                placeholder="Commit message / Restore point label..."
+                placeholderTextColor={IDE.muted}
+                value={commitLabelInput}
+                onChangeText={setCommitLabelInput}
+              />
+              <TouchableOpacity
+                onPress={handleCreateManualRestorePoint}
+                disabled={isGitBusy}
+                style={[modalStyles.createBtn, { justifyContent: 'center', backgroundColor: IDE.accent }]}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#000' }}>
+                  + Commit Snapshot
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 280 }}>
+              {restorePoints.length === 0 ? (
+                <Text style={{ fontSize: 12, color: IDE.muted, textAlign: 'center', paddingVertical: 20 }}>
+                  No restore points saved yet. Click &quot;+ Commit Snapshot&quot; above to create one.
+                </Text>
+              ) : (
+                restorePoints.map((rp) => (
+                  <View
+                    key={rp.id}
+                    style={{
+                      backgroundColor: IDE.bg,
+                      borderRadius: 8,
+                      padding: 10,
+                      marginBottom: 8,
+                      borderWidth: 1,
+                      borderColor: IDE.border,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: IDE.text }}>
+                        {rp.label}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: IDE.primary, fontFamily: 'monospace', marginTop: 2 }}>
+                        #{rp.commitHash} • {rp.author.toUpperCase()} • {rp.fileCount} files • {new Date(rp.timestamp).toLocaleString()}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: IDE.muted, marginTop: 2 }}>
+                        Diff: +{rp.diffSummary.added.length} added, ~{rp.diffSummary.modified.length} modified, -{rp.diffSummary.deleted.length} deleted
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <TouchableOpacity
+                        onPress={() => handleRollbackRestorePoint(rp)}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 6,
+                          backgroundColor: IDE.primary,
+                        }}
+                      >
+                        <RotateCcw size={12} color="#fff" />
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
+                          Restore
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => handleDeleteRestorePointItem(rp.id)}
+                        style={{
+                          padding: 6,
+                          borderRadius: 6,
+                          backgroundColor: IDE.danger + '20',
+                        }}
+                      >
+                        <Trash2 size={13} color={IDE.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <View style={modalStyles.actions}>
+              <TouchableOpacity onPress={() => setShowGitModal(false)} style={modalStyles.cancelBtn}>
+                <Text style={modalStyles.cancelText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <NewProjectModal
         visible={showNewProject}

@@ -224,6 +224,15 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                   </View>
                 )}
 
+                {templates.length === 0 && (
+                  <View style={styles.templateCard}>
+                    <Text style={styles.templateName}>No Sub-Agents Configured Yet</Text>
+                    <Text style={styles.templateDesc}>
+                      Zero hardcoded Sub-Agents are loaded by default. Click &quot;New Sub-Agent&quot; above or ask Dev0 in Agent Mode to spawn and save a custom Sub-Agent.
+                    </Text>
+                  </View>
+                )}
+
                 {templates.map(tpl => (
                   <View key={tpl.id} style={styles.templateCard}>
                     <View style={styles.templateHeader}>
@@ -247,14 +256,12 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                         >
                           <Edit3 size={14} color={IDE.textSecondary} />
                         </TouchableOpacity>
-                        {!tpl.id.startsWith('tpl_repograph') && (
-                          <TouchableOpacity
-                            style={styles.iconBtn}
-                            onPress={() => onDeleteTemplate(tpl.id)}
-                          >
-                            <Trash2 size={14} color={IDE.danger} />
-                          </TouchableOpacity>
-                        )}
+                        <TouchableOpacity
+                          style={styles.iconBtn}
+                          onPress={() => onDeleteTemplate(tpl.id)}
+                        >
+                          <Trash2 size={14} color={IDE.danger} />
+                        </TouchableOpacity>
                       </View>
                     </View>
 
@@ -380,6 +387,15 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                 <Text style={[styles.sectionDesc, { marginBottom: 12 }]}>
                   Automatically detected Markdown and YAML files with valid YAML frontmatter (e.g. .qoder/rules/*, .agents/*, and project SKILL.md files). Active skills are injected into the agent reasoning context.
                 </Text>
+
+                {skills.length === 0 && (
+                  <View style={styles.templateCard}>
+                    <Text style={styles.templateName}>No Project YAML Skills Found</Text>
+                    <Text style={styles.templateDesc}>
+                      Add a Markdown file with YAML frontmatter (--- name / description ---) in your active project (e.g. .agents/teamwork/SKILL.md or .qoder/rules/Agent.md) to load it here automatically.
+                    </Text>
+                  </View>
+                )}
 
                 {skills.map(s => (
                   <View key={s.id} style={styles.templateCard}>

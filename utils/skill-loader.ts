@@ -35,121 +35,26 @@ export interface CustomSubAgentTemplate {
   updatedAt: number;
 }
 
-const CUSTOM_SUB_AGENTS_STORAGE_KEY = 'ide_custom_sub_agent_templates_v1';
-const SKILL_OVERRIDES_STORAGE_KEY = 'ide_yaml_skill_overrides_v1';
+const CUSTOM_SUB_AGENTS_STORAGE_KEY = 'ide_custom_sub_agent_templates_v2';
+const SKILL_OVERRIDES_STORAGE_KEY = 'ide_yaml_skill_overrides_v2';
+
+const LEGACY_HARDCODED_TEMPLATE_IDS = new Set([
+  'tpl_repograph_localizer',
+  'tpl_ui_ux_architect',
+  'tpl_security_bug_auditor',
+]);
 
 /**
- * Built-in workspace YAML rule & skill files from .qoder/rules and .agents/teamwork
+ * Zero hardcoded workspace YAML skill files by default — only real YAML frontmatter files
+ * inside the active project (.qoder/rules, .agents/*, SKILL.md) are discovered and loaded.
  */
-const BUILTIN_WORKSPACE_SKILL_FILES: { path: string; rawContent: string }[] = [
-  {
-    path: '.qoder/rules/Agent.md',
-    rawContent: `---
-name: "QCoder Master Architecture & Logic"
-description: "Autonomous QCoder agent workflow: load rules, analyze RepoGraph, plan, validate against lessons_learned.md, and verify 0 errors."
-trigger: always_on
-alwaysApply: true
----
-# QCoder Master Agent Directive
-1. Always load rules (lessons_learned.md + user.md) before modifying files.
-2. Read files with read_file before editing with edit_file or write_file.
-3. Verify changes and never repeat documented errors.`,
-  },
-  {
-    path: '.qoder/rules/lessons_learned.md',
-    rawContent: `---
-name: "QCoder System Memory (Lessons Learned)"
-description: "Long-term engineering memory preventing regressions on Gemini thoughtSignature, sub-tab navigation, and cross-platform modals."
-trigger: always_on
-alwaysApply: true
----
-# QCoder System Memory (Lessons Learned)
-- Preserve thoughtSignature and extra_content.google.thought_signature across all tool calls.
-- Never lock local activeTab state inside route parameter synchronization effects.
-- Use cross-platform Modal dialogs and sandboxed iframe/WebAssembly previews on Web.`,
-  },
-  {
-    path: '.qoder/rules/user.md',
-    rawContent: `---
-name: "User Preferences (Master Config)"
-description: "Analytical, concise communication, high-performance TypeScript patterns, and proactive autonomy."
-trigger: always_on
-alwaysApply: true
----
-# User Preferences
-- Communication: Concise, analytical, zero fluff.
-- Code Style: Strict TypeScript, async resilience, high performance, RepoGraph indexable.
-- Autonomy: Proactive problem solving and automatic fallback recovery.`,
-  },
-  {
-    path: '.agents/teamwork/SKILL.md',
-    rawContent: `---
-name: "Multi-Agent Teamwork & Victory Audit"
-description: "Coordinates specialized Analyst, Developer, Tester, Researcher, and Critic sub-agents with strict token-saving isolation."
-trigger: always_on
-alwaysApply: true
----
-# Multi-Agent Teamwork Protocol
-- Delegate specialized analysis, coding, and verification tasks to focused sub-agents.
-- Enforce file-scope boundaries and verify outputs with Critic/Auditor review.`,
-  },
-];
+export const BUILTIN_WORKSPACE_SKILL_FILES: { path: string; rawContent: string }[] = [];
 
-export const DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES: CustomSubAgentTemplate[] = [
-  {
-    id: 'tpl_repograph_localizer',
-    name: 'RepoGraph Localizer',
-    role: 'localizer',
-    description: 'Traverses the Synapse Memory Graph to pinpoint exact files, functions, and dependencies with minimal token usage.',
-    systemPrompt:
-      'You are the RepoGraph Code Localizer sub-agent. Your mission is to locate exact file paths, function signatures, and callers/callees relevant to the task without reading unnecessary files.',
-    rules: [
-      'Use search_files, get_project_tree, and read_lines before reading entire large files.',
-      'Return exact file paths and line numbers for every finding.',
-      'Never modify files directly; provide a precise localization map.',
-    ],
-    allowedTools: ['read_file', 'read_lines', 'list_directory', 'search_files', 'get_project_tree', 'get_file_info', 'think'],
-    allowedFiles: ['*'],
-    canBeCalledByAI: true,
-    createdAt: 1730000000000,
-    updatedAt: 1730000000000,
-  },
-  {
-    id: 'tpl_ui_ux_architect',
-    name: 'UI/UX Component Architect',
-    role: 'developer',
-    description: 'Implements and refines React Native & Web components with strict TypeScript and clean layout rules.',
-    systemPrompt:
-      'You are the UI/UX Component Architect sub-agent. Build responsive, accessible components with working handlers and zero placeholder stubs.',
-    rules: [
-      'Always read the target component with read_file before calling edit_file or write_file.',
-      'Ensure touch targets are at least 44px and work on both Web and Mobile.',
-      'Do not modify backend API routes outside your allowed file scope.',
-    ],
-    allowedTools: ['read_file', 'read_lines', 'write_file', 'create_file', 'edit_file', 'find_replace', 'verify_file', 'think'],
-    allowedFiles: ['components/**', 'app/**', 'constants/**'],
-    canBeCalledByAI: true,
-    createdAt: 1730000001000,
-    updatedAt: 1730000001000,
-  },
-  {
-    id: 'tpl_security_bug_auditor',
-    name: 'Security & Bug Auditor',
-    role: 'critic',
-    description: 'Audits code changes for edge cases, credential leaks, error handling gaps, and regressions.',
-    systemPrompt:
-      'You are the Security & Bug Auditor sub-agent. Inspect modified files for runtime crashes, unhandled promises, and rule compliance.',
-    rules: [
-      'Verify that no API keys or tokens are exposed in plaintext.',
-      'Check against lessons_learned.md and document any new bug patterns.',
-    ],
-    allowedTools: ['read_file', 'read_lines', 'search_files', 'get_project_tree', 'verify_file', 'add_memo', 'think'],
-    allowedFiles: ['*'],
-    canBeCalledByAI: true,
-    createdAt: 1730000002000,
-    updatedAt: 1730000002000,
-  },
-];
+/**
+ * Zero hardcoded Sub-Agent templates by default — Sub-Agents are created dynamically by the user
+ * or by the AI via Sub-Agent Studio / Floating Question Relay.
+ */
+export const DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES: CustomSubAgentTemplate[] = [];
 
 /**
  * Parses YAML frontmatter block (`--- ... ---`) from Markdown or YAML files
@@ -365,18 +270,23 @@ export function isFileAllowedForSubAgent(filePath: string, allowedPatterns: stri
 export async function loadCustomSubAgentTemplates(): Promise<CustomSubAgentTemplate[]> {
   try {
     const raw = await AsyncStorage.getItem(CUSTOM_SUB_AGENTS_STORAGE_KEY);
-    if (!raw) return DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((t: any) => t && t.id && !LEGACY_HARDCODED_TEMPLATE_IDS.has(t.id));
+    }
   } catch (e) {
     console.log('[SkillLoader] Failed to load custom sub-agent templates:', e);
   }
-  return DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES;
+  return [];
 }
 
 export async function saveCustomSubAgentTemplates(templates: CustomSubAgentTemplate[]): Promise<void> {
   try {
-    await AsyncStorage.setItem(CUSTOM_SUB_AGENTS_STORAGE_KEY, JSON.stringify(templates));
+    const cleaned = (templates || []).filter(
+      (t) => t && t.id && !LEGACY_HARDCODED_TEMPLATE_IDS.has(t.id)
+    );
+    await AsyncStorage.setItem(CUSTOM_SUB_AGENTS_STORAGE_KEY, JSON.stringify(cleaned));
   } catch (e) {
     console.log('[SkillLoader] Failed to save custom sub-agent templates:', e);
   }

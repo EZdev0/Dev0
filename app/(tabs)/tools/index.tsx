@@ -74,6 +74,7 @@ export default function ToolsScreen() {
     getToolPermission,
     setToolPermission,
     customSubAgents,
+    deleteSubAgentTemplate,
     setShowSubAgentStudioModal,
     setShowFreePoolModal,
   } = useApp();
@@ -294,11 +295,12 @@ export default function ToolsScreen() {
                   name: tpl.name,
                   task: tpl.description,
                   questions: [
-                    `Welche Aufgabe soll der gespeicherte Sub-Agent "${tpl.name}" (${tpl.role}) für den Main-Ersteller ausführen?`,
+                    `What task should the saved Sub-Agent "${tpl.name}" (${tpl.role}) execute for the Main Creator?`,
                   ],
                 });
               }, 100);
             }}
+            onDeleteSavedSubAgent={(tplId) => deleteSubAgentTemplate(tplId)}
             onViewSubAgentResult={(agentId) => {
               const ag = subAgents.find(a => a.id === agentId);
               if (ag?.result) {
@@ -339,32 +341,39 @@ export default function ToolsScreen() {
               </View>
             </View>
             <Text style={styles.toolsSubtitle}>
-              Custom & built-in Sub-Agent templates with scoped file permissions and .qoder/rules YAML skills. Tap any template to edit or run.
+              Custom Sub-Agent templates with scoped file permissions and project YAML skills. Tap Sub-Agent Studio to create, edit, or delete templates.
             </Text>
             <View style={styles.categorySection}>
               {customSubAgents.map(tpl => (
-                <TouchableOpacity
-                  key={tpl.id}
-                  style={styles.toolCard}
-                  onPress={() => setShowSubAgentStudioModal(true)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
-                    <Brain size={12} color={IDE.primary} />
-                  </View>
-                  <View style={styles.toolCardContent}>
-                    <View style={styles.toolNameRow}>
-                      <Text style={styles.toolCardName}>{tpl.name}</Text>
-                      <View style={styles.betaPill}>
-                        <Text style={styles.betaPillText}>{tpl.role.toUpperCase()}</Text>
-                      </View>
+                <View key={tpl.id} style={styles.toolCard}>
+                  <TouchableOpacity
+                    style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                    onPress={() => setShowSubAgentStudioModal(true)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
+                      <Brain size={12} color={IDE.primary} />
                     </View>
-                    <Text style={styles.toolCardDesc} numberOfLines={1}>
-                      {tpl.description} • Files: {tpl.allowedFiles.join(', ')}
-                    </Text>
-                  </View>
-                  <ChevronRight size={14} color={IDE.muted} />
-                </TouchableOpacity>
+                    <View style={styles.toolCardContent}>
+                      <View style={styles.toolNameRow}>
+                        <Text style={styles.toolCardName}>{tpl.name}</Text>
+                        <View style={styles.betaPill}>
+                          <Text style={styles.betaPillText}>{tpl.role.toUpperCase()}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.toolCardDesc} numberOfLines={1}>
+                        {tpl.description} • Files: {tpl.allowedFiles.join(', ')}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => deleteSubAgentTemplate(tpl.id)}
+                    style={{ padding: 6 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Trash2 size={14} color={IDE.danger} />
+                  </TouchableOpacity>
+                </View>
               ))}
             </View>
 

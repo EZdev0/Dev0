@@ -13,16 +13,17 @@ import {
   Cpu,
   MessageSquare,
   Send,
-  Zap,
   X,
   FileCode,
   BookmarkCheck,
   Sparkles,
+  Lock,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import {
   SubAgentQuestionRequest,
   SubAgentQuestionResponse,
+  generateSmartSubAgentConfig,
 } from '@/utils/subagent-question-relay';
 
 interface SubAgentFloatingQuestionModalProps {
@@ -55,6 +56,7 @@ export const SubAgentFloatingQuestionModal: React.FC<SubAgentFloatingQuestionMod
   const [allowedFilesText, setAllowedFilesText] = useState<string>('*');
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [saveToSubAgentList, setSaveToSubAgentList] = useState<boolean>(true);
+  const [isAiGenerating, setIsAiGenerating] = useState<boolean>(false);
 
   useEffect(() => {
     if (request) {
@@ -63,6 +65,7 @@ export const SubAgentFloatingQuestionModal: React.FC<SubAgentFloatingQuestionMod
       setTaskInstruction(request.suggestedTask || '');
       setAllowedFilesText((request.allowedFiles || ['*']).join(', '));
       setSaveToSubAgentList(request.saveToSubAgentList ?? true);
+      setIsAiGenerating(false);
       const initialAnswers: Record<string, string> = {};
       for (const q of request.questions) {
         initialAnswers[q.id] = q.answer || '';
@@ -74,6 +77,7 @@ export const SubAgentFloatingQuestionModal: React.FC<SubAgentFloatingQuestionMod
   if (!visible || !request) return null;
 
   const handleSelectRole = (roleId: string, roleLabel: string, defaultTask: string) => {
+    if (isAiGenerating) return;
     setSubAgentRole(roleId);
     if (
       !subAgentName.trim() ||
@@ -87,24 +91,63 @@ export const SubAgentFloatingQuestionModal: React.FC<SubAgentFloatingQuestionMod
     }
   };
 
-  const buildResponsePayload = (skipped: boolean): SubAgentQuestionResponse => {
-    const parsedFiles = allowedFilesText
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const buildResponsePayload = (
+    skipped: boolean,
+    override?: {
+      subAgentName?: string;
+      subAgentRole?: string;
+      taskInstruction?: string;
+      allowedFiles?: string[];
+      answers?: Record<string, string>;
+    }
+  ): SubAgentQuestionResponse => {
+    const effectiveFiles =
+      override?.allowedFiles ||
+      allowedFilesText
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    const effectiveAnswers = override?.answers || answers;
+
     return {
       requestId: request.id,
-      subAgentName: subAgentName.trim() || `${subAgentRole} Sub-Agent`,
-      subAgentRole: subAgentRole.trim() || 'developer',
-      taskInstruction: taskInstruction.trim(),
-      allowedFiles: parsedFiles.length > 0 ? parsedFiles : ['*'],
+      subAgentName:
+        (override?.subAgentName ?? subAgentName).trim() ||
+        `${override?.subAgentRole ?? subAgentRole} Sub-Agent`,
+      subAgentRole: (override?.subAgentRole ?? subAgentRole).trim() || 'developer',
+      taskInstruction: (override?.taskInstruction ?? taskInstruction).trim(),
+      allowedFiles: effectiveFiles.length > 0 ? effectiveFiles : ['*'],
       answers: request.questions.map((q) => ({
         question: q.question,
-        answer: answers[q.id] || '',
+        answer: effectiveAnswers[q.id] || '',
       })),
       saveToSubAgentList,
       skipped,
     };
+  };
+
+  const handleAiGenerateAll = () => {
+    if (isAiGenerating) return;
+    setIsAiGenerating(true);
+
+    const smart = generateSmartSubAgentConfig(request);
+    setSubAgentRole(smart.subAgentRole);
+    setSubAgentName(smart.subAgentName);
+    setAllowedFilesText(smart.allowedFiles.join(', '));
+    setTaskInstruction(smart.taskInstruction);
+    setAnswers(smart.answers);
+
+    setTimeout(() => {
+      const payload = buildResponsePayload(false, {
+        subAgentName: smart.subAgentName,
+        subAgentRole: smart.subAgentRole,
+        taskInstruction: smart.taskInstruction,
+        allowedFiles: smart.allowedFiles,
+        answers: smart.answers,
+      });
+      setIsAiGenerating(false);
+      onSubmit(payload);
+    }, 520);
   };
 
   return (
@@ -120,145 +163,194 @@ export const SubAgentFloatingQuestionModal: React.FC<SubAgentFloatingQuestionMod
               <View style={{ flex: 1 }}>
                 <View style={styles.badgeRow}>
                   <Text style={styles.badgeText}>FLOATING SUB-AGENT WINDOW</Text>
-                  <Text style={styles.relayBadgeText}>→ MAIN-ERSTELLER RELAY</Text>
+                  <Text style={styles.relayBadgeText}>→ MAIN CREATOR RELAY</Text>
                 </View>
                 <Text style={styles.headerTitle}>
-                  Sub-Agent Konfigurieren & Rückfragen Beantworten
+                  Configure Sub-Agent & Answer Clarifying Questions
                 </Text>
               </View>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn} disabled={isAiGenerating}>
               <X size={18} color={IDE.muted} />
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent} keyboardShouldPersistTaps="handled">
-            {/* Role Selector */}
-            <Text style={styles.sectionLabel}>1. Sub-Agent Rolle wählen</Text>
-            <View style={styles.roleRow}>
-              {ROLE_OPTIONS.map((r) => {
-                const active = subAgentRole.toLowerCase() === r.id;
-                return (
-                  <TouchableOpacity
-                    key={r.id}
-                    style={[styles.roleChip, active && styles.roleChipActive]}
-                    onPress={() => handleSelectRole(r.id, r.label, r.defaultTask)}
-                    activeOpacity={0.75}
-                  >
-                    <Sparkles size={11} color={active ? '#fff' : IDE.primary} />
-                    <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>
-                      {r.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Name & Allowed Files */}
-            <View style={styles.twoColRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sectionLabel}>2. Name (für gespeicherte Liste)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={subAgentName}
-                  onChangeText={setSubAgentName}
-                  placeholder="z.B. Frontend Developer Sub-Agent"
-                  placeholderTextColor={IDE.muted}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sectionLabel}>
-                  <FileCode size={11} color={IDE.primary} /> Erlaubte Dateien (Globs)
-                </Text>
-                <TextInput
-                  style={styles.input}
-                  value={allowedFilesText}
-                  onChangeText={setAllowedFilesText}
-                  placeholder="*, app/**, components/**"
-                  placeholderTextColor={IDE.muted}
-                />
-              </View>
-            </View>
-
-            {/* Questions from Sub-Agent / AI */}
-            <View style={styles.questionsBox}>
-              <View style={styles.questionsHeader}>
-                <MessageSquare size={14} color={IDE.warning} />
-                <Text style={styles.questionsTitle}>
-                  Rückfragen ({request.questions.length}) — Antworten gehen direkt an den Main-Ersteller
-                </Text>
+          <View style={{ position: 'relative' }}>
+            <ScrollView
+              style={[styles.body, isAiGenerating && { opacity: 0.55 }]}
+              contentContainerStyle={styles.bodyContent}
+              keyboardShouldPersistTaps="handled"
+              scrollEnabled={!isAiGenerating}
+            >
+              {/* Role Selector */}
+              <Text style={styles.sectionLabel}>1. Select Sub-Agent Role</Text>
+              <View style={styles.roleRow}>
+                {ROLE_OPTIONS.map((r) => {
+                  const active = subAgentRole.toLowerCase() === r.id;
+                  return (
+                    <TouchableOpacity
+                      key={r.id}
+                      style={[styles.roleChip, active && styles.roleChipActive]}
+                      onPress={() => handleSelectRole(r.id, r.label, r.defaultTask)}
+                      activeOpacity={0.75}
+                      disabled={isAiGenerating}
+                    >
+                      <Sparkles size={11} color={active ? '#fff' : IDE.primary} />
+                      <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>
+                        {r.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
-              {request.questions.map((q, idx) => (
-                <View key={q.id} style={styles.questionItem}>
-                  <Text style={styles.questionPrompt}>
-                    {idx + 1}. {q.question}
-                  </Text>
+              {/* Name & Allowed Files */}
+              <View style={styles.twoColRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.sectionLabel}>2. Name (for Saved List)</Text>
                   <TextInput
-                    style={styles.questionInput}
-                    value={answers[q.id] || ''}
-                    onChangeText={(txt) =>
-                      setAnswers((prev) => ({ ...prev, [q.id]: txt }))
-                    }
-                    placeholder="Deine Antwort für den Sub-Agent / Main-Ersteller..."
+                    style={[styles.input, isAiGenerating && styles.lockedInput]}
+                    value={subAgentName}
+                    onChangeText={setSubAgentName}
+                    placeholder="e.g. Frontend Developer Sub-Agent"
                     placeholderTextColor={IDE.muted}
-                    multiline
+                    editable={!isAiGenerating}
                   />
                 </View>
-              ))}
-            </View>
-
-            {/* Concrete Task Instruction */}
-            <Text style={styles.sectionLabel}>3. Konkrete Aufgabe / Mission (optional ergänzen)</Text>
-            <TextInput
-              style={[styles.input, { minHeight: 58, textAlignVertical: 'top' }]}
-              value={taskInstruction}
-              onChangeText={setTaskInstruction}
-              placeholder="Was genau soll dieser Sub-Agent ausführen?"
-              placeholderTextColor={IDE.muted}
-              multiline
-            />
-
-            {/* Save in Sub-Agent List Toggle */}
-            <View style={styles.saveSwitchRow}>
-              <View style={styles.saveSwitchLeft}>
-                <BookmarkCheck size={16} color={IDE.accent} />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.saveSwitchTitle}>
-                    Als gespeicherten Sub-Agent in der Liste anzeigen
+                  <Text style={styles.sectionLabel}>
+                    <FileCode size={11} color={IDE.primary} /> Allowed Files (Globs)
                   </Text>
-                  <Text style={styles.saveSwitchSub}>
-                    Speichert diesen Sub-Agent dauerhaft in deiner Sub-Agent-Liste (Chat, Tools & Studio)
-                  </Text>
+                  <TextInput
+                    style={[styles.input, isAiGenerating && styles.lockedInput]}
+                    value={allowedFilesText}
+                    onChangeText={setAllowedFilesText}
+                    placeholder="*, app/**, components/**"
+                    placeholderTextColor={IDE.muted}
+                    editable={!isAiGenerating}
+                  />
                 </View>
               </View>
-              <Switch
-                value={saveToSubAgentList}
-                onValueChange={setSaveToSubAgentList}
-                trackColor={{ false: IDE.border, true: IDE.accent }}
+
+              {/* Questions from Sub-Agent / AI */}
+              <View style={styles.questionsBox}>
+                <View style={styles.questionsHeader}>
+                  <MessageSquare size={14} color={IDE.warning} />
+                  <Text style={styles.questionsTitle}>
+                    Clarifying Questions ({request.questions.length}) — Answers Relay Directly to Main Creator
+                  </Text>
+                </View>
+
+                {request.questions.map((q, idx) => (
+                  <View key={q.id} style={styles.questionItem}>
+                    <Text style={styles.questionPrompt}>
+                      {idx + 1}. {q.question}
+                    </Text>
+                    <TextInput
+                      style={[styles.questionInput, isAiGenerating && styles.lockedInput]}
+                      value={answers[q.id] || ''}
+                      onChangeText={(txt) =>
+                        setAnswers((prev) => ({ ...prev, [q.id]: txt }))
+                      }
+                      placeholder="Your answer for the Sub-Agent / Main Creator..."
+                      placeholderTextColor={IDE.muted}
+                      multiline
+                      editable={!isAiGenerating}
+                    />
+                  </View>
+                ))}
+              </View>
+
+              {/* Concrete Task Instruction */}
+              <Text style={styles.sectionLabel}>3. Concrete Task / Mission (optional)</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  { minHeight: 58, textAlignVertical: 'top' },
+                  isAiGenerating && styles.lockedInput,
+                ]}
+                value={taskInstruction}
+                onChangeText={setTaskInstruction}
+                placeholder="What exactly should this Sub-Agent execute?"
+                placeholderTextColor={IDE.muted}
+                multiline
+                editable={!isAiGenerating}
               />
-            </View>
-          </ScrollView>
+
+              {/* Save in Sub-Agent List Toggle */}
+              <View style={styles.saveSwitchRow}>
+                <View style={styles.saveSwitchLeft}>
+                  <BookmarkCheck size={16} color={IDE.accent} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.saveSwitchTitle}>
+                      Show as Saved Sub-Agent in List
+                    </Text>
+                    <Text style={styles.saveSwitchSub}>
+                      Saves this Sub-Agent permanently in your Sub-Agent List (Chat, Tools & Studio)
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={saveToSubAgentList}
+                  onValueChange={setSaveToSubAgentList}
+                  trackColor={{ false: IDE.border, true: IDE.accent }}
+                  disabled={isAiGenerating}
+                />
+              </View>
+            </ScrollView>
+
+            {/* Striped Grayed-Out Lock Overlay when "AI Generate All" is active */}
+            {isAiGenerating && (
+              <View style={styles.stripedLockOverlay} pointerEvents="auto">
+                <View style={styles.stripesContainer}>
+                  {Array.from({ length: 18 }).map((_, i) => (
+                    <View
+                      key={i}
+                      style={[
+                        styles.diagonalStripe,
+                        { top: i * 36 - 100 },
+                      ]}
+                    />
+                  ))}
+                </View>
+                <View style={styles.lockBadgeCard}>
+                  <Lock size={18} color="#F59E0B" />
+                  <View>
+                    <Text style={styles.lockBadgeTitle}>
+                      AI Auto-Generating Sub-Agent Configuration...
+                    </Text>
+                    <Text style={styles.lockBadgeSub}>
+                      Fields are locked while Dev0 synthesizes role, file scope, and answers
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+          </View>
 
           {/* Footer Actions */}
           <View style={styles.footer}>
             <TouchableOpacity
-              style={styles.skipBtn}
-              onPress={() => onSkip(buildResponsePayload(true))}
+              style={[styles.aiGenerateBtn, isAiGenerating && { opacity: 0.7 }]}
+              onPress={handleAiGenerateAll}
               activeOpacity={0.75}
+              disabled={isAiGenerating}
             >
-              <Zap size={14} color={IDE.warning} />
-              <Text style={styles.skipBtnText}>Überspringen (Standard nutzen)</Text>
+              <Sparkles size={14} color="#F59E0B" />
+              <Text style={styles.aiGenerateBtnText}>
+                {isAiGenerating ? 'AI Generating...' : 'AI Generate All'}
+              </Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.submitBtn}
+              style={[styles.submitBtn, isAiGenerating && { opacity: 0.7 }]}
               onPress={() => onSubmit(buildResponsePayload(false))}
               activeOpacity={0.8}
+              disabled={isAiGenerating}
             >
               <Send size={14} color="#fff" />
               <Text style={styles.submitBtnText}>
-                An Main-Ersteller senden & Speichern
+                Send to Main Creator & Save
               </Text>
             </TouchableOpacity>
           </View>
@@ -398,6 +490,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: IDE.text,
   },
+  lockedInput: {
+    backgroundColor: '#1E293B',
+    borderColor: '#475569',
+    color: '#94A3B8',
+  },
   questionsBox: {
     backgroundColor: IDE.bg,
     borderRadius: 10,
@@ -465,6 +562,54 @@ const styles = StyleSheet.create({
     color: IDE.muted,
     marginTop: 1,
   },
+  stripedLockOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.58)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+    padding: 20,
+  },
+  stripesContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  diagonalStripe: {
+    position: 'absolute',
+    left: -120,
+    right: -120,
+    height: 14,
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    transform: [{ rotate: '-18deg' }],
+  },
+  lockBadgeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#0F172A',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+  },
+  lockBadgeTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#F8FAFC',
+  },
+  lockBadgeSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -476,21 +621,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: IDE.border,
   },
-  skipBtn: {
+  aiGenerateBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: 8,
-    backgroundColor: IDE.warning + '15',
+    backgroundColor: '#F59E0B1A',
     borderWidth: 1,
-    borderColor: IDE.warning + '40',
+    borderColor: '#F59E0B55',
   },
-  skipBtnText: {
-    fontSize: 11,
+  aiGenerateBtnText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: IDE.warning,
+    color: '#F59E0B',
   },
   submitBtn: {
     flex: 1,

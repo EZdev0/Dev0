@@ -23,6 +23,7 @@ interface AgentDashboardProps {
   savedSubAgentTemplates?: CustomSubAgentTemplate[];
   onDeploySubAgent: (type: SubAgentType) => void;
   onLaunchSavedSubAgent?: (template: CustomSubAgentTemplate) => void;
+  onDeleteSavedSubAgent?: (templateId: string) => void;
   onViewSubAgentResult: (agentId: string) => void;
   currentTask?: string;
   hasClarificationQuestions?: boolean;
@@ -39,6 +40,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
   savedSubAgentTemplates = [],
   onDeploySubAgent,
   onLaunchSavedSubAgent,
+  onDeleteSavedSubAgent,
   onViewSubAgentResult,
   currentTask,
   hasClarificationQuestions,
@@ -149,7 +151,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
             >
               <Ionicons name="play-skip-forward" size={16} color="#fff" />
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
-                Überspringen & Direkt starten (Skip)
+                Skip & Start Immediately
               </Text>
             </TouchableOpacity>
           </View>
@@ -243,24 +245,42 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({
                   Allowed Files: {tpl.allowedFiles.join(', ')}
                 </Text>
               </View>
-              {onLaunchSavedSubAgent && (
-                <TouchableOpacity
-                  onPress={() => onLaunchSavedSubAgent(tpl)}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 5,
-                    backgroundColor: IDE.accent,
-                    paddingHorizontal: 10,
-                    paddingVertical: 7,
-                    borderRadius: 8,
-                  }}
-                  activeOpacity={0.75}
-                >
-                  <Ionicons name="play" size={13} color="#fff" />
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>Start / Ask</Text>
-                </TouchableOpacity>
-              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                {onLaunchSavedSubAgent && (
+                  <TouchableOpacity
+                    onPress={() => onLaunchSavedSubAgent(tpl)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 5,
+                      backgroundColor: IDE.accent,
+                      paddingHorizontal: 10,
+                      paddingVertical: 7,
+                      borderRadius: 8,
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="play" size={13} color="#fff" />
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>Start / Ask</Text>
+                  </TouchableOpacity>
+                )}
+                {onDeleteSavedSubAgent && (
+                  <TouchableOpacity
+                    onPress={() => onDeleteSavedSubAgent(tpl.id)}
+                    style={{
+                      paddingHorizontal: 8,
+                      paddingVertical: 7,
+                      borderRadius: 8,
+                      backgroundColor: 'rgba(239, 68, 68, 0.14)',
+                      borderWidth: 1,
+                      borderColor: 'rgba(239, 68, 68, 0.35)',
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#F87171" />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           ))}
         </View>
@@ -475,7 +495,7 @@ export const ToolPermissionDialog: React.FC<ToolPermissionDialogProps> = ({
       <View style={styles.dialog}>
         <View style={styles.dialogHeader}>
           <Ionicons name="lock-closed" size={24} color={IDE.text} />
-          <Text style={styles.dialogTitle}>Tool-Berechtigung erforderlich</Text>
+          <Text style={styles.dialogTitle}>Tool Permission Required</Text>
         </View>
 
         <View style={styles.dialogContent}>

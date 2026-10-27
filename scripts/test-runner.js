@@ -47,10 +47,16 @@ Module.prototype.require = function (id) {
 let passed = 0;
 let failed = 0;
 let currentSuite = '';
+let currentBeforeEach = null;
 const testQueue = [];
+
+global.beforeEach = (fn) => {
+  currentBeforeEach = fn;
+};
 
 global.describe = (name, fn) => {
   const prevSuite = currentSuite;
+  const prevBeforeEach = currentBeforeEach;
   currentSuite = prevSuite ? `${prevSuite} > ${name}` : name;
   testQueue.push({ type: 'suite', name: currentSuite });
   try {
@@ -60,10 +66,11 @@ global.describe = (name, fn) => {
     failed++;
   }
   currentSuite = prevSuite;
+  currentBeforeEach = prevBeforeEach;
 };
 
 global.it = (name, fn) => {
-  testQueue.push({ type: 'test', suite: currentSuite, name, fn });
+  testQueue.push({ type: 'test', suite: currentSuite, name, fn, beforeEachFn: currentBeforeEach });
 };
 
 global.test = global.it;
@@ -158,6 +165,9 @@ require('../__tests__/utils/synapse-and-pool.test.ts');
 // 5. Load Strict Question Tool, Sub-Agent Floating Window Relay & Extended Free Pool test
 require('../__tests__/utils/subagent-question-and-pool.test.ts');
 
+// 6. Load Dev0 v1.6 Chat ZIP, Cross-Chat Reader, Dual Git Restore, Standalone Memory Graph & Tool Isolation test
+require('../__tests__/utils/v16-chat-zip-git-memory-graph.test.ts');
+
 (async () => {
   for (const item of testQueue) {
     if (item.type === 'suite') {
@@ -165,6 +175,9 @@ require('../__tests__/utils/subagent-question-and-pool.test.ts');
       continue;
     }
     try {
+      if (item.beforeEachFn) {
+        await item.beforeEachFn();
+      }
       await item.fn();
       passed++;
       console.log(`  ✅ ${item.name}`);

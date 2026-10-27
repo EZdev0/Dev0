@@ -144,5 +144,17 @@ Every code or rule change must be validated against the following checks:
   - Maintains hidden English `.agents/<slug>/README.md`, `RULES.md`, `STATUS.md`, and `LOG.md` files for every Sub-Agent, hidden from the normal user file tree (`filterVisibleUserFiles`) and Git-ignored.
   - Adds `finish_task`, `create_cron_job`, `sleep_agent`, and `inspect_subagent_workspace` tools plus an interactive Workflow & Cron Graph Card in Chat for pausing, resuming, and scheduling Sub-Agents.
 
+---
 
-
+## Normal Chat Mode Tool Isolation, Downloadable Chat ZIPs, Dual Git Restore Points, Standalone Memory Graph & 100% English UI (v1.6.0)
+- **Normal Chat Mode vs. Agent Mode Tool Isolation (`utils/ai-service.ts`, `providers/ChatProvider.tsx`, `types/index.ts`):**
+  - Strips project filesystem and `sub_agent` tools (`isProjectFilesystemOrAgentOnlyTool`) when in Normal Chat Mode (`chatModeOnly: true` / `agentMode: false`) or when no project is active.
+  - Provides `zip_create` and `zip_read` (`utils/chat-zip.ts`) so generated files in Normal Chat Mode are packaged into a downloadable PKZIP archive rendered as an interactive **ZIP Download Graphic Card** (`ChatBubble.tsx`), automatically converting stray `write_file`/`create_file` calls in Normal Chat Mode into `.zip` bundles.
+  - Provides `draft_agent_plan` to render an interactive **Execution Plan Graphic Card** in Chat with **Proceed in Agent Mode** and **Edit / Refine Plan** floating editor support, plus `read_other_chat_messages` (`utils/cross-chat-reader.ts`) for token-efficient (< 1,750 chars) BM25 cross-chat retrieval.
+- **Zero Hardcoded Sub-Agents or Skills & Separate Memory Graph vs. Project Code Graph Tabs (`utils/skill-loader.ts`, `utils/subagent-workspace.ts`, `utils/synapse-graph.ts`, `components/SynapseGraphView.tsx`):**
+  - Empties `DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES = []`, `BUILTIN_WORKSPACE_SKILL_FILES = []`, and default workflow nodes/cron jobs so only real user/AI-created Sub-Agents and project YAML skills appear.
+  - Splits `SynapseGraphView` into a standalone **Memory Graph** tab (`buildMemoryOnlySynapseGraph`, usable with or without an active project, plus AI tools `memory_search`, `memory_update`, `memory_delete`, `memory_graph_query`) and a **Project Code Graph** tab (requires an active project).
+- **Built-in Dual Git & Restore Point System (`utils/git-restore.ts`, `app/(tabs)/(home)/index.tsx`, `providers/ChatProvider.tsx`, `providers/ProjectProvider.tsx`):**
+  - Combines browser-side snapshot restore points (`IndexedDB` / `AsyncStorage`) with Docker `/api/sandbox` Git commit mirroring (`git_status`, `git_create_restore_point`, `git_list_restore_points`, `git_restore_point`) and an interactive **Built-in Git & Restore Points** modal in Projects.
+- **100% English UI, "AI Generate All" Striped Lock Overlay, Live Read-Only Sub-Agent Stream & Sub-Agent Deletion (`components/SubAgentFloatingQuestionModal.tsx`, `app/(tabs)/chat/index.tsx`, `components/SubAgentStudioModal.tsx`):**
+  - Translates all UI components and modals to 100% English, adds an **"AI Generate All"** button with a diagonal striped lock overlay in `SubAgentFloatingQuestionModal`, provides a **Live Read-Only Sub-Agent Stream Modal** with a disabled grayed-out input bar when clicking a Sub-Agent, and enables deleting any Sub-Agent template.

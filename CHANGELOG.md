@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.6.0] - 2026-10-27
+
+### Added
+- **Normal Chat Mode vs. Agent Mode Tool Isolation & Downloadable ZIP Bundles (`utils/chat-zip.ts`, `utils/ai-service.ts`, `providers/ChatProvider.tsx`, `components/ChatBubble.tsx`, `types/index.ts`)**:
+  - Isolated Normal Chat Mode from direct project filesystem and `sub_agent` tools (`isProjectFilesystemOrAgentOnlyTool`).
+  - Added `zip_create` and `zip_read` tools to package generated files in Normal Chat Mode into standards-compliant PKZIP archives rendered as interactive **ZIP Download Graphic Cards** (`ChatBubble.tsx`), and automatically converted stray `write_file`/`create_file` calls in Normal Chat Mode into downloadable `.zip` bundles.
+  - Added `draft_agent_plan` to render interactive **Execution Plan Graphic Cards** in Chat with **Proceed in Agent Mode** and **Edit / Refine Plan** floating modal support.
+  - Added `read_other_chat_messages` (`utils/cross-chat-reader.ts`) for token-efficient (< 1,750 chars) BM25 keyword search across stored chat sessions.
+- **Standalone Memory Graph vs. Project Code Graph Tabs & Memory Graph AI Tools (`utils/synapse-graph.ts`, `components/SynapseGraphView.tsx`, `providers/ChatProvider.tsx`, `providers/AppProvider.tsx`)**:
+  - Split `SynapseGraphView` into two tabs: **Memory Graph** (`buildMemoryOnlySynapseGraph`, works with or without an active project, with quick Add Memory and Delete Memory actions) and **Project Code Graph** (requires an active project).
+  - Added `memory_search`, `memory_update`, `memory_delete`, and `memory_graph_query` tools so Dev0 can manage the Memory Graph even when no project is open.
+- **Built-in Dual Git & Restore Point System (`utils/git-restore.ts`, `app/(tabs)/(home)/index.tsx`, `providers/ChatProvider.tsx`, `providers/ProjectProvider.tsx`)**:
+  - Implemented dual restore points combining instant browser snapshots (`IndexedDB`/`AsyncStorage`) with Docker `/api/sandbox` Git commits.
+  - Added `git_status`, `git_create_restore_point`, `git_list_restore_points`, and `git_restore_point` AI tools plus an interactive **Built-in Git & Restore Points** modal in `ProjectsScreen`.
+- **100% English UI, "AI Generate All" Striped Lock Overlay, Live Read-Only Sub-Agent Viewer & Zero Hardcoded Templates (`components/SubAgentFloatingQuestionModal.tsx`, `app/(tabs)/chat/index.tsx`, `components/SubAgentStudioModal.tsx`, `utils/skill-loader.ts`, `utils/subagent-workspace.ts`)**:
+  - Removed all hardcoded Sub-Agent templates (`DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES = []`), hardcoded workspace skills (`BUILTIN_WORKSPACE_SKILL_FILES = []`), and default workflow/cron entries.
+  - Added **"AI Generate All"** button with a diagonal striped lock overlay in `SubAgentFloatingQuestionModal` (`generateSmartSubAgentConfig`).
+  - Added a **Live Read-Only Sub-Agent Stream Modal** with a disabled grayed-out input bar when clicking any Sub-Agent in Chat, and enabled deleting Sub-Agents in `SubAgentStudioModal`, `ChatScreen`, and `ToolsScreen`.
+  - Translated all remaining German UI strings across modals, banners, and screens into English.
+
+---
+
 ## [1.5.0] - 2026-10-27
 
 ### Added

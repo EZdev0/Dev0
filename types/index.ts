@@ -15,6 +15,27 @@ export interface Project {
   updatedAt: number;
 }
 
+import { ChatZipArtifact } from '@/utils/chat-zip';
+export type { ChatZipArtifact };
+
+export interface DraftedPlanStep {
+  id: string;
+  title: string;
+  description: string;
+  role?: string;
+  agentRole?: string;
+}
+
+export interface DraftedAgentPlan {
+  id: string;
+  title: string;
+  summary: string;
+  steps: DraftedPlanStep[];
+  targetFiles?: string[];
+  createdAt: number;
+  status?: 'draft' | 'approved' | 'launched';
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'tool';
@@ -24,7 +45,10 @@ export interface ChatMessage {
   toolName?: string;
   timestamp: number;
   thinking?: string;
+  isThinking?: boolean;
   todos?: InlineTodo[];
+  zipArtifact?: ChatZipArtifact;
+  draftPlan?: DraftedAgentPlan;
 }
 
 export interface InlineTodo {
@@ -101,6 +125,8 @@ export interface MemoEntry {
   id: string;
   content: string;
   createdAt: number;
+  tags?: string[];
+  relatedFiles?: string[];
 }
 
 export type AgentTaskStatus = 'draft' | 'pending' | 'running' | 'completed' | 'error' | 'cancelled';
@@ -122,10 +148,9 @@ export interface AgentTask {
   startedAt?: number;
   completedAt?: number;
   error?: string;
-  // NEU: Für Unteragenten-Kommunikation
   isSubAgentTask?: boolean;
   parentTaskId?: string;
-  agentRole?: 'analyst' | 'developer' | 'tester' | 'researcher';
+  agentRole?: 'analyst' | 'developer' | 'tester' | 'researcher' | 'localizer' | 'critic';
 }
 
 export interface AgentToolUsage {
@@ -169,16 +194,16 @@ export interface AIProviderConfig {
 export const AI_PROVIDERS: AIProviderConfig[] = [
   {
     id: 'rork',
-    name: 'Studio KI (Dev0 Free)',
+    name: 'Studio AI (Dev0 Free)',
     free: true,
-    keyHint: 'Kein Schlüssel nötig – sofort nutzbar!',
+    keyHint: 'No API key required – ready to use immediately!',
     models: [
       { id: 'rork-default', name: 'Dev0 Studio AI (Free)' },
     ],
   },
   {
     id: 'groq',
-    name: 'Groq ★ Kostenlos',
+    name: 'Groq ★ Free Tier',
     free: true,
     keyHint: 'console.groq.com/keys',
     models: [
@@ -192,7 +217,7 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
   },
   {
     id: 'gemini',
-    name: 'Google Gemini ★ Kostenlos',
+    name: 'Google Gemini ★ Free Tier',
     free: true,
     keyHint: 'aistudio.google.com/app/apikey',
     models: [
@@ -242,7 +267,7 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
   },
   {
     id: 'openrouter',
-    name: 'OpenRouter ★ Kostenlos',
+    name: 'OpenRouter ★ Free Tier',
     free: true,
     keyHint: 'openrouter.ai/keys',
     models: [
@@ -257,7 +282,7 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
   },
   {
     id: 'custom',
-    name: 'Benutzerdefiniert (Local Model / LM Studio / Ollama)',
+    name: 'Custom (Local Model / LM Studio / Ollama)',
     models: [
       { id: 'lmstudio-local', name: 'LM Studio Local Model (lmstudio-local)' },
       { id: 'qwen2.5-coder:7b', name: 'Ollama Qwen 2.5 Coder 7B (qwen2.5-coder:7b)' },
@@ -288,6 +313,18 @@ export interface ToolRegistryItem {
 }
 
 export const TOOL_REGISTRY: ToolRegistryItem[] = [
+  { name: 'zip_create', displayName: 'zip_create', description: 'Creates a downloadable ZIP archive card in Chat Mode containing one or more generated files.', category: 'planning', parameters: [{ name: 'archive_name', type: 'string', description: 'ZIP file name (e.g. solution-bundle.zip)' }, { name: 'description', type: 'string', description: 'Short summary of the bundle' }, { name: 'files', type: 'array', description: 'Array of { path, content } files to package' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'zip_read', displayName: 'zip_read', description: 'Lists files or reads specific file contents from a ZIP archive stored in the chat conversation.', category: 'analysis', parameters: [{ name: 'archive_name', type: 'string', description: 'Optional ZIP archive name or ID' }, { name: 'file_path', type: 'string', description: 'Optional file path inside the ZIP archive to read' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'draft_agent_plan', displayName: 'draft_agent_plan', description: 'Drafts an interactive execution plan graphic card in Chat Mode with Proceed (Launch in Agent Mode) and Edit Plan actions.', category: 'planning', parameters: [{ name: 'title', type: 'string', description: 'Plan title' }, { name: 'summary', type: 'string', description: 'High-level architecture summary' }, { name: 'steps', type: 'array', description: 'Ordered list of { title, description, role } steps' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'read_other_chat_messages', displayName: 'read_other_chat_messages', description: 'Reads or searches messages from other chat sessions using token-efficient BM25 keyword snippets.', category: 'memory', parameters: [{ name: 'query', type: 'string', description: 'Optional keyword search query across other chats' }, { name: 'limit', type: 'number', description: 'Max results (default 5)' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'memory_search', displayName: 'memory_search', description: 'Searches persistent AI memories in the Memory Graph by keyword or tag.', category: 'memory', parameters: [{ name: 'query', type: 'string', description: 'Search keyword' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'memory_update', displayName: 'memory_update', description: 'Updates an existing memory node in the Memory Graph.', category: 'memory', parameters: [{ name: 'id', type: 'string', description: 'Memory ID' }, { name: 'content', type: 'string', description: 'Updated memory content' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'memory_delete', displayName: 'memory_delete', description: 'Deletes a memory node from the Memory Graph by ID.', category: 'memory', parameters: [{ name: 'id', type: 'string', description: 'Memory ID' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'memory_graph_query', displayName: 'memory_graph_query', description: 'Queries the standalone Memory Synapse Graph for memory nodes, clusters, and connections.', category: 'memory', parameters: [{ name: 'query', type: 'string', description: 'Topic or cluster query' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'git_status', displayName: 'git_status', description: 'Returns built-in Git working tree status and diff summary against the latest Restore Point.', category: 'system', parameters: [], isBeta: false, defaultPermission: 'always' },
+  { name: 'git_create_restore_point', displayName: 'git_create_restore_point', description: 'Creates a built-in Git commit / Restore Point snapshot (Browser IndexedDB + Docker Git when active).', category: 'system', parameters: [{ name: 'message', type: 'string', description: 'Commit / restore point message' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'git_list_restore_points', displayName: 'git_list_restore_points', description: 'Lists all available Git Restore Points (commits) for the active project.', category: 'system', parameters: [], isBeta: false, defaultPermission: 'always' },
+  { name: 'git_restore_point', displayName: 'git_restore_point', description: 'Rolls the project files back to a specific Git Restore Point (commit hash or ID).', category: 'system', parameters: [{ name: 'commit_or_id', type: 'string', description: 'Commit hash, restore point ID, or "latest"' }], isBeta: false, defaultPermission: 'ask' },
   { name: 'read_file', displayName: 'read_file', description: 'Reads the complete content of a file.', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'File path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'read_lines', displayName: 'read_lines', description: 'Reads specific lines from a file.', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'File path' }, { name: 'start_line', type: 'number', description: 'Start line' }, { name: 'end_line', type: 'number', description: 'End line' }], isBeta: false, defaultPermission: 'always' },
   { name: 'write_file', displayName: 'write_file', description: 'Writes content to a file (overwrites completely).', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'File path' }, { name: 'content', type: 'string', description: 'New content' }], isBeta: false, defaultPermission: 'ask' },
@@ -298,13 +335,13 @@ export const TOOL_REGISTRY: ToolRegistryItem[] = [
   { name: 'find_replace', displayName: 'find_replace', description: 'Finds and replaces text in a file.', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'File path' }, { name: 'find', type: 'string', description: 'Search text' }, { name: 'replace', type: 'string', description: 'Replacement text' }], isBeta: false, defaultPermission: 'ask' },
   { name: 'list_directory', displayName: 'list_directory', description: 'Lists all files in a directory.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'Directory path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'search_files', displayName: 'search_files', description: 'Searches files for text (grep).', category: 'analysis', parameters: [{ name: 'query', type: 'string', description: 'Search term' }, { name: 'path', type: 'string', description: 'Optional path' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'localize_code_graph', displayName: 'localize_code_graph', description: 'Queries the RepoGraph Synapse Memory Graph to localize files, functions, imports, and memories.', category: 'analysis', parameters: [{ name: 'query', type: 'string', description: 'Symbol, function, or feature query' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'localize_code_graph', displayName: 'localize_code_graph', description: 'Queries the RepoGraph Synapse Code Graph to localize project files, functions, imports, and call edges.', category: 'analysis', parameters: [{ name: 'query', type: 'string', description: 'Symbol, function, or feature query' }], isBeta: false, defaultPermission: 'always' },
   { name: 'create_directory', displayName: 'create_directory', description: 'Creates a new directory.', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'Directory path' }], isBeta: false, defaultPermission: 'ask' },
   { name: 'get_project_tree', displayName: 'get_project_tree', description: 'Returns the entire project structure.', category: 'analysis', parameters: [], isBeta: false, defaultPermission: 'always' },
   { name: 'get_file_info', displayName: 'get_file_info', description: 'Returns information about a file.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'File path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'create_todo', displayName: 'create_todo', description: 'Creates a new todo entry.', category: 'planning', parameters: [{ name: 'text', type: 'string', description: 'Todo text' }], isBeta: false, defaultPermission: 'always' },
   { name: 'update_todo', displayName: 'update_todo', description: 'Updates a todo entry.', category: 'planning', parameters: [{ name: 'id', type: 'string', description: 'Todo ID' }, { name: 'completed', type: 'boolean', description: 'Status' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'add_memo', displayName: 'add_memo', description: 'Saves a note in the project memory.', category: 'memory', parameters: [{ name: 'content', type: 'string', description: 'Memo content' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'add_memo', displayName: 'add_memo', description: 'Saves a persistent memory node into the AI Memory Graph.', category: 'memory', parameters: [{ name: 'content', type: 'string', description: 'Memory content' }], isBeta: false, defaultPermission: 'always' },
   { name: 'think', displayName: 'think', description: 'Advanced reasoning for complex problems.', category: 'system', parameters: [{ name: 'thought', type: 'string', description: 'Thought process' }], isBeta: false, defaultPermission: 'always' },
   { name: 'web_search', displayName: 'web_search', description: 'Web search for information and documentation.', category: 'web', parameters: [{ name: 'query', type: 'string', description: 'Search term' }], isBeta: true, defaultPermission: 'ask' },
   { name: 'web_fetch', displayName: 'web_fetch', description: 'Downloads the content of a webpage.', category: 'web', parameters: [{ name: 'url', type: 'string', description: 'Webpage URL' }, { name: 'max_length', type: 'number', description: 'Max chars' }], isBeta: true, defaultPermission: 'ask' },
@@ -316,23 +353,55 @@ export const TOOL_REGISTRY: ToolRegistryItem[] = [
   { name: 'update_memory_md', displayName: 'update_memory_md', description: 'Updates MEMORY.md (long-term memory, decisions, learned preferences).', category: 'learning', parameters: [{ name: 'content', type: 'string', description: 'New content for MEMORY.md' }], isBeta: true, defaultPermission: 'always' },
   { name: 'verify_file', displayName: 'verify_file', description: 'Verifies if a file exists and is correct.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'File path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'task_complete', displayName: 'task_complete', description: 'Marks an agent task as completed.', category: 'planning', parameters: [{ name: 'summary', type: 'string', description: 'Summary' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'finish_task', displayName: 'finish_task', description: 'Mandatory Sub-Agent completion tool. Updates .agents/<name>/STATUS.md & LOG.md in English and triggers dependent Cron jobs.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Sub-Agent name or role (e.g. teamworker, auditor)' }, { name: 'summary', type: 'string', description: 'English completion summary' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'create_cron_job', displayName: 'create_cron_job', description: 'Schedules a recurring or event-triggered Sub-Agent Cron job (e.g., run auditor when teamworker calls finish_task).', category: 'system', parameters: [{ name: 'name', type: 'string', description: 'Cron job name' }, { name: 'target_role', type: 'string', description: 'Target Sub-Agent role' }, { name: 'task', type: 'string', description: 'Task instruction' }, { name: 'trigger_type', type: 'string', description: 'on_finish_task, interval, or after_delay' }, { name: 'depends_on_agent', type: 'string', description: 'Agent slug that triggers this job upon finish_task' }, { name: 'reason', type: 'string', description: 'Why this Cron job is needed' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'finish_task', displayName: 'finish_task', description: 'Mandatory Sub-Agent completion tool. Updates .agents/<name>/STATUS.md & LOG.md in English and triggers immediate Cron wakeup to the Main Creator AI.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Sub-Agent name or role' }, { name: 'summary', type: 'string', description: 'English completion summary' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'create_cron_job', displayName: 'create_cron_job', description: 'Schedules a recurring or event-triggered Sub-Agent Cron job (e.g., wake Main AI or run auditor when finish_task is called).', category: 'system', parameters: [{ name: 'name', type: 'string', description: 'Cron job name' }, { name: 'target_role', type: 'string', description: 'Target Sub-Agent role' }, { name: 'task', type: 'string', description: 'Task instruction' }, { name: 'trigger_type', type: 'string', description: 'on_finish_task, interval, or after_delay' }, { name: 'depends_on_agent', type: 'string', description: 'Agent slug that triggers this job upon finish_task' }, { name: 'reason', type: 'string', description: 'Why this Cron job is needed' }], isBeta: false, defaultPermission: 'always' },
   { name: 'sleep_agent', displayName: 'sleep_agent', description: 'Pauses (sleeps) or wakes up a Sub-Agent and records its state in .agents/<name>/STATUS.md.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Sub-Agent name or role' }, { name: 'reason', type: 'string', description: 'Why the Sub-Agent is sleeping or waking' }, { name: 'wake', type: 'boolean', description: 'True to wake up, false to put to sleep' }], isBeta: false, defaultPermission: 'always' },
   { name: 'inspect_subagent_workspace', displayName: 'inspect_subagent_workspace', description: 'Inspects the hidden .agents/<name>/ English documentation folders, Sub-Agent statuses, and active Cron jobs.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Optional Sub-Agent name filter' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized or user-created sub-agent template (e.g. teamworker, auditor, developer, localizer).', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-agent role or template name' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'ask_user_question', displayName: 'ask_user_question', description: 'Opens a floating question window to ask the user clarifying questions (including Sub-Agent configuration questions) and relays answers back to Dev0.', category: 'planning', parameters: [{ name: 'questions', type: 'array', description: 'List of questions to ask the user' }, { name: 'is_sub_agent', type: 'boolean', description: 'Whether the question is for/from a Sub-Agent' }, { name: 'sub_agent_role', type: 'string', description: 'Sub-Agent role (teamworker, auditor, developer, localizer, analyst, tester, researcher, critic)' }, { name: 'sub_agent_name', type: 'string', description: 'Suggested Sub-Agent name' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized or user-created Sub-Agent template.', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-Agent role or template name' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'ask_user_question', displayName: 'ask_user_question', description: 'Opens a floating question window to ask the user clarifying questions (including Sub-Agent configuration questions) and relays answers back to Dev0.', category: 'planning', parameters: [{ name: 'questions', type: 'array', description: 'List of questions to ask the user' }, { name: 'is_sub_agent', type: 'boolean', description: 'Whether the question is for/from a Sub-Agent' }, { name: 'sub_agent_role', type: 'string', description: 'Sub-Agent role (developer, localizer, analyst, tester, researcher, critic)' }, { name: 'sub_agent_name', type: 'string', description: 'Suggested Sub-Agent name' }], isBeta: false, defaultPermission: 'always' },
 ];
 
 export const TOOL_CATEGORIES: { id: string; label: string; icon: string }[] = [
   { id: 'filesystem', label: 'Filesystem', icon: '📁' },
   { id: 'analysis', label: 'Analysis', icon: '🔍' },
-  { id: 'planning', label: 'Planning', icon: '📋' },
-  { id: 'memory', label: 'Memory', icon: '💾' },
+  { id: 'planning', label: 'Planning & ZIP', icon: '📋' },
+  { id: 'memory', label: 'Memory & Cross-Chat', icon: '💾' },
   { id: 'learning', label: 'Learning (Beta)', icon: '🧠' },
   { id: 'web', label: 'Web (Beta)', icon: '🌐' },
-  { id: 'system', label: 'System', icon: '⚙️' },
+  { id: 'system', label: 'System & Git', icon: '⚙️' },
 ];
+
+export const PROJECT_FILESYSTEM_TOOL_NAMES = [
+  'read_file',
+  'read_lines',
+  'write_file',
+  'create_file',
+  'edit_file',
+  'delete_file',
+  'rename_file',
+  'find_replace',
+  'create_directory',
+  'list_directory',
+  'search_files',
+  'get_project_tree',
+  'get_file_info',
+  'verify_file',
+  'localize_code_graph',
+  'git_status',
+  'git_create_restore_point',
+  'git_list_restore_points',
+  'git_restore_point',
+  'sub_agent',
+  'finish_task',
+  'create_cron_job',
+  'sleep_agent',
+  'inspect_subagent_workspace',
+] as const;
+
+export function isProjectFilesystemOrAgentOnlyTool(toolName?: string | null): boolean {
+  if (!toolName) return false;
+  return (PROJECT_FILESYSTEM_TOOL_NAMES as readonly string[]).includes(toolName.trim());
+}
 
 export const LEARNING_TOOL_NAMES = [
   'add_memo',
@@ -348,7 +417,7 @@ export function isLearningTool(toolName?: string | null): boolean {
   if (!toolName || typeof toolName !== 'string') return false;
   if ((LEARNING_TOOL_NAMES as readonly string[]).includes(toolName)) return true;
   const reg = TOOL_REGISTRY.find(t => t.name === toolName);
-  return reg?.category === 'learning' || reg?.category === 'memory';
+  return reg?.category === 'learning';
 }
 
 export function isLearningEnabled(settings?: Partial<AppSettings> | null): boolean {
@@ -411,6 +480,6 @@ export const PROJECT_TYPES = [
   { id: 'web', name: 'Web (TypeScript)', icon: '🌐' },
   { id: 'python', name: 'Python', icon: '🐍' },
   { id: 'docker-sandbox', name: 'Docker Sandbox (Isolated)', icon: '🐳' },
-  { id: 'empty', name: 'Leeres Projekt', icon: '📁' },
+  { id: 'empty', name: 'Empty Project', icon: '📁' },
 ];
 
