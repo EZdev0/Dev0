@@ -66,7 +66,17 @@ type SubTabId = 'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat';
 
 export default function ToolsScreen() {
   const router = useRouter();
-  const { memos, addMemo, deleteMemo, settings, getToolPermission, setToolPermission } = useApp();
+  const {
+    memos,
+    addMemo,
+    deleteMemo,
+    settings,
+    getToolPermission,
+    setToolPermission,
+    customSubAgents,
+    setShowSubAgentStudioModal,
+    setShowFreePoolModal,
+  } = useApp();
   const { getProjectTree, searchFilesInProject, currentProject } = useProject();
   const { clearChat, startNewChat, compressChat, applyChatCompression, messages } = useChat();
   const { plans, activePlan, clarificationQuestions, skipClarificationQuestions } = useAgent();
@@ -294,31 +304,50 @@ export default function ToolsScreen() {
         {activeTab === 'tools' && (
           <>
             <View style={styles.toolsHeader}>
-              <Text style={styles.toolsTitle}>Active Agents</Text>
-              <TouchableOpacity
-                style={styles.openDashboardHeaderBtn}
-                onPress={() => handleSelectTab('dashboard')}
-                activeOpacity={0.7}
-              >
-                <LayoutDashboard size={14} color={IDE.primary} />
-                <Text style={styles.openDashboardHeaderText}>Open Dashboard</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.toolsSubtitle}>Available specialized AI sub-agents in the system. Tap any agent to configure.</Text>
-            <View style={styles.categorySection}>
-              {['analyst', 'developer', 'tester', 'researcher', 'critic'].map(agentName => (
+              <Text style={styles.toolsTitle}>Sub-Agents & YAML Skills</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <TouchableOpacity
-                  key={agentName}
+                  style={[styles.openDashboardHeaderBtn, { backgroundColor: IDE.accent + '18', borderColor: IDE.accent + '45' }]}
+                  onPress={() => setShowFreePoolModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <Zap size={13} color={IDE.accent} />
+                  <Text style={[styles.openDashboardHeaderText, { color: IDE.accent }]}>AI for Free</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.openDashboardHeaderBtn}
+                  onPress={() => setShowSubAgentStudioModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <Brain size={14} color={IDE.primary} />
+                  <Text style={styles.openDashboardHeaderText}>Sub-Agent Studio</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <Text style={styles.toolsSubtitle}>
+              Custom & built-in Sub-Agent templates with scoped file permissions and .qoder/rules YAML skills. Tap any template to edit or run.
+            </Text>
+            <View style={styles.categorySection}>
+              {customSubAgents.map(tpl => (
+                <TouchableOpacity
+                  key={tpl.id}
                   style={styles.toolCard}
-                  onPress={() => handleSelectTab('dashboard')}
+                  onPress={() => setShowSubAgentStudioModal(true)}
                   activeOpacity={0.7}
                 >
                   <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
                     <Brain size={12} color={IDE.primary} />
                   </View>
                   <View style={styles.toolCardContent}>
-                    <Text style={styles.toolCardName}>{agentName.toUpperCase()} Agent</Text>
-                    <Text style={styles.toolCardDesc} numberOfLines={1}>Tap to manage in Agent Dashboard.</Text>
+                    <View style={styles.toolNameRow}>
+                      <Text style={styles.toolCardName}>{tpl.name}</Text>
+                      <View style={styles.betaPill}>
+                        <Text style={styles.betaPillText}>{tpl.role.toUpperCase()}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.toolCardDesc} numberOfLines={1}>
+                      {tpl.description} • Files: {tpl.allowedFiles.join(', ')}
+                    </Text>
                   </View>
                   <ChevronRight size={14} color={IDE.muted} />
                 </TouchableOpacity>

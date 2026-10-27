@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import createContextHook from '@nkzw/create-context-hook';
 import {
   AgentPlan,
@@ -29,6 +29,12 @@ import {
   compressAndSanitizeMessagesForAPI,
 } from '@/utils/chat-compression';
 import { performWebSearch, performWebFetch } from '@/utils/web-tools';
+import { buildSynapseGraph, localizeCodeSubgraph } from '@/utils/synapse-graph';
+import {
+  discoverYamlSkills,
+  buildActiveSkillsPromptBlock,
+  isFileAllowedForSubAgent,
+} from '@/utils/skill-loader';
 import { useApp } from '@/providers/AppProvider';
 import { useProject } from '@/providers/ProjectProvider';
 
@@ -79,11 +85,40 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
   activePlanIdRef.current = activePlanId;
   const lastUserRequestRef = useRef<string>('');
 
-  const { settings, getApiKey, getFallbackSettings, todos, memos, addTodo, updateTodoItem, addMemo, agentMd, setAgentMd, soulMd, setSoulMd, identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd, getToolPermission } = useApp();
   const {
+    settings,
+    getApiKey,
+    resolveEffectiveProviderAndKey,
+    recordPoolTokenUsage,
+    getFallbackSettings,
+    todos,
+    memos,
+    addTodo,
+    updateTodoItem,
+    addMemo,
+    agentMd,
+    setAgentMd,
+    soulMd,
+    setSoulMd,
+    identityMd,
+    setIdentityMd,
+    userMd,
+    setUserMd,
+    memoryMd,
+    setMemoryMd,
+    getToolPermission,
+    customSubAgents,
+    skillEnabledOverrides,
+  } = useApp();
+  const {
+    currentProject,
     getFileContent, updateFileContent, createFile, deleteFile, renameFile,
     createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo,
   } = useProject();
+
+  const discoveredSkills = useMemo(() => {
+    return discoverYamlSkills(currentProject?.files || [], skillEnabledOverrides);
+  }, [currentProject?.files, skillEnabledOverrides]);
 
   const activePlan = plans.find(p => p.id === activePlanId) ?? null;
 
@@ -357,6 +392,56 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
           const isEmpty = content.trim().length === 0;
           return { result: 'File "' + args.path + '" exists. Lines: ' + lines + '. Empty: ' + (isEmpty ? 'Yes' : 'No') + '.' };
         }
+        case 'localize_code_graph': {
+          if (!args?.query) return { result: 'ERROR: query parameter is required.' };
+          const activeLearning = isLearningEnabled(settings);
+          const graph = buildSynapseGraph({
+            project: currentProject,
+            memos: activeLearning ? memos : [],
+            skills: discoveredSkills,
+          });
+          const loc = localizeCodeSubgraph(graph, String(args.query), Number(args.max_nodes) || 12);
+          return wrapResult({ result: loc.summaryMarkdown });
+        }
+        case 'sub_agent': {
+          const roleOrId = String(args?.role || 'developer').trim();
+          const taskDesc = String(args?.task || '').trim();
+          if (!taskDesc) return { result: 'ERROR: sub_agent requires a task description.' };
+          const matchedTemplate =
+            customSubAgents.find(
+              (t) =>
+                t.id.toLowerCase() === roleOrId.toLowerCase() ||
+                t.name.toLowerCase() === roleOrId.toLowerCase() ||
+                t.role.toLowerCase() === roleOrId.toLowerCase(),
+            ) || customSubAgents[0];
+
+          const resolvedAuth = resolveEffectiveProviderAndKey();
+
+          const subSystemPrompt =
+            `You are a specialized Sub-Agent: ${matchedTemplate?.name || roleOrId}.\n` +
+            `${matchedTemplate?.systemPrompt || 'Complete the delegated task accurately.'}\n` +
+            (matchedTemplate?.rules?.length
+              ? `Rules:\n${matchedTemplate.rules.map((r) => `- ${r}`).join('\n')}\n`
+              : '') +
+            `Allowed file patterns: ${(matchedTemplate?.allowedFiles || ['*']).join(', ')}`;
+
+          const subResp = await callAI(
+            resolvedAuth.provider,
+            resolvedAuth.apiKey || 'rork_builtin',
+            resolvedAuth.model,
+            [{ id: genId(), role: 'user', content: taskDesc, timestamp: Date.now() }],
+            [],
+            subSystemPrompt,
+            settings.customEndpoint || undefined,
+            settings.autoFallback ? getFallbackSettings() : undefined,
+          );
+          if (subResp.tokenUsage) {
+            recordPoolTokenUsage(subResp.tokenUsage, resolvedAuth.poolKeyId, taskDesc);
+          }
+          return wrapResult({
+            result: `[Sub-Agent ${matchedTemplate?.name || roleOrId}]:\n${subResp.content || 'Completed.'}`,
+          });
+        }
         default:
           return { result: 'ERROR: Unknown tool "' + name + '".' };
       }
@@ -364,7 +449,7 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
       console.log('[Agent] Tool error:', name, e);
       return { result: 'ERROR in ' + name + ': ' + (e?.message || 'Unknown error') };
     }
-  }, [settings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
+  }, [settings, currentProject, discoveredSkills, customSubAgents, resolveEffectiveProviderAndKey, recordPoolTokenUsage, getFallbackSettings, getFileContent, updateFileContent, createFile, deleteFile, renameFile, createDirectory, searchFilesInProject, getProjectTree, listDirectory, getFileInfo, addTodo, updateTodoItem, addMemo, memos, checkAgentToolPermission, getToolPermission, agentMd, soulMd, identityMd, userMd, memoryMd, setAgentMd, setSoulMd, setIdentityMd, setUserMd, setMemoryMd]);
 
   const createPlan = useCallback(async (
     userRequest: string,
@@ -372,13 +457,14 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
   ): Promise<string | null> => {
     setIsPlanning(true);
     try {
-      const apiKey = getApiKey();
-      const effectiveProvider = settings.selectedProvider as AIProviderType;
+      const resolvedAuth = resolveEffectiveProviderAndKey();
+      const apiKey = resolvedAuth.apiKey || getApiKey();
+      const effectiveProvider = resolvedAuth.provider as AIProviderType;
       if (!apiKey && effectiveProvider !== 'rork' && effectiveProvider !== 'custom') {
         throw new Error('No API key configured.');
       }
 
-      const safeModel = resolveDefaultModel(effectiveProvider, settings.selectedModel);
+      const safeModel = resolveDefaultModel(effectiveProvider, resolvedAuth.model || settings.selectedModel);
       const cleanRequest = typeof userRequest === 'string' && userRequest.trim()
         ? userRequest.trim()
         : lastUserRequestRef.current || 'Execute user task';
@@ -605,13 +691,15 @@ export const [AgentProvider, useAgent] = createContextHook(() => {
 
   const executeSubAgent = useCallback(async (planId: string, task: AgentTask): Promise<void> => {
     const activeLearning = isLearningEnabled(settings);
-    const effectiveProvider: AIProviderType = (settings.selectedProvider as AIProviderType) || 'rork';
-    const safeModel = resolveDefaultModel(effectiveProvider, settings.selectedModel);
+    const resolvedAuth = resolveEffectiveProviderAndKey();
+    const effectiveProvider: AIProviderType = resolvedAuth.provider || (settings.selectedProvider as AIProviderType) || 'rork';
+    const safeModel = resolveDefaultModel(effectiveProvider, resolvedAuth.model || settings.selectedModel);
+    const resolvedApiKey = resolvedAuth.apiKey || getApiKey() || 'rork_builtin';
 
     if (task.taskType === 'web_search') {
       updateTaskInPlan(planId, task.id, t => ({ ...t, status: 'running', startedAt: Date.now() }));
 
-      const apiKey = getApiKey() || 'rork_builtin';
+      const apiKey = resolvedApiKey;
 
       try {
         const allowedWebToolNames = activeLearning
@@ -770,15 +858,24 @@ Investigate all options thoroughly.`;
       return;
     }
 
-    const apiKey = getApiKey() || 'rork_builtin';
+    const apiKey = resolvedApiKey;
 
     updateTaskInPlan(planId, task.id, t => ({ ...t, status: 'running', startedAt: Date.now() }));
+
+    const matchedCustomTemplate = customSubAgents.find(
+      (tpl) =>
+        task.title.toLowerCase().includes(tpl.name.toLowerCase()) ||
+        task.title.toLowerCase().includes(tpl.role.toLowerCase()),
+    );
 
     const filteredBaseTools = TOOL_DEFINITIONS.filter(t => {
       if (isLearningTool(t.name) && !activeLearning) return false;
       if (!settings.yoloMode) {
         if (t.name === 'web_search' && !settings.betaWebSearch) return false;
         if (t.name === 'web_fetch' && !settings.betaWebFetch) return false;
+      }
+      if (matchedCustomTemplate && matchedCustomTemplate.allowedTools.length > 0) {
+        if (!matchedCustomTemplate.allowedTools.includes(t.name)) return false;
       }
       const perm = getToolPermission(t.name);
       if (perm === 'removed') return false;
@@ -795,6 +892,8 @@ Investigate all options thoroughly.`;
       parameters: { type: 'object', properties: { path: { type: 'string', description: 'File path' } }, required: ['path'] },
     }];
 
+    const yamlSkillsBlock = buildActiveSkillsPromptBlock(discoveredSkills);
+
     const systemPrompt = buildSystemPrompt({
       persona: settings.persona,
       projectTree: getProjectTree(),
@@ -810,9 +909,18 @@ Investigate all options thoroughly.`;
       betaAgentLearning: activeLearning,
       learningEnabled: activeLearning,
       toolPermissions: settings.yoloMode ? undefined : settings.toolPermissions,
-    });
+    }) + yamlSkillsBlock;
 
-    const taskPrompt = systemPrompt + '\n\n## Current Subtask\n'
+    const customTemplateInstructions = matchedCustomTemplate
+      ? `\n## Active Sub-Agent Template: ${matchedCustomTemplate.name}\n` +
+        `${matchedCustomTemplate.systemPrompt}\n` +
+        (matchedCustomTemplate.rules.length > 0
+          ? `Rules:\n${matchedCustomTemplate.rules.map(r => `- ${r}`).join('\n')}\n`
+          : '') +
+        `Allowed Files: ${matchedCustomTemplate.allowedFiles.join(', ')}\n`
+      : '';
+
+    const taskPrompt = systemPrompt + customTemplateInstructions + '\n\n## Current Subtask\n'
       + 'Title: ' + task.title + '\n'
       + 'Description: ' + task.description + '\n\n'
       + 'IMPORTANT: You are a sub-agent. ONLY execute this specific task.\n'
@@ -853,6 +961,13 @@ Investigate all options thoroughly.`;
           settings.customEndpoint || undefined,
           fallbackSettings,
         );
+        if (response.tokenUsage) {
+          recordPoolTokenUsage(
+            response.tokenUsage,
+            resolvedAuth.poolKeyId,
+            task.title,
+          );
+        }
 
         if (!response.toolCalls || response.toolCalls.length === 0) {
           const assistantMsg: ChatMessage = {
@@ -904,6 +1019,22 @@ Investigate all options thoroughly.`;
               id: genId(), role: 'tool', content: tc.result, toolCallId: tc.id, toolName: tc.name, timestamp: Date.now(),
             });
             break;
+          }
+
+          if (
+            matchedCustomTemplate &&
+            matchedCustomTemplate.allowedFiles.length > 0 &&
+            ['write_file', 'create_file', 'edit_file', 'delete_file', 'rename_file', 'find_replace'].includes(tc.name)
+          ) {
+            const targetPath = tc.arguments?.path || tc.arguments?.new_path || tc.arguments?.old_path || '';
+            if (targetPath && !isFileAllowedForSubAgent(targetPath, matchedCustomTemplate.allowedFiles)) {
+              tc.result = `ERROR: Sub-agent file scope violation. Path "${targetPath}" is not permitted by allowed patterns: ${matchedCustomTemplate.allowedFiles.join(', ')}`;
+              tc.status = 'error';
+              toolResultMessages.push({
+                id: genId(), role: 'tool', content: tc.result, toolCallId: tc.id, toolName: tc.name, timestamp: Date.now(),
+              });
+              continue;
+            }
           }
 
           const { result: rawResult, fileAction } = await executeTool(tc.name, tc.arguments);

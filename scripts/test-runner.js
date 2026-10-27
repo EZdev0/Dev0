@@ -152,6 +152,9 @@ require('../__tests__/utils/chat-compression.test.ts');
 // 3. Load multi-agent & AI fallback / learning guard test
 require('../__tests__/utils/multi-agent.test.ts');
 
+// 4. Load Synapse Graph, YAML Skill Loader, Free AI Key Pool & 3-Tier Tool Parser test
+require('../__tests__/utils/synapse-and-pool.test.ts');
+
 (async () => {
   for (const item of testQueue) {
     if (item.type === 'suite') {

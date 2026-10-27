@@ -311,3 +311,108 @@ if (fs.existsSync(nodeForgeRsaPath)) {
     console.log('Patched security guard in', nodeForgeRsaPath);
   }
 }
+
+// Patch expo async-require/hmr.ts so lazy bundle loading does not crash or infinite-reload when HMR is disabled (hot=false)
+const expoHmrPath = path.join(__dirname, '..', 'node_modules', 'expo', 'src', 'async-require', 'hmr.ts');
+if (fs.existsSync(expoHmrPath)) {
+  let content = fs.readFileSync(expoHmrPath, 'utf8');
+  if (!content.includes('if (!hmrClient) return;')) {
+    content = content.replace(
+      "registerBundle(requestUrl: string) {\n    assert(hmrClient, 'Expected HMRClient.setup() call at startup.');",
+      "registerBundle(requestUrl: string) {\n    if (!hmrClient) return;"
+    );
+    content = content.replace(
+      "if (hmrUnavailableReason != null) {\n    // \"Bundle Splitting – Metro disconnected\"\n    window.location.reload();\n    return;\n  }",
+      "if (hmrUnavailableReason != null) {\n    return;\n  }"
+    );
+    fs.writeFileSync(expoHmrPath, content, 'utf8');
+    console.log('Patched HMR disabled guard in', expoHmrPath);
+  }
+}
+
+// Optimize lucide-react-native ESM entry to only export icons actually imported in the project (reduces Web bundle by ~6.5MB)
+const lucideEsmPath = path.join(__dirname, '..', 'node_modules', 'lucide-react-native', 'dist', 'esm', 'lucide-react-native.mjs');
+const lucideBackupPath = lucideEsmPath + '.full.bak';
+if (fs.existsSync(lucideEsmPath)) {
+  if (!fs.existsSync(lucideBackupPath)) {
+    fs.copyFileSync(lucideEsmPath, lucideBackupPath);
+  }
+  const fullLucide = fs.readFileSync(lucideBackupPath, 'utf8');
+  const usedIcons = new Set(['Circle', 'HelpCircle', 'Sparkles', 'Folder', 'FileText', 'Wrench', 'Settings']);
+  const scanDirs = ['app', 'components', 'providers', 'utils'];
+  function scanForLucideImports(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        scanForLucideImports(full);
+      } else if (/\.(ts|tsx|js|jsx)$/.test(entry.name)) {
+        const src = fs.readFileSync(full, 'utf8');
+        const regex = /import\s*\{([^}]+)\}\s*from\s*['"]lucide-react-native['"]/g;
+        let m;
+        while ((m = regex.exec(src)) !== null) {
+          m[1]
+            .split(',')
+            .map(s => s.trim().split(/\s+as\s+/)[0].trim())
+            .filter(Boolean)
+            .forEach(name => usedIcons.add(name));
+        }
+      }
+    }
+  }
+  for (const d of scanDirs) {
+    scanForLucideImports(path.join(__dirname, '..', d));
+  }
+
+  const keptLines = [];
+  for (const line of fullLucide.split('\n')) {
+    if (line.includes('./createLucideIcon.js') || line.includes('./Icon.js')) {
+      keptLines.push(line);
+      continue;
+    }
+    const exportMatches = [...line.matchAll(/\bas\s+([A-Za-z0-9_]+)/g)].map(m => m[1]);
+    if (exportMatches.some(name => usedIcons.has(name))) {
+      keptLines.push(line);
+    }
+  }
+  if (keptLines.length > 10) {
+    fs.writeFileSync(lucideEsmPath, keptLines.join('\n') + '\n', 'utf8');
+    console.log(`Optimized lucide-react-native ESM entry (${keptLines.length} exports for ${usedIcons.size} used icons)`);
+  }
+}
+
+// Patch @expo/cli CorsMiddleware.js so Cloud Run (*.run.app), Netlify (*.netlify.app), and reverse-proxy origins do not throw "Unauthorized request from ..."
+const corsMiddlewarePath = path.join(__dirname, '..', 'node_modules', '@expo', 'cli', 'build', 'src', 'start', 'server', 'middleware', 'CorsMiddleware.js');
+if (fs.existsSync(corsMiddlewarePath)) {
+  let content = fs.readFileSync(corsMiddlewarePath, 'utf8');
+  if (content.includes('Unauthorized request from') || !content.includes('x-forwarded-host')) {
+    const safeCorsBlock = `return (req, res, next)=>{
+        if (typeof req.headers.origin === 'string' && req.headers.origin !== 'null') {
+            try {
+                const { host, hostname } = new URL(req.headers.origin);
+                const forwardedHost = req.headers['x-forwarded-host'];
+                const isSameOrigin = host === req.headers.host || host === forwardedHost;
+                const isLocalhost = _isLocalHostname(hostname);
+                if (!isLocalhost || !isSameOrigin) {
+                    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+                    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+                    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+                }
+                maybePreventMetroResetCorsHeader(req, res);
+            } catch (_e) {
+                // Ignore non-standard origin header values
+            }
+        }
+        // Block MIME-type sniffing.
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        next();
+    };`;
+    content = content.replace(
+      /return\s*\(req,\s*res,\s*next\)\s*=>\s*\{[\s\S]*?res\.setHeader\('X-Content-Type-Options',\s*'nosniff'\);\s*next\(\);\s*\};/,
+      safeCorsBlock
+    );
+    fs.writeFileSync(corsMiddlewarePath, content, 'utf8');
+    console.log('Patched reverse-proxy CORS middleware in', corsMiddlewarePath);
+  }
+}
+

@@ -154,7 +154,7 @@ describe('multi-agent system & AI resilience utils', () => {
       expect(resolveDefaultModel('rork', '')).toBe('rork-default');
       expect(resolveDefaultModel('rork', undefined)).toBe('rork-default');
       expect(resolveDefaultModel('openai', '   ')).toBe('gpt-4o');
-      expect(resolveDefaultModel('gemini', '')).toBe('gemini-2.0-flash');
+      expect(resolveDefaultModel('gemini', '')).toBe('gemini-2.5-flash');
       expect(resolveDefaultModel('openai', 'gpt-4o-mini')).toBe('gpt-4o-mini');
     });
 

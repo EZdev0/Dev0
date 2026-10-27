@@ -7,13 +7,16 @@ import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import {
   Plus, FolderOpen, Search, X, FilePlus, FolderPlus,
-  Download, FileJson, FileText, FolderArchive, CheckCircle,
+  Download, FileJson, FileText, FolderArchive, CheckCircle, GitBranch,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { useProject } from '@/providers/ProjectProvider';
+import { useApp } from '@/providers/AppProvider';
 import { FileNode, PROJECT_TYPES } from '@/types';
 import SponsorBanner from '@/components/SponsorBanner';
 import FileTreeItem from '@/components/FileTreeItem';
+import { SynapseGraphView } from '@/components/SynapseGraphView';
+import { discoverYamlSkills } from '@/utils/skill-loader';
 import { isBinaryFile } from '@/utils/file-icons';
 import { exportProjectAsZip, exportProjectAsText, exportProjectAsJson, countProjectFiles } from '@/utils/download';
 
@@ -23,6 +26,8 @@ export default function ProjectsScreen() {
     projects, currentProject, files, selectProject, createProject, deleteProject,
     deleteFile, createFile, createDirectory, renameFile,
   } = useProject();
+  const { memos, addMemo, skillEnabledOverrides } = useApp();
+  const [viewMode, setViewMode] = useState<'synapse' | 'tree'>('synapse');
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -183,20 +188,24 @@ export default function ProjectsScreen() {
     return flatFiles.filter(f => f.node.name.toLowerCase().includes(q));
   }, [flatFiles, searchQuery]);
 
+  const discoveredSkills = useMemo(
+    () => discoverYamlSkills(currentProject?.files || [], skillEnabledOverrides),
+    [currentProject?.files, skillEnabledOverrides],
+  );
+
   if (projects.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <FolderOpen size={64} color={IDE.muted} />
-        <Text style={styles.emptyTitle}>No project opened</Text>
-        <Text style={styles.emptySubtitle}>Create a new project to get started</Text>
-        <TouchableOpacity
-          style={styles.createButton}
-          onPress={() => setShowNewProject(true)}
-          activeOpacity={0.7}
-        >
-          <Plus size={18} color="#fff" />
-          <Text style={styles.createButtonText}>New Project</Text>
-        </TouchableOpacity>
+      <View style={styles.container}>
+        <SynapseGraphView
+          project={null}
+          projects={projects}
+          memos={memos}
+          skills={discoveredSkills}
+          onSelectProject={selectProject}
+          onOpenCreateProject={() => setShowNewProject(true)}
+          onOpenFileInEditor={(filePath) => router.push({ pathname: '/editor' as any, params: { path: filePath } })}
+          onAddLinkedMemo={addMemo}
+        />
 
         <NewProjectModal
           visible={showNewProject}
@@ -268,6 +277,35 @@ export default function ProjectsScreen() {
       )}
 
       <View style={styles.actionBar}>
+        <View style={{ flexDirection: 'row', backgroundColor: IDE.bg, borderRadius: 8, padding: 2, borderWidth: 1, borderColor: IDE.border }}>
+          <TouchableOpacity
+            style={[
+              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
+              viewMode === 'synapse' && { backgroundColor: IDE.primary + '22' },
+            ]}
+            onPress={() => setViewMode('synapse')}
+            activeOpacity={0.7}
+          >
+            <GitBranch size={13} color={viewMode === 'synapse' ? IDE.primary : IDE.muted} />
+            <Text style={{ fontSize: 11, fontWeight: '700', color: viewMode === 'synapse' ? IDE.primary : IDE.muted }}>
+              Synapse Graph
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
+              viewMode === 'tree' && { backgroundColor: IDE.primary + '22' },
+            ]}
+            onPress={() => setViewMode('tree')}
+            activeOpacity={0.7}
+          >
+            <FolderOpen size={13} color={viewMode === 'tree' ? IDE.primary : IDE.muted} />
+            <Text style={{ fontSize: 11, fontWeight: '700', color: viewMode === 'tree' ? IDE.primary : IDE.muted }}>
+              Files
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <TouchableOpacity
           style={styles.actionBarBtn}
           onPress={() => openNewFileModal('', false)}
@@ -295,36 +333,52 @@ export default function ProjectsScreen() {
         </TouchableOpacity>
       </View>
 
-      <SponsorBanner style={{ marginHorizontal: 16, marginTop: 16, marginBottom: 0 }} />
-      <FlatList
-        data={filteredFiles}
-        keyExtractor={(item) => item.node.id + '_' + item.path}
-        renderItem={({ item }) => (
-          <FileTreeItem
-            node={item.node}
-            depth={item.depth}
-            expanded={expandedDirs.has(item.node.id)}
-            isActive={activeFile === item.path}
-            onPress={(n) => {
-              if (n.type === 'directory') {
-                toggleDir(n);
-              } else {
-                openFile(n, item.path);
-              }
-            }}
-            onToggle={toggleDir}
-            onLongPress={(n) => handleLongPress(n, item.path)}
-          />
-        )}
-        style={styles.fileList}
-        contentContainerStyle={styles.fileListContent}
-        keyboardShouldPersistTaps="handled"
-        ListEmptyComponent={
-          <View style={styles.emptyList}>
-            <Text style={styles.emptyListText}>Project is empty. Create files or folders.</Text>
-          </View>
-        }
-      />
+      <SponsorBanner style={{ marginHorizontal: 16, marginTop: 12, marginBottom: 0 }} />
+      {viewMode === 'synapse' ? (
+        <SynapseGraphView
+          project={currentProject}
+          projects={projects}
+          memos={memos}
+          skills={discoveredSkills}
+          onSelectProject={selectProject}
+          onOpenCreateProject={() => setShowNewProject(true)}
+          onOpenFileInEditor={(filePath) => {
+            setActiveFile(filePath);
+            router.push({ pathname: '/editor' as any, params: { path: filePath } });
+          }}
+          onAddLinkedMemo={addMemo}
+        />
+      ) : (
+        <FlatList
+          data={filteredFiles}
+          keyExtractor={(item) => item.node.id + '_' + item.path}
+          renderItem={({ item }) => (
+            <FileTreeItem
+              node={item.node}
+              depth={item.depth}
+              expanded={expandedDirs.has(item.node.id)}
+              isActive={activeFile === item.path}
+              onPress={(n) => {
+                if (n.type === 'directory') {
+                  toggleDir(n);
+                } else {
+                  openFile(n, item.path);
+                }
+              }}
+              onToggle={toggleDir}
+              onLongPress={(n) => handleLongPress(n, item.path)}
+            />
+          )}
+          style={styles.fileList}
+          contentContainerStyle={styles.fileListContent}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
+            <View style={styles.emptyList}>
+              <Text style={styles.emptyListText}>Project is empty. Create files or folders.</Text>
+            </View>
+          }
+        />
+      )}
 
       <View style={styles.statusBar}>
         <Text style={styles.statusText}>

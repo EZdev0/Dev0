@@ -8,11 +8,32 @@ import {
   DEFAULT_SETTINGS,
   ToolPermission,
   TOOL_REGISTRY,
+  AIProviderType,
   isLearningTool,
   isLearningEnabled,
   syncLearningSettings,
 } from '@/types';
 import { setMemoSystemEnabled } from '@/utils/memo-system';
+import {
+  FreePoolState,
+  SharedPoolKey,
+  TokenUsageRecord,
+  createDefaultFreePoolState,
+  loadFreePoolState,
+  saveFreePoolState,
+  encodePoolSecret,
+  maskApiKey,
+  evaluatePoolKeyStatus,
+  selectActivePoolKeyForUser,
+} from '@/utils/free-ai-pool';
+import {
+  CustomSubAgentTemplate,
+  DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES,
+  loadCustomSubAgentTemplates,
+  saveCustomSubAgentTemplates,
+  loadSkillEnabledOverrides,
+  saveSkillEnabledOverrides,
+} from '@/utils/skill-loader';
 
 function uniqueId(prefix: string = ''): string {
   return prefix + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
@@ -24,7 +45,20 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [memos, setMemos] = useState<MemoEntry[]>([]);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [showSponsorModal, setShowSponsorModal] = useState<boolean>(false);
+  const [showFreePoolModal, setShowFreePoolModal] = useState<boolean>(false);
+  const [showSubAgentStudioModal, setShowSubAgentStudioModal] = useState<boolean>(false);
   const sponsorInteractionCountRef = useRef<number>(0);
+
+  // "AI for Free" Pool & Zero-Config Admin Governance State
+  const [freePoolState, setFreePoolState] = useState<FreePoolState>(() => createDefaultFreePoolState());
+  const freePoolStateRef = useRef<FreePoolState>(freePoolState);
+  freePoolStateRef.current = freePoolState;
+
+  // Custom Sub-Agent Templates & YAML Skill Overrides
+  const [customSubAgents, setCustomSubAgents] = useState<CustomSubAgentTemplate[]>(
+    DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES,
+  );
+  const [skillEnabledOverrides, setSkillEnabledOverrides] = useState<Record<string, boolean>>({});
 
   const learningActive = isLearningEnabled(settings);
 
@@ -35,10 +69,20 @@ export const [AppProvider, useApp] = createContextHook(() => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [settingsStr, todosStr, memosStr] = await Promise.all([
+        const [
+          settingsStr,
+          todosStr,
+          memosStr,
+          loadedPool,
+          loadedTemplates,
+          loadedSkillOverrides,
+        ] = await Promise.all([
           AsyncStorage.getItem('ide_settings'),
           AsyncStorage.getItem('ide_todos'),
           AsyncStorage.getItem('ide_memos'),
+          loadFreePoolState(),
+          loadCustomSubAgentTemplates(),
+          loadSkillEnabledOverrides(),
         ]);
         if (settingsStr) {
           const parsed = JSON.parse(settingsStr);
@@ -50,8 +94,14 @@ export const [AppProvider, useApp] = createContextHook(() => {
         }
         if (todosStr) setTodos(JSON.parse(todosStr));
         if (memosStr) setMemos(JSON.parse(memosStr));
+        if (loadedPool) {
+          setFreePoolState(loadedPool);
+          freePoolStateRef.current = loadedPool;
+        }
+        if (loadedTemplates) setCustomSubAgents(loadedTemplates);
+        if (loadedSkillOverrides) setSkillEnabledOverrides(loadedSkillOverrides);
       } catch (e) {
-        console.log('[App] Fehler beim Laden der Einstellungen:', e);
+        console.log('[App] Error loading settings:', e);
       } finally {
         setIsLoaded(true);
       }
@@ -59,12 +109,284 @@ export const [AppProvider, useApp] = createContextHook(() => {
     load();
   }, []);
 
+  const updateFreePoolState = useCallback((updater: (prev: FreePoolState) => FreePoolState) => {
+    setFreePoolState(prev => {
+      const next = updater(prev);
+      freePoolStateRef.current = next;
+      saveFreePoolState(next).catch(console.log);
+      return next;
+    });
+  }, []);
+
+  const togglePoolEnabled = useCallback((enabled: boolean) => {
+    updateFreePoolState(prev => ({
+      ...prev,
+      poolEnabled: enabled,
+    }));
+  }, [updateFreePoolState]);
+
+  const shareKeyToPool = useCallback((params: {
+    provider: AIProviderType;
+    model: string;
+    rawKey: string;
+    tokenLimit: number;
+    durationMinutes: number | null;
+    targetUserId: string;
+  }) => {
+    const now = Date.now();
+    const expiresAt = params.durationMinutes ? now + params.durationMinutes * 60 * 1000 : null;
+    const newKey: SharedPoolKey = {
+      id: uniqueId('pool_'),
+      provider: params.provider,
+      model: params.model,
+      maskedKey: maskApiKey(params.rawKey),
+      encodedSecret: encodePoolSecret(params.rawKey),
+      ownerUserId: freePoolStateRef.current.currentUserId,
+      ownerLabel: freePoolStateRef.current.currentUserEmail,
+      targetUserId: params.targetUserId || '*',
+      tokenLimit: Math.max(0, params.tokenLimit),
+      tokensUsed: 0,
+      promptTokensUsed: 0,
+      completionTokensUsed: 0,
+      createdAt: now,
+      expiresAt,
+      isActive: true,
+      status: 'active',
+    };
+
+    updateFreePoolState(prev => ({
+      ...prev,
+      poolEnabled: true,
+      sharedKeys: [newKey, ...prev.sharedKeys],
+      notifications: [
+        {
+          id: uniqueId('notif_'),
+          level: 'success',
+          title: 'New Key Added to Free Pool',
+          message: `Masked key (${newKey.maskedKey}) for ${params.provider.toUpperCase()} (${params.model}) is now active for ${newKey.targetUserId === '*' ? 'all users' : newKey.targetUserId}.`,
+          timestamp: now,
+          read: false,
+        },
+        ...prev.notifications.slice(0, 29),
+      ],
+    }));
+  }, [updateFreePoolState]);
+
+  const removePoolKey = useCallback((keyId: string) => {
+    updateFreePoolState(prev => ({
+      ...prev,
+      sharedKeys: prev.sharedKeys.filter(k => k.id !== keyId),
+    }));
+  }, [updateFreePoolState]);
+
+  const togglePoolKeyActive = useCallback((keyId: string) => {
+    updateFreePoolState(prev => ({
+      ...prev,
+      sharedKeys: prev.sharedKeys.map(k => {
+        if (k.id !== keyId) return k;
+        const nextActive = !k.isActive;
+        const updated = { ...k, isActive: nextActive };
+        updated.status = evaluatePoolKeyStatus(updated);
+        return updated;
+      }),
+    }));
+  }, [updateFreePoolState]);
+
+  const switchUserIdentity = useCallback((email: string, displayName: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return;
+    const now = Date.now();
+    updateFreePoolState(prev => {
+      const existing = prev.users.find(u => u.email.toLowerCase() === cleanEmail);
+      if (existing) {
+        return {
+          ...prev,
+          currentUserId: existing.id,
+          currentUserEmail: existing.email,
+          users: prev.users.map(u =>
+            u.id === existing.id ? { ...u, lastActiveAt: now } : u,
+          ),
+        };
+      }
+      // First user in DB or ggjonasgameryt@gmail.com becomes Super Admin
+      const isFirstOrOwner =
+        prev.users.length === 0 || cleanEmail === 'ggjonasgameryt@gmail.com';
+      const newUserId = 'usr_' + cleanEmail.replace(/[^a-z0-9]/g, '_').slice(0, 16);
+      const newUser = {
+        id: newUserId,
+        email: cleanEmail,
+        displayName: displayName || cleanEmail.split('@')[0],
+        role: (isFirstOrOwner ? 'admin' : 'user') as 'admin' | 'user',
+        status: 'active' as const,
+        timeoutUntil: null,
+        tokenQuota: 0,
+        tokensConsumed: 0,
+        createdAt: now,
+        lastActiveAt: now,
+        recentChatExcerpts: [],
+      };
+      return {
+        ...prev,
+        currentUserId: newUserId,
+        currentUserEmail: cleanEmail,
+        users: [...prev.users, newUser],
+      };
+    });
+  }, [updateFreePoolState]);
+
+  const timeoutUser = useCallback((userId: string, minutes: number | null) => {
+    const now = Date.now();
+    updateFreePoolState(prev => ({
+      ...prev,
+      users: prev.users.map(u => {
+        if (u.id !== userId) return u;
+        return {
+          ...u,
+          status: minutes ? 'timeout' : 'active',
+          timeoutUntil: minutes ? now + minutes * 60 * 1000 : null,
+        };
+      }),
+    }));
+  }, [updateFreePoolState]);
+
+  const toggleSuspendUser = useCallback((userId: string, reason?: string) => {
+    updateFreePoolState(prev => ({
+      ...prev,
+      users: prev.users.map(u => {
+        if (u.id !== userId) return u;
+        const nextStatus = u.status === 'suspended' ? 'active' : 'suspended';
+        return {
+          ...u,
+          status: nextStatus,
+          suspendReason: nextStatus === 'suspended' ? reason : undefined,
+        };
+      }),
+    }));
+  }, [updateFreePoolState]);
+
+  const updateUserTokenQuota = useCallback((userId: string, quota: number) => {
+    updateFreePoolState(prev => ({
+      ...prev,
+      users: prev.users.map(u => (u.id === userId ? { ...u, tokenQuota: quota } : u)),
+    }));
+  }, [updateFreePoolState]);
+
+  const clearPoolNotifications = useCallback(() => {
+    updateFreePoolState(prev => ({
+      ...prev,
+      notifications: [],
+    }));
+  }, [updateFreePoolState]);
+
+  const recordPoolTokenUsage = useCallback(
+    (usage: TokenUsageRecord, poolKeyId?: string, userMessageExcerpt?: string) => {
+      updateFreePoolState(prev => {
+        const now = Date.now();
+        const newAlerts = [...prev.notifications];
+
+        const updatedKeys = prev.sharedKeys.map(k => {
+          if (k.id !== poolKeyId) {
+            return { ...k, status: evaluatePoolKeyStatus(k, now) };
+          }
+          const prevStatus = evaluatePoolKeyStatus(k, now);
+          const nextUsed = k.tokensUsed + usage.totalTokens;
+          const updated: SharedPoolKey = {
+            ...k,
+            tokensUsed: nextUsed,
+            promptTokensUsed: k.promptTokensUsed + usage.promptTokens,
+            completionTokensUsed: k.completionTokensUsed + usage.completionTokens,
+          };
+          updated.status = evaluatePoolKeyStatus(updated, now);
+
+          if (prevStatus === 'active' && updated.status === 'warning') {
+            newAlerts.unshift({
+              id: uniqueId('notif_'),
+              level: 'warning',
+              title: 'Free Pool Key Approaching Limit (80%)',
+              message: `Key ${k.maskedKey} (${k.provider.toUpperCase()}) has used ${updated.tokensUsed.toLocaleString()} / ${k.tokenLimit.toLocaleString()} tokens.`,
+              timestamp: now,
+              read: false,
+            });
+          } else if (prevStatus !== 'exhausted' && updated.status === 'exhausted') {
+            newAlerts.unshift({
+              id: uniqueId('notif_'),
+              level: 'critical',
+              title: 'Pool Key Quota Reached — Auto-Switched',
+              message: `Key ${k.maskedKey} reached its ${k.tokenLimit.toLocaleString()} token limit. Automatically rotating to the next available Free Pool key.`,
+              timestamp: now,
+              read: false,
+            });
+          }
+          return updated;
+        });
+
+        const updatedUsers = prev.users.map(u => {
+          if (u.id !== prev.currentUserId) return u;
+          const excerpts = userMessageExcerpt
+            ? [
+                { id: uniqueId('ex_'), text: userMessageExcerpt.slice(0, 200), timestamp: now },
+                ...u.recentChatExcerpts.slice(0, 19),
+              ]
+            : u.recentChatExcerpts;
+          return {
+            ...u,
+            tokensConsumed: u.tokensConsumed + usage.totalTokens,
+            lastActiveAt: now,
+            recentChatExcerpts: excerpts,
+          };
+        });
+
+        return {
+          ...prev,
+          sharedKeys: updatedKeys,
+          users: updatedUsers,
+          notifications: newAlerts.slice(0, 30),
+          sessionTokens: {
+            prompt: prev.sessionTokens.prompt + usage.promptTokens,
+            completion: prev.sessionTokens.completion + usage.completionTokens,
+            total: prev.sessionTokens.total + usage.totalTokens,
+            savedByCompression:
+              prev.sessionTokens.savedByCompression + Math.round(usage.promptTokens * 0.35),
+          },
+        };
+      });
+    },
+    [updateFreePoolState],
+  );
+
+  const saveSubAgentTemplate = useCallback((template: CustomSubAgentTemplate) => {
+    setCustomSubAgents(prev => {
+      const exists = prev.some(t => t.id === template.id);
+      const updated = exists
+        ? prev.map(t => (t.id === template.id ? template : t))
+        : [template, ...prev];
+      saveCustomSubAgentTemplates(updated).catch(console.log);
+      return updated;
+    });
+  }, []);
+
+  const deleteSubAgentTemplate = useCallback((templateId: string) => {
+    setCustomSubAgents(prev => {
+      const updated = prev.filter(t => t.id !== templateId);
+      saveCustomSubAgentTemplates(updated).catch(console.log);
+      return updated;
+    });
+  }, []);
+
+  const toggleYamlSkill = useCallback((skillId: string, enabled: boolean) => {
+    setSkillEnabledOverrides(prev => {
+      const updated = { ...prev, [skillId]: enabled };
+      saveSkillEnabledOverrides(updated).catch(console.log);
+      return updated;
+    });
+  }, []);
+
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
     setSettings(prev => {
       const updated = syncLearningSettings(prev, partial);
       setMemoSystemEnabled(isLearningEnabled(updated));
       AsyncStorage.setItem('ide_settings', JSON.stringify(updated)).catch(e =>
-        console.log('[App] Fehler beim Speichern:', e)
+        console.log('[App] Error saving settings:', e),
       );
       return updated;
     });
@@ -137,19 +459,67 @@ export const [AppProvider, useApp] = createContextHook(() => {
     });
   }, []);
 
-  const getApiKey = useCallback((): string => {
-    switch (settings.selectedProvider) {
-      case 'rork': return 'rork_builtin';
-      case 'openai': return settings.openaiKey || '';
-      case 'anthropic': return settings.anthropicKey || '';
-      case 'gemini': return settings.geminiKey || '';
-      case 'groq': return settings.groqKey || '';
-      case 'openrouter': return settings.openrouterKey || '';
-      case 'nvidia': return settings.nvidiaKey || '';
-      case 'custom': return settings.customKey || '';
-      default: return '';
+  /**
+   * Resolves the active API key and provider/model, seamlessly rotating through the
+   * "AI for Free" Shared Pool when the user has no personal key or when Pool Mode is enabled!
+   */
+  const resolveEffectiveProviderAndKey = useCallback((): {
+    provider: AIProviderType;
+    apiKey: string;
+    model: string;
+    poolKeyId?: string;
+    maskedPoolKey?: string;
+  } => {
+    const prov = settings.selectedProvider as AIProviderType;
+    let directKey = '';
+    switch (prov) {
+      case 'rork': directKey = 'rork_builtin'; break;
+      case 'openai': directKey = settings.openaiKey || ''; break;
+      case 'anthropic': directKey = settings.anthropicKey || ''; break;
+      case 'gemini': directKey = settings.geminiKey || ''; break;
+      case 'groq': directKey = settings.groqKey || ''; break;
+      case 'openrouter': directKey = settings.openrouterKey || ''; break;
+      case 'nvidia': directKey = settings.nvidiaKey || ''; break;
+      case 'custom': directKey = settings.customKey || ''; break;
     }
+
+    const pool = freePoolStateRef.current;
+    // Check if user has a dedicated or shared Free Pool key available
+    if (pool.poolEnabled && (!directKey || prov === 'rork')) {
+      const match = selectActivePoolKeyForUser(pool.sharedKeys, pool.currentUserId, prov);
+      if (match) {
+        return {
+          provider: match.selectedKey.provider,
+          apiKey: match.decodedSecret,
+          model: match.selectedKey.model || settings.selectedModel,
+          poolKeyId: match.selectedKey.id,
+          maskedPoolKey: match.selectedKey.maskedKey,
+        };
+      }
+    }
+
+    if (directKey) {
+      return { provider: prov, apiKey: directKey, model: settings.selectedModel };
+    }
+
+    // Fallback to any active pool key if direct key is missing
+    const anyPoolMatch = selectActivePoolKeyForUser(pool.sharedKeys, pool.currentUserId);
+    if (anyPoolMatch) {
+      return {
+        provider: anyPoolMatch.selectedKey.provider,
+        apiKey: anyPoolMatch.decodedSecret,
+        model: anyPoolMatch.selectedKey.model,
+        poolKeyId: anyPoolMatch.selectedKey.id,
+        maskedPoolKey: anyPoolMatch.selectedKey.maskedKey,
+      };
+    }
+
+    return { provider: prov, apiKey: '', model: settings.selectedModel };
   }, [settings]);
+
+  const getApiKey = useCallback((): string => {
+    return resolveEffectiveProviderAndKey().apiKey;
+  }, [resolveEffectiveProviderAndKey]);
 
   const getFallbackSettings = useCallback((): Record<string, string> => {
     return {
@@ -174,7 +544,6 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, []);
 
   const getToolPermission = useCallback((toolName: string): ToolPermission => {
-    // 1. Strict Learning/Memo tool guard (takes precedence over YOLO mode)
     if (isLearningTool(toolName) && !isLearningEnabled(settings)) {
       return 'removed';
     }
@@ -244,11 +613,32 @@ export const [AppProvider, useApp] = createContextHook(() => {
     settings, updateSettings, isLoaded, learningEnabled: learningActive,
     todos, addTodo, updateTodoItem, deleteTodo, clearAllTodos,
     memos: learningActive ? memos : [], addMemo, deleteMemo, clearAllMemos,
-    getApiKey, getFallbackSettings,
+    getApiKey, getFallbackSettings, resolveEffectiveProviderAndKey,
     getToolPermission, setToolPermission,
     agentMd, setAgentMd, soulMd, setSoulMd,
     identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd,
     showSponsorModal, triggerSponsorInteraction, closeSponsorModal,
+    // "AI for Free" Pool & Governance
+    freePoolState,
+    togglePoolEnabled,
+    shareKeyToPool,
+    removePoolKey,
+    togglePoolKeyActive,
+    switchUserIdentity,
+    timeoutUser,
+    toggleSuspendUser,
+    updateUserTokenQuota,
+    clearPoolNotifications,
+    recordPoolTokenUsage,
+    showFreePoolModal,
+    setShowFreePoolModal,
+    // Custom Sub-Agents & YAML Skills
+    customSubAgents,
+    saveSubAgentTemplate,
+    deleteSubAgentTemplate,
+    skillEnabledOverrides,
+    toggleYamlSkill,
+    showSubAgentStudioModal,
+    setShowSubAgentStudioModal,
   };
 });
-

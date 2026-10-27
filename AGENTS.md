@@ -105,3 +105,18 @@ Every code or rule change must be validated against the following checks:
   - Replaces `Alert.alert` and `Alert.prompt` with cross-platform `Modal` dialogs and explicit `•••` context menu buttons (`MoreHorizontal`) with $\ge 40\text{–}44\text{px}$ touch targets.
 - **Static Analysis & Audit Documentation (`biome.json`, `.eslintrc.js`, `CHANGELOG.md`, `docs/AUDIT_REPORT.md`):**
   - Integrates `@biomejs/biome` (`npm run lint:biome`), `oxlint` (`npm run lint:oxlint`), ESLint (`npm run lint`), and TypeScript (`npm run typecheck`).
+
+---
+
+## Synapse Memory Graph, Free AI Key Pool, YAML Skill Loader & 3-Tier Parser (v1.2.0)
+- **Synapse Memory Graph & Code Localization (`utils/synapse-graph.ts`, `components/SynapseGraphView.tsx`, `app/(tabs)/(home)/index.tsx`):**
+  - Indexes project files, exported functions/components/hooks/classes, imports, function calls, persistent memories (`MemoEntry`), and YAML skills (`ParsedYamlSkill`) into an interactive 2D synapse graph with ego-subgraph code localization (`localize_code_graph`).
+- **3-Tier Hybrid ReAct / XML / JSON Tool Parser (`utils/ai-service.ts`):**
+  - Enables local models (Ollama, LM Studio, custom endpoints) and open-weight models to reliably invoke tools via fenced JSON blocks, XML `<tool_call>`/`<tool>` tags, or ReAct `Action:` / `Action Input:` blocks with automatic JSON repair (`repairAndParseJSON`).
+- **YAML Skill Loader & Scoped Sub-Agent Studio (`utils/skill-loader.ts`, `components/SubAgentStudioModal.tsx`):**
+  - Automatically parses YAML frontmatter (`--- ... ---`) from `.qoder/rules/*`, `.agents/*`, and project files, and provides a visual builder for custom Sub-Agent templates with glob file-scope enforcement (`isFileAllowedForSubAgent`).
+- **"AI for Free" Shared Key Pool & Zero-Config Admin Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`, `providers/AppProvider.tsx`):**
+  - Supports masked API key sharing with token/time limits and target `User ID` scoping, real API + BPE token accounting (`extractActualTokenUsage`, `estimateTokensBPE`), 80% quota warnings, automatic key rotation, and First-User (`ggjonasgameryt@gmail.com`) Super Admin user governance persisted via `IndexedDB` + `AsyncStorage`.
+- **Root-Cause Bug Documentation (`bugs/*.md`) & CORS-Safe `/api/models` Proxy (`app/api/models+api.ts`, `components/HTMLPreview.tsx`):**
+  - Eliminates `@rork-ai/toolkit-sdk` deprecation warnings, proxies custom `/v1/models` requests server-side, and enables WebAssembly (`window.runWasmBytes`) inside `HTMLPreview.tsx`.
+

@@ -90,7 +90,24 @@ const KEY_PLACEHOLDER: Record<string, string> = {
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { settings, updateSettings, agentMd, setAgentMd, soulMd, setSoulMd, identityMd, setIdentityMd, userMd, setUserMd, memoryMd, setMemoryMd } = useApp();
+  const {
+    settings,
+    updateSettings,
+    agentMd,
+    setAgentMd,
+    soulMd,
+    setSoulMd,
+    identityMd,
+    setIdentityMd,
+    userMd,
+    setUserMd,
+    memoryMd,
+    setMemoryMd,
+    freePoolState,
+    setShowFreePoolModal,
+    customSubAgents,
+    setShowSubAgentStudioModal,
+  } = useApp();
 
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [customModels, setCustomModels] = useState<{ id: string; name: string }[]>([]);
@@ -138,26 +155,29 @@ export default function SettingsScreen() {
       } else if (settings.selectedProvider === 'custom' && settings.customEndpoint) {
         setIsLoadingModels(true);
         try {
-          let base = settings.customEndpoint.trim();
-          if (base.startsWith('ttps://')) base = 'https://' + base.substring(7);
-          else if (base.startsWith('ttp://')) base = 'http://' + base.substring(6);
-
-          if (!base.startsWith('http://') && !base.startsWith('https://') && !base.startsWith('/')) {
-            // Allow relative api paths for proxying if not starting with /
-            if (!base.startsWith('/')) {
-               base = 'https://' + base;
-            }
+          const proxyRes = await fetch('/api/models', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              endpoint: settings.customEndpoint,
+              apiKey: settings.customKey || '',
+            }),
+          });
+          const data = await proxyRes.json();
+          if (active && Array.isArray(data?.data) && data.data.length > 0) {
+            setCustomModels(
+              data.data.map((m: any) => ({
+                id: String(m.id || m.name || 'custom-model'),
+                name: String(m.name || m.id || 'custom-model'),
+              })),
+            );
+          } else if (active) {
+            setCustomModels([{ id: 'local-model', name: 'local-model (Default)' }]);
           }
-          const url = base.replace(/\/v1\/chat\/completions$/, '').replace(/\/$/, '') + '/v1/models';
-          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-          if (settings.customKey) headers['Authorization'] = 'Bearer ' + settings.customKey;
-          const res = await fetch(url, { headers });
-          const data = await res.json();
-          if (active && data?.data) {
-            setCustomModels(data.data.map((m: any) => ({ id: m.id, name: m.id })));
+        } catch {
+          if (active) {
+            setCustomModels([{ id: 'local-model', name: 'local-model (Default)' }]);
           }
-        } catch (e) {
-          console.log('[Settings] Error fetching custom models:', e);
         } finally {
           if (active) setIsLoadingModels(false);
         }
@@ -165,7 +185,7 @@ export default function SettingsScreen() {
     };
     fetchModels();
     return () => { active = false; };
-  }, [settings.selectedProvider, settings.customEndpoint, settings.customKey]);
+  }, [settings.selectedProvider, settings.customEndpoint, settings.customKey, openRouterModels.length]);
 
   const toggleKeyVisibility = useCallback((key: string) => {
     setShowKeys(prev => ({ ...prev, [key]: !prev[key] }));
@@ -250,6 +270,71 @@ export default function SettingsScreen() {
                 <Text style={styles.providerCountText}>{configuredProviderCount} active</Text>
               </View>
             </View>
+
+            {/* "AI for Free" Shared Key Pool & Quota Floating Window Trigger */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                backgroundColor: IDE.accent + '14',
+                borderWidth: 1,
+                borderColor: IDE.accent + '45',
+                borderRadius: 12,
+                padding: 14,
+                marginBottom: 12,
+                gap: 12,
+              }}
+              onPress={() => setShowFreePoolModal(true)}
+              activeOpacity={0.75}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 10,
+                    backgroundColor: IDE.accent,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Sparkles size={18} color="#000" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: IDE.text }}>
+                      AI for Free • Shared Key Pool
+                    </Text>
+                    <View
+                      style={{
+                        backgroundColor: IDE.accent + '28',
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 5,
+                      }}
+                    >
+                      <Text style={{ fontSize: 9, fontWeight: '800', color: IDE.accent }}>
+                        RECOMMENDED
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 11, color: IDE.textSecondary, marginTop: 2 }}>
+                    {freePoolState.sharedKeys.length} masked pool keys • {freePoolState.sessionTokens.total.toLocaleString()} tokens tracked • User & Admin Quotas
+                  </Text>
+                </View>
+              </View>
+              <View
+                style={{
+                  backgroundColor: IDE.accent,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#000' }}>AI for Free</Text>
+              </View>
+            </TouchableOpacity>
 
             <View style={styles.activeProviderCard}>
               <View style={styles.activeProviderTop}>
@@ -677,6 +762,27 @@ export default function SettingsScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={styles.openDashboardButtonText}>Open</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.dashboardSectionCard, { marginTop: 10 }]}>
+              <View style={styles.dashboardSectionLeft}>
+                <View style={[styles.dashboardSectionIcon, { backgroundColor: IDE.accent + '20' }]}>
+                  <Brain size={18} color={IDE.accent} />
+                </View>
+                <View style={styles.dashboardSectionText}>
+                  <Text style={styles.dashboardSectionTitle}>Sub-Agent Studio & YAML Skills</Text>
+                  <Text style={styles.dashboardSectionSubtitle}>
+                    {customSubAgents.length} Custom Sub-Agent Templates • .qoder/rules YAML Loader
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.openDashboardButton, { backgroundColor: IDE.accent }]}
+                onPress={() => setShowSubAgentStudioModal(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.openDashboardButtonText, { color: '#000' }]}>Configure</Text>
               </TouchableOpacity>
             </View>
 

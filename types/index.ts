@@ -193,7 +193,10 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     free: true,
     keyHint: 'aistudio.google.com/app/apikey',
     models: [
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (2026 Recommended)' },
+      { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro (Deep Reasoning)' },
       { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite (Fast)' },
       { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
     ],
   },
@@ -229,15 +232,17 @@ export const AI_PROVIDERS: AIProviderConfig[] = [
     keyHint: 'openrouter.ai/keys',
     models: [
       { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Gratis)' },
+      { id: 'qwen/qwen-2.5-coder-32b-instruct:free', name: 'Qwen 2.5 Coder 32B (Gratis)' },
+      { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 (Gratis)' },
       { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral 7B (Gratis)' },
       { id: 'google/gemma-2-9b-it:free', name: 'Gemma 2 9B (Gratis)' },
     ],
   },
   {
     id: 'custom',
-    name: 'Benutzerdefiniert',
+    name: 'Benutzerdefiniert (Ollama / LM Studio)',
     models: [
-      { id: 'custom', name: 'Eigenes Modell' },
+      { id: 'custom', name: 'Eigenes / Lokales Modell' },
     ],
   },
 ];
@@ -271,6 +276,7 @@ export const TOOL_REGISTRY: ToolRegistryItem[] = [
   { name: 'find_replace', displayName: 'find_replace', description: 'Finds and replaces text in a file.', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'File path' }, { name: 'find', type: 'string', description: 'Search text' }, { name: 'replace', type: 'string', description: 'Replacement text' }], isBeta: false, defaultPermission: 'ask' },
   { name: 'list_directory', displayName: 'list_directory', description: 'Lists all files in a directory.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'Directory path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'search_files', displayName: 'search_files', description: 'Searches files for text (grep).', category: 'analysis', parameters: [{ name: 'query', type: 'string', description: 'Search term' }, { name: 'path', type: 'string', description: 'Optional path' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'localize_code_graph', displayName: 'localize_code_graph', description: 'Queries the RepoGraph Synapse Memory Graph to localize files, functions, imports, and memories.', category: 'analysis', parameters: [{ name: 'query', type: 'string', description: 'Symbol, function, or feature query' }], isBeta: false, defaultPermission: 'always' },
   { name: 'create_directory', displayName: 'create_directory', description: 'Creates a new directory.', category: 'filesystem', parameters: [{ name: 'path', type: 'string', description: 'Directory path' }], isBeta: false, defaultPermission: 'ask' },
   { name: 'get_project_tree', displayName: 'get_project_tree', description: 'Returns the entire project structure.', category: 'analysis', parameters: [], isBeta: false, defaultPermission: 'always' },
   { name: 'get_file_info', displayName: 'get_file_info', description: 'Returns information about a file.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'File path' }], isBeta: false, defaultPermission: 'always' },
@@ -288,7 +294,7 @@ export const TOOL_REGISTRY: ToolRegistryItem[] = [
   { name: 'update_memory_md', displayName: 'update_memory_md', description: 'Updates MEMORY.md (long-term memory, decisions, learned preferences).', category: 'learning', parameters: [{ name: 'content', type: 'string', description: 'New content for MEMORY.md' }], isBeta: true, defaultPermission: 'always' },
   { name: 'verify_file', displayName: 'verify_file', description: 'Verifies if a file exists and is correct.', category: 'analysis', parameters: [{ name: 'path', type: 'string', description: 'File path' }], isBeta: false, defaultPermission: 'always' },
   { name: 'task_complete', displayName: 'task_complete', description: 'Marks an agent task as completed.', category: 'planning', parameters: [{ name: 'summary', type: 'string', description: 'Summary' }], isBeta: false, defaultPermission: 'always' },
-  { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized sub-agent.', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-agent role' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: true, defaultPermission: 'ask' },
+  { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized or user-created sub-agent template.', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-agent role or template name' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: false, defaultPermission: 'always' },
 ];
 
 export const TOOL_CATEGORIES: { id: string; label: string; icon: string }[] = [

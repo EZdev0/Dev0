@@ -40,11 +40,14 @@ This audit investigated four high-priority issues reported in the **ZeroProCode 
   - Added `handleSelectTab(tabId)` in `ToolsScreen` that updates both local state (`setActiveTab`) and URL parameters (`router.setParams({ tab: resolvedTab })`).
   - Added a persistent **Quick-Return Navigation Bar** at the top of `AgentDashboard` (`components/MultiAgentUI.tsx`) with direct 1-click buttons for `Tools Registry`, `Plans`, `AI Chat`, and `Projects`.
 
-### 2.3 Finding C — Cross-Platform UI, Touch Targets & Web Compatibility
+### 2.3 Finding C — Cross-Platform UI, `/api/chat` Header Sanitization & Web Compatibility
 - **Symptom**:
+  - Browser reported `A network error occurred.` when `/api/chat` forwarded upstream `content-encoding: br` / `content-encoding: none` headers on already-decompressed Node `fetch` bodies, or when loading cold un-warmed 13.5 MB Metro bundles.
   - Long-press file actions on `ProjectsScreen` did not work reliably on Web/desktop, and `Alert.prompt` (used for file renaming) is iOS-only.
   - `SponsorBanner.tsx` rendered an unguarded `react-native-webview` `WebView` for its GitHub Sponsor button embed, which is unsupported on `react-native-web`.
 - **Remediation**:
+  - Sanitized response headers in `app/api/chat+api.ts` (stripping `content-encoding`, `content-length`, and hop-by-hop headers) and unified Web `'rork'` chat calls onto `callAI` in `providers/ChatProvider.tsx`.
+  - Removed Rork telemetry/console-error wrapper injection from `metro.config.js`, added an HMR-disabled guard in `scripts/patch-modules.js`, and optimized `lucide-react-native` ESM exports (reducing bundle size from 13.5 MB to 9.4 MB).
   - Replaced `Alert.alert` and `Alert.prompt` in `app/(tabs)/(home)/index.tsx`, `app/editor.tsx`, and `app/(tabs)/tools/index.tsx` with cross-platform React Native `Modal` components.
   - Added a visible `MoreHorizontal` (`•••`) action button to `components/FileTreeItem.tsx` with `minWidth: 36, minHeight: 36` hit targets.
   - Upgraded header buttons and sub-tab navigation pills to $\ge 40\text{–}44\text{px}$ touch targets.
@@ -67,3 +70,23 @@ This audit investigated four high-priority issues reported in the **ZeroProCode 
 | Biome Static Analysis | `npm run lint:biome` | **PASS (0 errors)** |
 | ESLint Expo Rules | `npm run lint` | **PASS (0 errors)** |
 | Web Dev Server (Port 3000) | `npm run dev` | **PASS (`http://localhost:3000`)** |
+
+---
+
+## 4. Phase 2 Architecture Upgrade (v1.2.0 — Synapse Graph, Free AI Key Pool & Local LLM Parser)
+
+### 4.1 Synapse Memory Graph & Ego-Graph Code Localization (`utils/synapse-graph.ts`, `components/SynapseGraphView.tsx`)
+- **Problem**: Agents burned excessive tokens by calling `get_project_tree` and reading entire files sequentially to locate function definitions and callers.
+- **Solution**: Implemented an AST/regex RepoGraph + LocAgent indexer (`buildSynapseGraph`) that maps files, exported functions/components/hooks/classes, imports, function calls, persistent memories (`MemoEntry`), and YAML skills (`ParsedYamlSkill`) into an interactive 2D neural synapse canvas (`SynapseGraphView`) in the Projects screen, plus the `localize_code_graph` tool for 2-hop ego-subgraph retrieval.
+
+### 4.2 3-Tier Hybrid ReAct / XML / JSON Tool Parser (`utils/ai-service.ts`)
+- **Problem**: Local and open-weight models (Ollama, LM Studio, Qwen, DeepSeek, Llama) often emit `<tool_call>`, `<tool>...</tool><args>...</args>`, or `Action: / Action Input:` blocks instead of native OpenAI `tool_calls`.
+- **Solution**: Implemented `parseToolCallsFromText` and `repairAndParseJSON` supporting all 3 tiers automatically whenever native `tool_calls` are absent.
+
+### 4.3 "AI for Free" Shared Key Pool, Real BPE Token Reader & Zero-Config Admin Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`)
+- **Problem**: Users needed a zero-config way to share API keys with token/time limits and target `User ID` scoping without exposing raw keys, alongside real token accounting and First-User (`ggjonasgameryt@gmail.com`) Super Admin governance.
+- **Solution**: Built `FreeAIPoolModal` and `utils/free-ai-pool.ts` with `IndexedDB` + `AsyncStorage` persistence, secret obfuscation + masking (`gsk_••••••••••••9a1f`), exact API `usage`/`usageMetadata` + cl100k BPE token counting (`estimateTokensBPE`), 80% quota warnings, automatic key rotation, and Super Admin user management.
+
+### 4.4 Deprecated SDK Removal, `/api/models` Proxy & WebAssembly Preview (`providers/ChatProvider.tsx`, `app/api/models+api.ts`, `components/HTMLPreview.tsx`)
+- **Solution**: Removed deprecated `createRorkTool` and `useRorkAgent` calls from `ChatProvider.tsx`, added `/api/models` to prevent CORS `NetworkError` on custom model endpoints, and upgraded `HTMLPreview.tsx` with Web `<iframe srcDoc>` + `window.runWasmBytes` WebAssembly support.
+

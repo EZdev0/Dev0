@@ -1,6 +1,7 @@
 import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS, isLearningTool } from '@/types';
 import { MAX_TOOL_RESULT_LENGTH, truncateToolResult, compressAndSanitizeMessagesForAPI } from '@/utils/chat-compression';
 import { runSubAISearchAgent } from '@/utils/web-tools';
+import { extractActualTokenUsage, TokenUsageRecord } from '@/utils/free-ai-pool';
 
 export const DEFAULT_RORK_MODEL = 'gpt-4o-mini';
 
@@ -285,6 +286,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description: 'Fetches the list of currently active and available tools. Use this to check which tools you can actually use. Hidden from user.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
+  {
+    name: 'localize_code_graph',
+    description: 'Queries the RepoGraph Synapse Memory Graph to localize files, exported functions, callers/callees, and linked memories with minimal token cost.',
+    parameters: { type: 'object', properties: { query: { type: 'string', description: 'Symbol, function name, file, or concept to localize' } }, required: ['query'] },
+  },
+  {
+    name: 'sub_agent',
+    description: 'Delegates a focused sub-task to a specialized or custom user-defined sub-agent template (e.g. analyst, developer, tester, researcher, critic, or custom template name).',
+    parameters: {
+      type: 'object',
+      properties: {
+        role: { type: 'string', description: 'Sub-agent role or custom template name' },
+        task: { type: 'string', description: 'Detailed task instruction for the sub-agent' },
+      },
+      required: ['role', 'task'],
+    },
+  },
 ];
 
 export function getAvailableTools(options?: {
@@ -322,6 +340,8 @@ export function buildSystemPrompt(options: {
   betaAgentLearning?: boolean;
   learningEnabled?: boolean;
   toolPermissions?: Record<string, string>;
+  activeSkillsBlock?: string;
+  synapseLocalizationBlock?: string;
 }): string {
   const learningActive = Boolean(options.learningEnabled ?? options.betaAgentLearning ?? false);
 
@@ -494,6 +514,14 @@ outside the tools provided to you.
     options.mentionedFiles.forEach(f => {
       prompt += '\n### ' + f.path + '\n```\n' + truncateToolResult(f.content || '', MAX_TOOL_RESULT_LENGTH) + '\n```\n';
     });
+  }
+
+  if (options.synapseLocalizationBlock && options.synapseLocalizationBlock.trim()) {
+    prompt += '\n' + options.synapseLocalizationBlock.trim() + '\n';
+  }
+
+  if (options.activeSkillsBlock && options.activeSkillsBlock.trim()) {
+    prompt += '\n' + options.activeSkillsBlock.trim() + '\n';
   }
 
   return prompt;
@@ -756,17 +784,24 @@ async function callOpenAI(apiKey: string, model: string, messages: ChatMessage[]
     };
   });
 
-  if (usedFlattenedTools && tools.length > 0 && nativeCalls.length === 0) {
+  const promptTextForTokens = messages.map(m => m.content || '').join('\n') + '\n' + systemPrompt;
+  const tokenUsage = extractActualTokenUsage(data, promptTextForTokens, rawContent, endpoint || 'openai', model);
+
+  if (tools.length > 0 && nativeCalls.length === 0 && rawContent) {
     const { toolCalls: textCalls, cleanContent } = parseToolCallsFromText(rawContent);
-    return {
-      content: cleanContent,
-      toolCalls: textCalls,
-    };
+    if (textCalls.length > 0) {
+      return {
+        content: cleanContent,
+        toolCalls: textCalls,
+        tokenUsage,
+      };
+    }
   }
 
   return {
     content: rawContent,
     toolCalls: nativeCalls,
+    tokenUsage,
   };
 }
 
@@ -844,17 +879,24 @@ async function callOpenRouter(apiKey: string, model: string, messages: ChatMessa
     };
   });
 
-  if (usedFlattenedTools && tools.length > 0 && nativeCalls.length === 0) {
+  const promptTextForTokens = messages.map(m => m.content || '').join('\n') + '\n' + systemPrompt;
+  const tokenUsage = extractActualTokenUsage(data, promptTextForTokens, rawContent, 'openrouter', model);
+
+  if (tools.length > 0 && nativeCalls.length === 0 && rawContent) {
     const { toolCalls: textCalls, cleanContent } = parseToolCallsFromText(rawContent);
-    return {
-      content: cleanContent,
-      toolCalls: textCalls,
-    };
+    if (textCalls.length > 0) {
+      return {
+        content: cleanContent,
+        toolCalls: textCalls,
+        tokenUsage,
+      };
+    }
   }
 
   return {
     content: rawContent,
     toolCalls: nativeCalls,
+    tokenUsage,
   };
 }
 
@@ -988,21 +1030,42 @@ async function callGemini(apiKey: string, model: string, messages: ChatMessage[]
     }
   }
 
-  if (usedFlattenedTools && tools.length > 0 && toolCalls.length === 0) {
+  const promptTextForTokens = messages.map(m => m.content || '').join('\n') + '\n' + systemPrompt;
+  const tokenUsage = extractActualTokenUsage(data, promptTextForTokens, content, 'gemini', model);
+
+  if (tools.length > 0 && toolCalls.length === 0 && content) {
     const { toolCalls: textCalls, cleanContent } = parseToolCallsFromText(content);
-    return { content: cleanContent, toolCalls: textCalls };
+    if (textCalls.length > 0) {
+      return { content: cleanContent, toolCalls: textCalls, tokenUsage };
+    }
   }
 
-  return { content, toolCalls };
+  return { content, toolCalls, tokenUsage };
+}
+
+export function repairAndParseJSON(str: string): Record<string, any> | null {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    try {
+      // Repair common local LLM JSON quirks: trailing commas, unescaped newlines
+      const repaired = trimmed
+        .replace(/,\s*([}\]])/g, '$1')
+        .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":');
+      return JSON.parse(repaired);
+    } catch {
+      return null;
+    }
+  }
 }
 
 function safeParseJSON(str: string): Record<string, any> {
-  try {
-    return JSON.parse(str);
-  } catch {
-    console.log('[AI] Failed to parse JSON:', str.slice(0, 100));
-    return {};
-  }
+  const parsed = repairAndParseJSON(str);
+  if (parsed && typeof parsed === 'object') return parsed;
+  console.log('[AI] Failed to parse JSON:', (str || '').slice(0, 100));
+  return {};
 }
 
 class AIError extends Error {
@@ -1083,42 +1146,85 @@ function buildToolCallInstructions(tools: ToolDefinition[]): string {
   return instructions;
 }
 
-function parseToolCallsFromText(text: string): { toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; cleanContent: string } {
+export function parseToolCallsFromText(text: string): { toolCalls: { id: string; name: string; arguments: Record<string, any> }[]; cleanContent: string } {
   const toolCalls: { id: string; name: string; arguments: Record<string, any> }[] = [];
+  if (!text || typeof text !== 'string') return { toolCalls, cleanContent: '' };
   let cleanContent = text;
 
-  const toolBlockRegex = /```tool\s*\n([\s\S]*?)\n```/g;
-  let match;
+  const makeId = () => 'rk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
 
-  while ((match = toolBlockRegex.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim());
-      if (parsed?.name) {
-        toolCalls.push({
-          id: 'rk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
-          name: parsed.name,
-          arguments: parsed.arguments || parsed.params || {},
-        });
-      }
-    } catch (e) {
-      console.log('[AI] Failed to parse tool block:', match[1]?.slice(0, 100));
+  // Tier 2A: Fenced ```tool or ```json blocks containing {"name"|"tool": "...", "arguments"|"params": {...}}
+  const fencedRegex = /```(?:tool|json)?\s*\n([\s\S]*?)\n```/gi;
+  let match: RegExpExecArray | null;
+  while ((match = fencedRegex.exec(text)) !== null) {
+    const candidate = match[1].trim();
+    const parsed = repairAndParseJSON(candidate);
+    const toolName = parsed?.name || parsed?.tool || parsed?.function;
+    if (parsed && typeof toolName === 'string') {
+      toolCalls.push({
+        id: makeId(),
+        name: toolName.trim(),
+        arguments: parsed.arguments || parsed.params || parsed.args || parsed.input || {},
+      });
+      cleanContent = cleanContent.replace(match[0], '').trim();
     }
+  }
+
+  // Tier 3A: ReAct XML Hybrid Tags: <tool>tool_name</tool><args>{...}</args>
+  const reactXmlRegex = /<tool>\s*([a-zA-Z0-9_]+)\s*<\/tool>\s*<args>([\s\S]*?)<\/args>/gi;
+  while ((match = reactXmlRegex.exec(cleanContent)) !== null) {
+    const toolName = match[1].trim();
+    const argsObj = repairAndParseJSON(match[2].trim()) || {};
+    toolCalls.push({
+      id: makeId(),
+      name: toolName,
+      arguments: argsObj,
+    });
     cleanContent = cleanContent.replace(match[0], '').trim();
   }
 
-  const inlineRegex = /\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"arguments"\s*:\s*(\{[^}]*\})\s*\}/g;
+  // Tier 3B: Qwen / Hermes / Llama <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+  const hermesXmlRegex = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+  while ((match = hermesXmlRegex.exec(cleanContent)) !== null) {
+    const parsed = repairAndParseJSON(match[1].trim());
+    const toolName = parsed?.name || parsed?.tool;
+    if (parsed && typeof toolName === 'string') {
+      toolCalls.push({
+        id: makeId(),
+        name: toolName.trim(),
+        arguments: parsed.arguments || parsed.params || parsed.args || {},
+      });
+      cleanContent = cleanContent.replace(match[0], '').trim();
+    }
+  }
+
+  // Tier 3C: Classic ReAct Action / Action Input format
   if (toolCalls.length === 0) {
-    while ((match = inlineRegex.exec(text)) !== null) {
-      try {
-        const args = JSON.parse(match[2]);
+    const actionRegex = /Action\s*:\s*([a-zA-Z0-9_]+)\s*\r?\nAction\s+Input\s*:\s*(\{[\s\S]*?\})(?=\r?\n|$)/gi;
+    while ((match = actionRegex.exec(cleanContent)) !== null) {
+      const toolName = match[1].trim();
+      const argsObj = repairAndParseJSON(match[2].trim()) || {};
+      toolCalls.push({
+        id: makeId(),
+        name: toolName,
+        arguments: argsObj,
+      });
+      cleanContent = cleanContent.replace(match[0], '').trim();
+    }
+  }
+
+  // Tier 2B: Inline JSON tool call fallback
+  const inlineRegex = /\{\s*"(?:name|tool)"\s*:\s*"(\w+)"\s*,\s*"(?:arguments|params|args)"\s*:\s*(\{[^}]*\})\s*\}/g;
+  if (toolCalls.length === 0) {
+    while ((match = inlineRegex.exec(cleanContent)) !== null) {
+      const args = repairAndParseJSON(match[2]);
+      if (args) {
         toolCalls.push({
-          id: 'rk_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+          id: makeId(),
           name: match[1],
           arguments: args,
         });
         cleanContent = cleanContent.replace(match[0], '').trim();
-      } catch {
-        console.log('[AI] Failed to parse inline tool call');
       }
     }
   }
@@ -1432,23 +1538,26 @@ export async function callAI(
   systemPrompt: string,
   customEndpoint?: string,
   fallbackSettings?: Record<string, string>,
-): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }> {
+): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string; tokenUsage?: TokenUsageRecord }> {
   if (!apiKey && provider !== 'rork' && provider !== 'custom') {
-    throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "Studio KI" as provider for free usage without key!');
+    throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "AI for Free" or "Studio KI" as provider for free usage!');
   }
 
   const safeModel = resolveDefaultModel(provider, model);
   const compressedMessages = compressAndSanitizeMessagesForAPI(messages, { maxToolLength: MAX_TOOL_RESULT_LENGTH });
   const allowLearningTools = Array.isArray(tools) && tools.some(t => isLearningTool(t.name));
+  const promptTextForAccounting = compressedMessages.map(m => m.content || '').join('\n') + '\n' + systemPrompt;
 
-  const filterResultTools = (res: { content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string }) => {
+  const filterResultTools = (res: { content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string; tokenUsage?: TokenUsageRecord }) => {
+    const tokenUsage = res.tokenUsage || extractActualTokenUsage(null, promptTextForAccounting, res.content || '', provider, safeModel);
     if (!allowLearningTools && Array.isArray(res.toolCalls) && res.toolCalls.length > 0) {
       return {
         ...res,
+        tokenUsage,
         toolCalls: res.toolCalls.filter(tc => !isLearningTool(tc.name)),
       };
     }
-    return res;
+    return { ...res, tokenUsage };
   };
 
   const controller = new AbortController();

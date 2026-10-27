@@ -12,16 +12,89 @@ if (Platform.OS === 'web' && typeof process !== 'undefined' && process.env) {
   // Wait, if it's an API route we can't use relative in EXPO_PUBLIC_TOOLKIT_URL if it's evaluated elsewhere. We'll leave it as cors proxy for simplicity or use absolute localhost URL.
 }
 
-import { AppProvider } from '@/providers/AppProvider';
-import { ProjectProvider } from '@/providers/ProjectProvider';
-import { ChatProvider } from '@/providers/ChatProvider';
+import { AppProvider, useApp } from '@/providers/AppProvider';
+import { ProjectProvider, useProject } from '@/providers/ProjectProvider';
+import { ChatProvider, useChat } from '@/providers/ChatProvider';
 import { AgentProvider } from '@/providers/AgentProvider';
 import { IDE } from '@/constants/colors';
 import { SponsorOverlay } from '@/components/SponsorBanner';
+import { FreeAIPoolModal } from '@/components/FreeAIPoolModal';
+import { SubAgentStudioModal } from '@/components/SubAgentStudioModal';
+import { discoverYamlSkills } from '@/utils/skill-loader';
+import { useRouter } from 'expo-router';
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+function GlobalModalsHost() {
+  const router = useRouter();
+  const {
+    freePoolState,
+    showFreePoolModal,
+    setShowFreePoolModal,
+    togglePoolEnabled,
+    shareKeyToPool,
+    removePoolKey,
+    togglePoolKeyActive,
+    switchUserIdentity,
+    timeoutUser,
+    toggleSuspendUser,
+    updateUserTokenQuota,
+    clearPoolNotifications,
+    customSubAgents,
+    saveSubAgentTemplate,
+    deleteSubAgentTemplate,
+    skillEnabledOverrides,
+    toggleYamlSkill,
+    showSubAgentStudioModal,
+    setShowSubAgentStudioModal,
+  } = useApp();
+  const { currentProject } = useProject();
+  const { sendMessage } = useChat();
+
+  const discoveredSkills = React.useMemo(
+    () => discoverYamlSkills(currentProject?.files || [], skillEnabledOverrides),
+    [currentProject?.files, skillEnabledOverrides],
+  );
+
+  return (
+    <>
+      <FreeAIPoolModal
+        visible={showFreePoolModal}
+        onClose={() => setShowFreePoolModal(false)}
+        poolState={freePoolState}
+        onTogglePoolEnabled={togglePoolEnabled}
+        onShareKeyToPool={shareKeyToPool}
+        onRemovePoolKey={removePoolKey}
+        onTogglePoolKeyActive={togglePoolKeyActive}
+        onSwitchUserIdentity={switchUserIdentity}
+        onTimeoutUser={timeoutUser}
+        onToggleSuspendUser={toggleSuspendUser}
+        onUpdateUserTokenQuota={updateUserTokenQuota}
+        onClearNotifications={clearPoolNotifications}
+      />
+      <SubAgentStudioModal
+        visible={showSubAgentStudioModal}
+        onClose={() => setShowSubAgentStudioModal(false)}
+        templates={customSubAgents}
+        skills={discoveredSkills}
+        onSaveTemplate={saveSubAgentTemplate}
+        onDeleteTemplate={deleteSubAgentTemplate}
+        onToggleSkill={toggleYamlSkill}
+        onRunTemplateTask={(template, taskInstruction) => {
+          setShowSubAgentStudioModal(false);
+          router.push('/(tabs)/chat' as any);
+          setTimeout(() => {
+            sendMessage(
+              `[Run Sub-Agent "${template.name}" (role: ${template.role})]\nTask: ${taskInstruction}\nUse the sub_agent tool with role="${template.role}" and task="${taskInstruction}".`,
+            );
+          }, 150);
+        }}
+      />
+    </>
+  );
+}
 
 function RootLayoutNav() {
   return (
@@ -54,6 +127,7 @@ export default function RootLayout() {
               <AgentProvider>
                 <StatusBar style="light" />
                 <RootLayoutNav />
+                <GlobalModalsHost />
                 <SponsorOverlay />
               </AgentProvider>
             </ChatProvider>

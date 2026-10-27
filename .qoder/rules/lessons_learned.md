@@ -17,3 +17,9 @@ alwaysApply: true
 - **[2026-10-27] Cross-Platform Web Compatibility (`Alert.prompt` & `react-native-webview`)**:
   - **Issue**: `Alert.prompt` is iOS-only and multi-button `Alert.alert` calls fail on React Native Web; native `WebView` components crash on Web if rendered without a `Platform.OS === 'web'` guard.
   - **Rule**: Always use React Native `Modal` components for interactive confirmations, context menus, and rename prompts, and guard `WebView` embeds with a Web fallback.
+- **[2026-10-27] Eliminating `@rork-ai/toolkit-sdk` Deprecation Warnings & Unifying Tool Execution (`providers/ChatProvider.tsx`)**:
+  - **Issue**: Importing and calling `createRorkTool` and `useRorkAgent` emitted console warnings (`[Toolkit] createRorkTool / useRorkAgent is deprecated`) on startup and bypassed custom tool parsers and token accounting.
+  - **Rule**: Route all chat providers through the unified `callAI` manual loop in `ChatProvider.tsx` so token usage (`recordPoolTokenUsage`), 3-tier tool parsing (`parseToolCallsFromText`), and `localize_code_graph` work identically across every provider.
+- **[2026-10-27] Custom `/v1/models` Browser CORS Failures (`app/api/models+api.ts`, `app/(tabs)/settings/index.tsx`)**:
+  - **Issue**: Calling `fetch(customEndpoint + '/v1/models')` directly from browser clients triggers `TypeError: NetworkError when attempting to fetch resource` when the target server lacks browser CORS headers.
+  - **Rule**: Always proxy custom `/v1/models` discovery through the server-side `/api/models` route with a graceful default model fallback.
