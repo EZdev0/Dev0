@@ -158,3 +158,32 @@ Every code or rule change must be validated against the following checks:
   - Combines browser-side snapshot restore points (`IndexedDB` / `AsyncStorage`) with Docker `/api/sandbox` Git commit mirroring (`git_status`, `git_create_restore_point`, `git_list_restore_points`, `git_restore_point`) and an interactive **Built-in Git & Restore Points** modal in Projects.
 - **100% English UI, "AI Generate All" Striped Lock Overlay, Live Read-Only Sub-Agent Stream & Sub-Agent Deletion (`components/SubAgentFloatingQuestionModal.tsx`, `app/(tabs)/chat/index.tsx`, `components/SubAgentStudioModal.tsx`):**
   - Translates all UI components and modals to 100% English, adds an **"AI Generate All"** button with a diagonal striped lock overlay in `SubAgentFloatingQuestionModal`, provides a **Live Read-Only Sub-Agent Stream Modal** with a disabled grayed-out input bar when clicking a Sub-Agent, and enables deleting any Sub-Agent template.
+
+---
+
+## Firebase Google Auth, Server Key Vault Proxy, 50% Emergency Auto-Cutoff, Mutual-Exclusive Tool Isolation & Owner Prompt Control (v1.7.0)
+- **Real Free Firebase Google Sign-In & Placeholder Elimination (`utils/firebase-client.ts`, `firebase-applet-config.json`, `firestore.rules`, `utils/free-ai-pool.ts`, `providers/AppProvider.tsx`, `components/FreeAIPoolModal.tsx`):**
+  - Integrates real Firebase Authentication (`signInWithPopup` with `GoogleAuthProvider`) and Firestore persistence (`users`, `pool_keys`, `pool_logs`).
+  - Eliminates `google.user@gmail.com`, `pool_builtin_studio_free`, and `rork_builtin` placeholders via `detectAuthOrKeyPlaceholder`.
+- **Server-Only Key Vault Proxy (`/api/pool`) & 50% Emergency Auto-Cutoff (Not-Aus) Without Deletion (`app/api/pool+api.ts`, `utils/free-ai-pool.ts`, `utils/ai-service.ts`):**
+  - Stores shared API keys in the server vault (`/api/pool`), clamps `max_tokens` (`clampMaxTokensForPoolKey`), blocks key-extraction prompt jailbreaks (`inspectPromptForKeyJailbreak`), notifies the Owner at configurable `notifyAtPercent` (`40%`), and triggers an automatic Emergency Stop (`status: 'emergency_stop'`, `isActive: false`) at `emergencyCutoffPercent` (`50%`) **without deleting any key**.
+- **Mutual-Exclusive Tool Isolation, Hidden Disabled Tools & Live Owner System Prompt Control (`types/index.ts`, `utils/ai-service.ts`, `providers/ChatProvider.tsx`, `app/(tabs)/tools/index.tsx`, `components/FreeAIPoolModal.tsx`):**
+  - Blocks `zip_create`, `zip_read`, and `draft_agent_plan` (`isChatModeOnlyTool`) in Agent Mode (`agentMode: true`) and blocks project filesystem/Git/Sub-Agent tools (`isProjectFilesystemOrAgentOnlyTool`) in Normal Chat Mode (`agentMode: false`).
+  - Hides mode-disabled and removed tools from standard users in `ToolsScreen` (with an Owner-only visibility toggle), replaces the hardcoded `Cap 50k` button with a custom numeric quota setter (`0` = Unlimited), and adds live Owner editing for `customSystemPrompt`, `customChatModePrompt`, and `customPlannerPrompt`.
+- **Metro `.bun-tmp-*` Watcher Fix, Single Live `ThinkingBlock`, `create_yaml_skill` & Non-Destructive Memory Graph Cleanup (`metro.config.js`, `scripts/patch-modules.js`, `utils/skill-loader.ts`, `utils/synapse-graph.ts`):**
+  - Blocks transient `/\/\.bun-tmp-[^/]+/` paths in `metro.config.js` and patches `metro-file-map` watchers in `scripts/patch-modules.js`.
+  - Removes the duplicate `thinking_...` message in `ChatProvider.tsx`, adds the `create_yaml_skill` tool (`createAndValidateYamlSkillFile`), and repairs stale `[Synapse: ...]` file references (`cleanStaleMemoryGraphLinks`) without deleting user memories.
+
+---
+
+## Extra YAML Learning + `.ZIP` Skill Importer, Corrupted YAML `!` AI Fix, Animated Reasoning Orb, Drag-and-Drop Synapse Graph & English Tutorial (v1.8.0)
+- **Legacy 5-Identity-File Removal & Extra YAML Learning Engine (`utils/skill-loader.ts`, `components/SubAgentStudioModal.tsx`, `app/(tabs)/settings/index.tsx`, `utils/ai-service.ts`):**
+  - Removes the legacy 5 Identity Files (`SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`) from Beta Settings and system prompts.
+  - Replaces them with the **Extra YAML Skill & `AGENTS.md` Learning Engine** supporting on-site `.md`, `.yml`, `AGENTS.md`, and `.zip` skill pack uploads (`importSkillsFromZipOrFiles`), `.qoder/`-free source paths (`formatSkillSourceForDisplay`), automatic detection of broken/non-YAML files with an exclamation warning (`!`) and 1-click **"Fix with AI"** repair (`repairCorruptedSkillContent`), and configurable **Always (Background)** vs. **Custom Trigger Words / Phrases / Letters** (`matchActiveSkillsForTurn`).
+- **Subtle Bottom-Right Active Skills & `AGENTS.md` Badge in Chat (`components/ChatBubble.tsx`, `providers/ChatProvider.tsx`, `types/index.ts`):**
+  - Records `loadedSkills` on every chat turn and renders a subtle bottom-right `Loaded: <Skills / AGENTS.md>` indicator inside `ChatBubble.tsx` showing which rules/skills the system actually loaded.
+- **Animated Reasoning Orb -> Single Text-Streaming Extended Thinking Box (`components/ThinkingBlock.tsx`, `app/(tabs)/chat/index.tsx`, `utils/ai-service.ts`):**
+  - Forces structured `<think>...</think>` extended thinking in `buildSystemPrompt`, renders **only** an animated **Reasoning Orb** while waiting for initial reasoning tokens (`isLive && !hasRealReasoning`), and transitions into **one single text-streaming box** once reasoning text streams in.
+- **Classic Projects View, Working 1-Click Project Deletion, Dashboard in Slot 1, Interactive Drag-and-Drop Synapse Graph & English Tutorial (`app/(tabs)/(home)/index.tsx`, `providers/ProjectProvider.tsx`, `app/(tabs)/tools/index.tsx`, `components/SynapseGraphView.tsx`, `components/TutorialModal.tsx`):**
+  - Restores the classic File Tree view in Projects (`viewMode = 'tree'`), fixes persistent project deletion in `ProjectProvider.tsx` (`deleteProject`), places **Dashboard in Slot 1** of Tools (`[Dashboard, Tools, Plans, Graph, Search, Chat]`), upgrades `SynapseGraphView` with **Node Drag-and-Drop**, **Left-Click Inspector**, and **Right-Click / Long-Press Context Menu**, adds Codebase & Graph Node results to `Tools -> Search`, and includes an interactive 5-step **English System Tutorial** (`TutorialModal.tsx`).
+

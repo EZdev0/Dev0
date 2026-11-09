@@ -33,8 +33,16 @@ export default function ProjectsScreen() {
     projects, currentProject, files, selectProject, createProject, deleteProject,
     restoreProjectFiles, deleteFile, createFile, createDirectory, renameFile,
   } = useProject();
-  const { memos, addMemo, deleteMemo, skillEnabledOverrides } = useApp();
-  const [viewMode, setViewMode] = useState<'synapse' | 'tree'>('synapse');
+  const {
+    memos,
+    addMemo,
+    deleteMemo,
+    skillEnabledOverrides,
+    skillTriggerOverrides,
+    uploadedSkillFiles,
+    setShowTutorialModal,
+  } = useApp();
+  const [viewMode, setViewMode] = useState<'synapse' | 'tree'>('tree');
 
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [activeFile, setActiveFile] = useState<string | null>(null);
@@ -270,24 +278,114 @@ export default function ProjectsScreen() {
   }, [flatFiles, searchQuery]);
 
   const discoveredSkills = useMemo(
-    () => discoverYamlSkills(currentProject?.files || [], skillEnabledOverrides),
-    [currentProject?.files, skillEnabledOverrides],
+    () =>
+      discoverYamlSkills(
+        currentProject?.files || [],
+        skillEnabledOverrides,
+        uploadedSkillFiles,
+        skillTriggerOverrides,
+      ),
+    [currentProject?.files, uploadedSkillFiles, skillEnabledOverrides, skillTriggerOverrides],
   );
 
   if (projects.length === 0) {
     return (
       <View style={styles.container}>
-        <SynapseGraphView
-          project={null}
-          projects={projects}
-          memos={memos}
-          skills={discoveredSkills}
-          onSelectProject={selectProject}
-          onOpenCreateProject={() => setShowNewProject(true)}
-          onOpenFileInEditor={(filePath) => router.push({ pathname: '/editor' as any, params: { path: filePath } })}
-          onAddLinkedMemo={addMemo}
-          onDeleteMemo={deleteMemo}
-        />
+        <SponsorBanner style={{ marginHorizontal: 16, marginTop: 12, marginBottom: 0 }} />
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 28 }}>
+          <View
+            style={{
+              width: 84,
+              height: 84,
+              borderRadius: 22,
+              backgroundColor: IDE.primary + '16',
+              borderWidth: 1,
+              borderColor: IDE.primary + '45',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: 18,
+            }}
+          >
+            <FolderOpen size={38} color={IDE.primary} />
+          </View>
+          <Text style={{ fontSize: 19, fontWeight: '800', color: IDE.text, marginBottom: 8 }}>
+            No Projects Created Yet
+          </Text>
+          <Text
+            style={{
+              fontSize: 13,
+              color: IDE.muted,
+              textAlign: 'center',
+              maxWidth: 420,
+              lineHeight: 19,
+              marginBottom: 22,
+            }}
+          >
+            Create a sandboxed project to browse files, edit code, and run Agent Mode — or open the standalone Memory & Code Synapse Graph in Tools.
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                backgroundColor: IDE.primary,
+                paddingHorizontal: 18,
+                paddingVertical: 11,
+                borderRadius: 10,
+              }}
+              onPress={() => setShowNewProject(true)}
+              activeOpacity={0.8}
+            >
+              <Plus size={16} color="#fff" />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>
+                Create First Project
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                backgroundColor: IDE.surface,
+                borderWidth: 1,
+                borderColor: IDE.border,
+                paddingHorizontal: 16,
+                paddingVertical: 11,
+                borderRadius: 10,
+              }}
+              onPress={() => router.push('/(tabs)/tools?tab=graph' as any)}
+              activeOpacity={0.8}
+            >
+              <GitBranch size={15} color={IDE.accent} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: IDE.text }}>
+                Open Synapse Graph (Tools)
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                backgroundColor: IDE.accent + '18',
+                borderWidth: 1,
+                borderColor: IDE.accent + '50',
+                paddingHorizontal: 16,
+                paddingVertical: 11,
+                borderRadius: 10,
+              }}
+              onPress={() => setShowTutorialModal(true)}
+              activeOpacity={0.8}
+            >
+              <FileText size={15} color={IDE.accent} />
+              <Text style={{ fontSize: 13, fontWeight: '700', color: IDE.accent }}>
+                English Tutorial
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
         <NewProjectModal
           visible={showNewProject}
@@ -307,19 +405,33 @@ export default function ProjectsScreen() {
       <View style={styles.projectHeader}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.projectTabs}>
           {projects.map(p => (
-            <TouchableOpacity
+            <View
               key={p.id}
-              style={[styles.projectTab, currentProject?.id === p.id && styles.activeProjectTab]}
-              onPress={() => selectProject(p.id)}
-              onLongPress={() => {
-                setDeleteTarget({ type: 'project', idOrPath: p.id, name: p.name });
-              }}
-              activeOpacity={0.7}
+              style={[
+                styles.projectTab,
+                currentProject?.id === p.id && styles.activeProjectTab,
+                { flexDirection: 'row', alignItems: 'center', gap: 6 },
+              ]}
             >
-              <Text style={[styles.projectTabText, currentProject?.id === p.id && styles.activeProjectTabText]}>
-                {p.name}
-              </Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => selectProject(p.id)}
+                onLongPress={() => {
+                  setDeleteTarget({ type: 'project', idOrPath: p.id, name: p.name });
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.projectTabText, currentProject?.id === p.id && styles.activeProjectTabText]}>
+                  {p.name}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setDeleteTarget({ type: 'project', idOrPath: p.id, name: p.name })}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel={`Delete project ${p.name}`}
+              >
+                <Trash2 size={12} color={currentProject?.id === p.id ? IDE.danger : IDE.muted} />
+              </TouchableOpacity>
+            </View>
           ))}
           <TouchableOpacity
             style={styles.addProjectBtn}
@@ -339,7 +451,7 @@ export default function ProjectsScreen() {
         </TouchableOpacity>
       </View>
 
-      {showSearch && (
+      {showSearch ? (
         <View style={styles.searchBar}>
           <Search size={14} color={IDE.muted} />
           <TextInput
@@ -350,44 +462,15 @@ export default function ProjectsScreen() {
             onChangeText={setSearchQuery}
             autoFocus
           />
-          {searchQuery.length > 0 && (
+          {searchQuery.length > 0 ? (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
               <X size={14} color={IDE.muted} />
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
-      )}
+      ) : null}
 
-      <View style={styles.actionBar}>
-        <View style={{ flexDirection: 'row', backgroundColor: IDE.bg, borderRadius: 8, padding: 2, borderWidth: 1, borderColor: IDE.border }}>
-          <TouchableOpacity
-            style={[
-              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-              viewMode === 'synapse' && { backgroundColor: IDE.primary + '22' },
-            ]}
-            onPress={() => setViewMode('synapse')}
-            activeOpacity={0.7}
-          >
-            <GitBranch size={13} color={viewMode === 'synapse' ? IDE.primary : IDE.muted} />
-            <Text style={{ fontSize: 11, fontWeight: '700', color: viewMode === 'synapse' ? IDE.primary : IDE.muted }}>
-              Synapse Graph
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-              viewMode === 'tree' && { backgroundColor: IDE.primary + '22' },
-            ]}
-            onPress={() => setViewMode('tree')}
-            activeOpacity={0.7}
-          >
-            <FolderOpen size={13} color={viewMode === 'tree' ? IDE.primary : IDE.muted} />
-            <Text style={{ fontSize: 11, fontWeight: '700', color: viewMode === 'tree' ? IDE.primary : IDE.muted }}>
-              Files
-            </Text>
-          </TouchableOpacity>
-        </View>
-
+      <View style={[styles.actionBar, { flexWrap: 'wrap', rowGap: 6 }]}>
         <TouchableOpacity
           style={styles.actionBarBtn}
           onPress={() => openNewFileModal('', false)}
@@ -414,6 +497,40 @@ export default function ProjectsScreen() {
             Git ({restorePoints.length})
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionBarBtn}
+          onPress={() => router.push('/(tabs)/tools?tab=graph' as any)}
+          activeOpacity={0.7}
+        >
+          <FolderArchive size={14} color={IDE.primary} />
+          <Text style={[styles.actionBarBtnText, { color: IDE.primary }]}>
+            Synapse Graph
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionBarBtn}
+          onPress={() => setShowTutorialModal(true)}
+          activeOpacity={0.7}
+        >
+          <FileText size={14} color={IDE.textSecondary} />
+          <Text style={styles.actionBarBtnText}>Tutorial</Text>
+        </TouchableOpacity>
+        {Boolean(currentProject) ? (
+          <TouchableOpacity
+            style={styles.actionBarBtn}
+            onPress={() =>
+              setDeleteTarget({
+                type: 'project',
+                idOrPath: currentProject!.id,
+                name: currentProject!.name,
+              })
+            }
+            activeOpacity={0.7}
+          >
+            <Trash2 size={14} color={IDE.danger} />
+            <Text style={[styles.actionBarBtnText, { color: IDE.danger }]}>Delete Project</Text>
+          </TouchableOpacity>
+        ) : null}
         <View style={styles.actionBarSpacer} />
         <TouchableOpacity
           style={[styles.actionBarBtn, styles.exportBtn]}

@@ -168,6 +168,12 @@ require('../__tests__/utils/subagent-question-and-pool.test.ts');
 // 6. Load Dev0 v1.6 Chat ZIP, Cross-Chat Reader, Dual Git Restore, Standalone Memory Graph & Tool Isolation test
 require('../__tests__/utils/v16-chat-zip-git-memory-graph.test.ts');
 
+// 7. Load Dev0 v1.7 Firebase Auth Guard, Server Vault Proxy, 50% Emergency Auto-Cutoff, Mutual-Exclusive Tool Isolation & YAML Skill Creator test
+require('../__tests__/utils/v17-vault-cutoff-and-auth.test.ts');
+
+// 8. Load Dev0 v1.8 Extra YAML Learning, .ZIP Skill Importer, Corrupted YAML AI Fix, Active Skill Matching & Forced Extended Thinking test
+require('../__tests__/utils/v18-yaml-learning-graph-and-orb.test.ts');
+
 (async () => {
   for (const item of testQueue) {
     if (item.type === 'suite') {

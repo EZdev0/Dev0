@@ -93,20 +93,11 @@ export default function SettingsScreen() {
   const {
     settings,
     updateSettings,
-    agentMd,
-    setAgentMd,
-    soulMd,
-    setSoulMd,
-    identityMd,
-    setIdentityMd,
-    userMd,
-    setUserMd,
-    memoryMd,
-    setMemoryMd,
     freePoolState,
     setShowFreePoolModal,
     customSubAgents,
     setShowSubAgentStudioModal,
+    setShowTutorialModal,
   } = useApp();
 
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -118,8 +109,6 @@ export default function SettingsScreen() {
   const [modelSearchQuery, setModelSearchQuery] = useState<string>('');
   const [activeSection, setActiveSection] = useState<'main' | 'beta'>('main');
   const [expandedProviderInfo, setExpandedProviderInfo] = useState<string | null>(null);
-  const [editingIdentityFile, setEditingIdentityFile] = useState<string | null>(null);
-  const [identityEditContent, setIdentityEditContent] = useState<string>('');
 
   const renderYellowHighlightedText = useCallback(
     (text: string, query: string, baseStyle: any) => {
@@ -1037,109 +1026,36 @@ export default function SettingsScreen() {
             <View style={styles.settingRow}>
               <View style={styles.settingLabelRow}>
                 <Star size={14} color={IDE.warning} />
-                <Text style={styles.settingLabel}>AI Learning</Text>
+                <Text style={styles.settingLabel}>Extra YAML Learning & AGENTS.md Engine</Text>
               </View>
-              <Switch
-                value={settings.betaAgentLearning}
-                onValueChange={(v) => updateSettings({ betaAgentLearning: v })}
-                trackColor={{ false: IDE.border, true: IDE.warning + '60' }}
-                thumbColor={settings.betaAgentLearning ? IDE.warning : IDE.muted}
-              />
+              <TouchableOpacity
+                style={styles.openDashboardButton}
+                onPress={() => setShowSubAgentStudioModal(true)}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.openDashboardButtonText}>Open YAML Skill Studio</Text>
+              </TouchableOpacity>
             </View>
             <Text style={styles.settingHint}>
-              AI learns via 5 identity files: SOUL.md, AGENTS.md, IDENTITY.md, USER.md, MEMORY.md
+              Legacy 5 Identity Files (SOUL.md / IDENTITY.md / USER.md / MEMORY.md) have been removed. Upload .md, .yml, AGENTS.md, or .zip skill packs with YAML frontmatter (--- ... ---), repair broken YAML with AI (!), and configure Background vs. Custom Trigger Words in YAML Skill Studio.
             </Text>
 
-            {settings.betaAgentLearning && (
-              <View style={styles.identityFilesSection}>
-                <View style={styles.identityFilesHeader}>
-                  <Brain size={14} color={IDE.primary} />
-                  <Text style={styles.identityFilesTitle}>Identity Files</Text>
-                </View>
-                <Text style={styles.identityFilesDesc}>
-                  These files define your AI agent's personality and knowledge. They cannot be deleted, only edited.
-                </Text>
-
-                {([
-                  { key: 'soul', label: 'SOUL.md', desc: 'Personality & Values', value: soulMd, setter: setSoulMd },
-                  { key: 'agents', label: 'AGENTS.md', desc: 'Rules & Protocol', value: agentMd, setter: setAgentMd },
-                  { key: 'identity', label: 'IDENTITY.md', desc: 'Name, Role & Presentation', value: identityMd, setter: setIdentityMd },
-                  { key: 'user', label: 'USER.md', desc: 'User Profile & Preferences', value: userMd, setter: setUserMd },
-                  { key: 'memory', label: 'MEMORY.md', desc: 'Long-term Memory', value: memoryMd, setter: setMemoryMd },
-                ] as const).map(file => (
-                  <View key={file.key} style={styles.identityFileCard}>
-                    <TouchableOpacity
-                      style={styles.identityFileHeader}
-                      onPress={() => {
-                        if (editingIdentityFile === file.key) {
-                          setEditingIdentityFile(null);
-                        } else {
-                          setEditingIdentityFile(file.key);
-                          setIdentityEditContent(file.value || '');
-                        }
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.identityFileLeft}>
-                        <FileText size={13} color={IDE.primary} />
-                        <View>
-                          <Text style={styles.identityFileName}>{file.label}</Text>
-                          <Text style={styles.identityFileDesc}>{file.desc}</Text>
-                        </View>
-                      </View>
-                      <View style={styles.identityFileRight}>
-                        <View style={[styles.identityFileBadge, file.value ? styles.identityFileBadgeActive : styles.identityFileBadgeEmpty]}>
-                          <Text style={[styles.identityFileBadgeText, file.value ? styles.identityFileBadgeTextActive : styles.identityFileBadgeTextEmpty]}>
-                            {file.value ? (file.value.split('\n').length + ' lines') : 'Empty'}
-                          </Text>
-                        </View>
-                        {editingIdentityFile === file.key ? (
-                          <ChevronUp size={14} color={IDE.muted} />
-                        ) : (
-                          <ChevronDown size={14} color={IDE.muted} />
-                        )}
-                      </View>
-                    </TouchableOpacity>
-
-                    {editingIdentityFile === file.key && (
-                      <View style={styles.identityFileEditor}>
-                        <TextInput
-                          style={styles.identityFileInput}
-                          value={identityEditContent}
-                          onChangeText={setIdentityEditContent}
-                          placeholder={'Enter content for ' + file.label + '...'}
-                          placeholderTextColor={IDE.muted}
-                          multiline
-                          textAlignVertical="top"
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                        />
-                        <View style={styles.identityFileActions}>
-                          <TouchableOpacity
-                            style={styles.identityFileCancelBtn}
-                            onPress={() => setEditingIdentityFile(null)}
-                            activeOpacity={0.7}
-                          >
-                            <Text style={styles.identityFileCancelText}>Cancel</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.identityFileSaveBtn}
-                            onPress={() => {
-                              file.setter(identityEditContent);
-                              setEditingIdentityFile(null);
-                            }}
-                            activeOpacity={0.7}
-                          >
-                            <Check size={13} color="#fff" />
-                            <Text style={styles.identityFileSaveText}>Save</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    )}
-                  </View>
-                ))}
+            <View style={styles.settingRow}>
+              <View style={styles.settingLabelRow}>
+                <FileText size={14} color={IDE.accent} />
+                <Text style={styles.settingLabel}>Interactive English System Tutorial</Text>
               </View>
-            )}
+              <TouchableOpacity
+                style={[styles.openDashboardButton, { backgroundColor: IDE.accent }]}
+                onPress={() => setShowTutorialModal(true)}
+                activeOpacity={0.75}
+              >
+                <Text style={[styles.openDashboardButtonText, { color: '#000' }]}>Open Tutorial</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.settingHint}>
+              Step-by-step English guide to Normal Chat Mode vs. Agent Mode, YAML Skills, Synapse Graph, and Dual Git.
+            </Text>
 
             <View style={styles.settingRow}>
               <View style={styles.settingLabelRow}>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
+  Platform,
 } from 'react-native';
 import {
   GitBranch,
@@ -24,6 +25,8 @@ import {
   FolderPlus,
   Trash2,
   History,
+  Move,
+  MousePointer,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { MemoEntry, Project } from '@/types';
@@ -31,6 +34,7 @@ import {
   buildSynapseGraph,
   buildMemoryOnlySynapseGraph,
   localizeCodeSubgraph,
+  cleanStaleMemoryGraphLinks,
   SynapseNode,
   SynapseNodeType,
 } from '@/utils/synapse-graph';
@@ -80,7 +84,7 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
 }) => {
   const effectiveOpenGitModal = onOpenGitRestoreModal || onOpenGitRestore;
   const [activeGraphTab, setActiveGraphTab] = useState<'memory' | 'project'>(
-    project ? 'project' : 'memory'
+    project ? 'project' : 'memory',
   );
   const [filterType, setFilterType] = useState<'all' | SynapseNodeType>('all');
   const [localizeQuery, setLocalizeQuery] = useState<string>('');
@@ -90,14 +94,45 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
   const [standaloneMemoInput, setStandaloneMemoInput] = useState<string>('');
   const [memoSavedToast, setMemoSavedToast] = useState<string | null>(null);
 
+  // Drag-and-Drop node offsets & Right-Click / Long-Press Context Menu
+  const [nodeOffsets, setNodeOffsets] = useState<Record<string, { dx: number; dy: number }>>({});
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const dragStartRef = useRef<{
+    nodeId: string;
+    startPageX: number;
+    startPageY: number;
+    initialDx: number;
+    initialDy: number;
+    moved: boolean;
+  } | null>(null);
+  const [contextMenuState, setContextMenuState] = useState<{
+    node: SynapseNode;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const sanitizedMemoResult = useMemo(
+    () => cleanStaleMemoryGraphLinks(memos, project),
+    [memos, project],
+  );
+
   const memoryGraph = useMemo(
-    () => buildMemoryOnlySynapseGraph({ memos, projectName: project?.name }),
-    [memos, project?.name],
+    () =>
+      buildMemoryOnlySynapseGraph({
+        memos: sanitizedMemoResult.cleanedMemos,
+        projectName: project?.name,
+      }),
+    [sanitizedMemoResult.cleanedMemos, project?.name],
   );
 
   const projectCodeGraph = useMemo(
-    () => buildSynapseGraph({ project, memos, skills }),
-    [project, memos, skills],
+    () =>
+      buildSynapseGraph({
+        project,
+        memos: sanitizedMemoResult.cleanedMemos,
+        skills,
+      }),
+    [project, sanitizedMemoResult.cleanedMemos, skills],
   );
 
   const activeGraph = activeGraphTab === 'memory' ? memoryGraph : projectCodeGraph;
@@ -116,16 +151,31 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
   }, [localization]);
 
   const visibleNodes = useMemo(() => {
-    return activeGraph.nodes.filter(n => {
-      if (activeGraphTab === 'project' && filterType !== 'all' && n.type !== filterType && n.type !== 'project') {
-        return false;
-      }
-      if (localizeQuery.trim() && highlightedIds.size > 0) {
-        return highlightedIds.has(n.id) || n.type === 'project';
-      }
-      return true;
-    });
-  }, [activeGraph.nodes, activeGraphTab, filterType, localizeQuery, highlightedIds]);
+    return activeGraph.nodes
+      .filter(n => {
+        if (
+          activeGraphTab === 'project' &&
+          filterType !== 'all' &&
+          n.type !== filterType &&
+          n.type !== 'project'
+        ) {
+          return false;
+        }
+        if (localizeQuery.trim() && highlightedIds.size > 0) {
+          return highlightedIds.has(n.id) || n.type === 'project';
+        }
+        return true;
+      })
+      .map(n => {
+        const offset = nodeOffsets[n.id];
+        if (!offset) return n;
+        return {
+          ...n,
+          x: Math.max(70, n.x + offset.dx),
+          y: Math.max(40, n.y + offset.dy),
+        };
+      });
+  }, [activeGraph.nodes, activeGraphTab, filterType, localizeQuery, highlightedIds, nodeOffsets]);
 
   const visibleNodeIdSet = useMemo(
     () => new Set(visibleNodes.map(n => n.id)),
@@ -141,8 +191,8 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
   );
 
   const selectedNode = useMemo(
-    () => activeGraph.nodes.find(n => n.id === selectedNodeId) ?? null,
-    [activeGraph.nodes, selectedNodeId],
+    () => visibleNodes.find(n => n.id === selectedNodeId) ?? null,
+    [visibleNodes, selectedNodeId],
   );
 
   const selectedNodeConnections = useMemo(() => {
@@ -179,6 +229,64 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
     setTimeout(() => setMemoSavedToast(null), 3000);
   }, [standaloneMemoInput, onAddLinkedMemo]);
 
+  const beginNodeDrag = useCallback(
+    (node: SynapseNode, pageX: number, pageY: number) => {
+      const existing = nodeOffsets[node.id] || { dx: 0, dy: 0 };
+      dragStartRef.current = {
+        nodeId: node.id,
+        startPageX: pageX,
+        startPageY: pageY,
+        initialDx: existing.dx,
+        initialDy: existing.dy,
+        moved: false,
+      };
+      setDraggingNodeId(node.id);
+    },
+    [nodeOffsets],
+  );
+
+  const updateNodeDrag = useCallback(
+    (pageX: number, pageY: number) => {
+      const st = dragStartRef.current;
+      if (!st) return;
+      const deltaX = (pageX - st.startPageX) / zoom;
+      const deltaY = (pageY - st.startPageY) / zoom;
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+        st.moved = true;
+      }
+      setNodeOffsets(prev => ({
+        ...prev,
+        [st.nodeId]: {
+          dx: Math.round(st.initialDx + deltaX),
+          dy: Math.round(st.initialDy + deltaY),
+        },
+      }));
+    },
+    [zoom],
+  );
+
+  const endNodeDrag = useCallback((node: SynapseNode) => {
+    const st = dragStartRef.current;
+    dragStartRef.current = null;
+    setDraggingNodeId(null);
+    if (!st || !st.moved) {
+      setSelectedNodeId(node.id);
+      setContextMenuState(null);
+    }
+  }, []);
+
+  const openNodeContextMenu = useCallback(
+    (node: SynapseNode, x?: number, y?: number) => {
+      setSelectedNodeId(node.id);
+      setContextMenuState({
+        node,
+        x: x ?? node.x * zoom,
+        y: y ?? node.y * zoom,
+      });
+    },
+    [zoom],
+  );
+
   return (
     <View style={styles.container}>
       {/* Separate Tabs: Memory Graph (Works Without Project) vs. Project Code Graph */}
@@ -191,6 +299,7 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
           onPress={() => {
             setActiveGraphTab('memory');
             setSelectedNodeId(null);
+            setContextMenuState(null);
           }}
           activeOpacity={0.8}
         >
@@ -213,6 +322,7 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
           onPress={() => {
             setActiveGraphTab('project');
             setSelectedNodeId(null);
+            setContextMenuState(null);
           }}
           activeOpacity={0.8}
         >
@@ -227,7 +337,7 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
           </Text>
         </TouchableOpacity>
 
-        {project && effectiveOpenGitModal && (
+        {Boolean(project && effectiveOpenGitModal) ? (
           <TouchableOpacity
             style={styles.gitRestoreTopBtn}
             onPress={effectiveOpenGitModal}
@@ -236,7 +346,7 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
             <History size={14} color="#F59E0B" />
             <Text style={styles.gitRestoreTopBtnText}>Git & Restore</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
       {/* If user is on Project Code Graph tab without an active project, show Empty State */}
@@ -277,8 +387,8 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
             <View style={styles.statGroup}>
               {activeGraphTab === 'memory' ? (
                 <Text style={styles.statText}>
-                  <Text style={[styles.statNum, { color: '#10B981' }]}>{memoryGraph.stats.memoCount}</Text> Persistent Memories ·{' '}
-                  <Text style={styles.statNum}>{memoryGraph.stats.edgeCount}</Text> Neural Synapses · Standalone AI Memory Mode
+                  <Text style={[styles.statNum, { color: '#10B981' }]}>{memoryGraph.stats.memoCount}</Text> Memories ·{' '}
+                  <Text style={styles.statNum}>{memoryGraph.stats.edgeCount}</Text> Synapses · Drag nodes, Left-click to inspect, Right-click/hold for menu
                 </Text>
               ) : (
                 <Text style={styles.statText}>
@@ -311,6 +421,8 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                   setZoom(1);
                   setFilterType('all');
                   setLocalizeQuery('');
+                  setNodeOffsets({});
+                  setContextMenuState(null);
                 }}
               >
                 <RotateCcw size={14} color={IDE.textSecondary} />
@@ -332,11 +444,11 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
               }
               placeholderTextColor={IDE.muted}
             />
-            {localizeQuery.length > 0 && (
+            {localizeQuery.length > 0 ? (
               <TouchableOpacity onPress={() => setLocalizeQuery('')}>
                 <X size={15} color={IDE.muted} />
               </TouchableOpacity>
-            )}
+            ) : null}
           </View>
 
           {activeGraphTab === 'memory' ? (
@@ -391,15 +503,17 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
             </ScrollView>
           )}
 
-          {/* Interactive 2D Neural Synapse Canvas */}
+          {/* Interactive 2D Neural Synapse Canvas (Supports Drag-and-Drop, Left-Click & Right-Click) */}
           <ScrollView
             horizontal
             style={styles.canvasOuter}
             contentContainerStyle={{ minWidth: 960 * zoom }}
+            scrollEnabled={!draggingNodeId}
           >
             <ScrollView
               style={{ flex: 1 }}
               contentContainerStyle={{ minHeight: 720 * zoom }}
+              scrollEnabled={!draggingNodeId}
             >
               <View
                 style={[
@@ -409,6 +523,23 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                     height: 720 * zoom,
                   },
                 ]}
+                onStartShouldSetResponder={() => Boolean(contextMenuState)}
+                onResponderRelease={() => setContextMenuState(null)}
+                {...(Platform.OS === 'web'
+                  ? ({
+                      onMouseMove: (e: any) => {
+                        if (dragStartRef.current) {
+                          updateNodeDrag(e.nativeEvent.pageX, e.nativeEvent.pageY);
+                        }
+                      },
+                      onMouseUp: () => {
+                        if (dragStartRef.current) {
+                          dragStartRef.current = null;
+                          setDraggingNodeId(null);
+                        }
+                      },
+                    } as any)
+                  : {})}
               >
                 {visibleEdges.map(edge => {
                   const src = visibleNodes.find(n => n.id === edge.source);
@@ -467,10 +598,27 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                   const ny = node.y * zoom;
 
                   return (
-                    <TouchableOpacity
+                    <View
                       key={node.id}
-                      activeOpacity={0.8}
-                      onPress={() => setSelectedNodeId(node.id)}
+                      onStartShouldSetResponder={() => true}
+                      onMoveShouldSetResponder={() => true}
+                      onResponderGrant={e => {
+                        beginNodeDrag(node, e.nativeEvent.pageX, e.nativeEvent.pageY);
+                      }}
+                      onResponderMove={e => {
+                        updateNodeDrag(e.nativeEvent.pageX, e.nativeEvent.pageY);
+                      }}
+                      onResponderRelease={() => {
+                        endNodeDrag(node);
+                      }}
+                      {...(Platform.OS === 'web'
+                        ? ({
+                            onContextMenu: (e: any) => {
+                              e.preventDefault();
+                              openNodeContextMenu(node, nx, ny);
+                            },
+                          } as any)
+                        : {})}
                       style={[
                         styles.synapseNode,
                         {
@@ -482,73 +630,174 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                               ? color
                               : color + '80',
                           backgroundColor: isSelected ? color + '35' : '#111827F2',
+                          cursor: Platform.OS === 'web' ? ('grab' as any) : undefined,
                         },
                         node.type === 'project' && styles.projectRootNode,
                       ]}
                     >
-                      <View style={styles.nodeHeaderRow}>
-                        {node.type === 'project' && <Sparkles size={13} color={color} />}
-                        {node.type === 'file' && <FileCode size={13} color={color} />}
-                        {node.type === 'function' && <Cpu size={13} color={color} />}
-                        {node.type === 'memo' && <Brain size={13} color={color} />}
-                        {node.type === 'skill' && <ShieldCheck size={13} color={color} />}
-                        <Text
-                          style={[
-                            styles.nodeLabel,
-                            isSelected && { color: '#FFFFFF', fontWeight: '700' },
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {node.label}
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setSelectedNodeId(node.id);
+                          setContextMenuState(null);
+                        }}
+                        onLongPress={() => openNodeContextMenu(node, nx, ny)}
+                      >
+                        <View style={styles.nodeHeaderRow}>
+                          {node.type === 'project' ? <Sparkles size={13} color={color} /> : null}
+                          {node.type === 'file' ? <FileCode size={13} color={color} /> : null}
+                          {node.type === 'function' ? <Cpu size={13} color={color} /> : null}
+                          {node.type === 'memo' ? <Brain size={13} color={color} /> : null}
+                          {node.type === 'skill' ? <ShieldCheck size={13} color={color} /> : null}
+                          <Text
+                            style={[
+                              styles.nodeLabel,
+                              isSelected && { color: '#FFFFFF', fontWeight: '700' },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {node.label}
+                          </Text>
+                        </View>
+                        <Text style={styles.nodeSubtitle} numberOfLines={1}>
+                          {node.type.toUpperCase()} · {node.degree} links
                         </Text>
-                      </View>
-                      <Text style={styles.nodeSubtitle} numberOfLines={1}>
-                        {node.type.toUpperCase()} · {node.degree} links
-                      </Text>
-                    </TouchableOpacity>
+                      </TouchableOpacity>
+                    </View>
                   );
                 })}
+
+                {/* Right-Click / Long-Press Floating Context Menu */}
+                {Boolean(contextMenuState) ? (
+                  <View
+                    style={[
+                      styles.contextMenuCard,
+                      {
+                        left: Math.min(Math.max(12, contextMenuState!.x - 40), 960 * zoom - 210),
+                        top: Math.min(Math.max(12, contextMenuState!.y + 24), 720 * zoom - 170),
+                      },
+                    ]}
+                  >
+                    <View style={styles.contextMenuHeader}>
+                      <MousePointer size={12} color={IDE.primary} />
+                      <Text style={styles.contextMenuTitle} numberOfLines={1}>
+                        {contextMenuState!.node.label}
+                      </Text>
+                      <TouchableOpacity onPress={() => setContextMenuState(null)}>
+                        <X size={13} color={IDE.muted} />
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.contextMenuItem}
+                      onPress={() => {
+                        setSelectedNodeId(contextMenuState!.node.id);
+                        setContextMenuState(null);
+                      }}
+                    >
+                      <Search size={13} color={IDE.text} />
+                      <Text style={styles.contextMenuItemText}>Inspect Node Details</Text>
+                    </TouchableOpacity>
+
+                    {Boolean(
+                      contextMenuState!.node.filePath &&
+                        !contextMenuState!.node.filePath.startsWith('.qoder'),
+                    ) ? (
+                      <TouchableOpacity
+                        style={styles.contextMenuItem}
+                        onPress={() => {
+                          onOpenFileInEditor(contextMenuState!.node.filePath!);
+                          setContextMenuState(null);
+                        }}
+                      >
+                        <ExternalLink size={13} color={IDE.primary} />
+                        <Text style={styles.contextMenuItemText}>Open File in Editor</Text>
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {Boolean(nodeOffsets[contextMenuState!.node.id]) ? (
+                      <TouchableOpacity
+                        style={styles.contextMenuItem}
+                        onPress={() => {
+                          const targetId = contextMenuState!.node.id;
+                          setNodeOffsets(prev => {
+                            const next = { ...prev };
+                            delete next[targetId];
+                            return next;
+                          });
+                          setContextMenuState(null);
+                        }}
+                      >
+                        <Move size={13} color={IDE.warning} />
+                        <Text style={styles.contextMenuItemText}>Reset Node Position</Text>
+                      </TouchableOpacity>
+                    ) : null}
+
+                    {Boolean(
+                      contextMenuState!.node.type === 'memo' &&
+                        contextMenuState!.node.metadata?.memoId &&
+                        onDeleteMemo,
+                    ) ? (
+                      <TouchableOpacity
+                        style={styles.contextMenuItem}
+                        onPress={() => {
+                          onDeleteMemo!(contextMenuState!.node.metadata!.memoId);
+                          setSelectedNodeId(null);
+                          setContextMenuState(null);
+                        }}
+                      >
+                        <Trash2 size={13} color={IDE.danger} />
+                        <Text style={[styles.contextMenuItemText, { color: IDE.danger }]}>
+                          Delete Memory Synapse
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             </ScrollView>
           </ScrollView>
 
           {/* Selected Synapse Node Inspector Drawer */}
-          {selectedNode && (
+          {Boolean(selectedNode) ? (
             <View style={styles.inspectorDrawer}>
               <View style={styles.inspectorHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.inspectorTypeKicker}>
-                    {NODE_LABELS[selectedNode.type]}
-                    {selectedNode.filePath ? ` · ${selectedNode.filePath}` : ''}
-                    {selectedNode.lineNumber ? `:${selectedNode.lineNumber}` : ''}
+                    {NODE_LABELS[selectedNode!.type]}
+                    {selectedNode!.filePath ? ` · ${selectedNode!.filePath}` : ''}
+                    {selectedNode!.lineNumber ? `:${selectedNode!.lineNumber}` : ''}
                   </Text>
-                  <Text style={styles.inspectorTitle}>{selectedNode.label}</Text>
+                  <Text style={styles.inspectorTitle}>{selectedNode!.label}</Text>
                 </View>
 
                 <View style={styles.inspectorActions}>
-                  {selectedNode.type === 'memo' &&
-                    selectedNode.metadata?.memoId &&
-                    onDeleteMemo && (
-                      <TouchableOpacity
-                        style={[styles.openEditorBtn, { backgroundColor: '#EF4444' }]}
-                        onPress={() => {
-                          onDeleteMemo(selectedNode.metadata!.memoId);
-                          setSelectedNodeId(null);
-                        }}
-                      >
-                        <Trash2 size={13} color="#fff" />
-                        <Text style={styles.openEditorBtnText}>Delete Memory</Text>
-                      </TouchableOpacity>
-                    )}
-                  {selectedNode.filePath && !selectedNode.filePath.startsWith('.qoder') && (
+                  {Boolean(
+                    selectedNode!.type === 'memo' &&
+                      selectedNode!.metadata?.memoId &&
+                      onDeleteMemo,
+                  ) ? (
+                    <TouchableOpacity
+                      style={[styles.openEditorBtn, { backgroundColor: '#EF4444' }]}
+                      onPress={() => {
+                        onDeleteMemo!(selectedNode!.metadata!.memoId);
+                        setSelectedNodeId(null);
+                      }}
+                    >
+                      <Trash2 size={13} color="#fff" />
+                      <Text style={styles.openEditorBtnText}>Delete Memory</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {Boolean(
+                    selectedNode!.filePath && !selectedNode!.filePath.startsWith('.qoder'),
+                  ) ? (
                     <TouchableOpacity
                       style={styles.openEditorBtn}
-                      onPress={() => onOpenFileInEditor(selectedNode.filePath!)}
+                      onPress={() => onOpenFileInEditor(selectedNode!.filePath!)}
                     >
                       <ExternalLink size={14} color="#fff" />
                       <Text style={styles.openEditorBtnText}>Open in Editor</Text>
                     </TouchableOpacity>
-                  )}
+                  ) : null}
                   <TouchableOpacity
                     style={styles.closeInspectorBtn}
                     onPress={() => setSelectedNodeId(null)}
@@ -558,17 +807,17 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                 </View>
               </View>
 
-              {selectedNode.signature && (
-                <Text style={styles.signatureCode}>{selectedNode.signature}</Text>
-              )}
+              {Boolean(selectedNode!.signature) ? (
+                <Text style={styles.signatureCode}>{selectedNode!.signature}</Text>
+              ) : null}
 
-              {selectedNode.snippet && (
+              {Boolean(selectedNode!.snippet) ? (
                 <ScrollView style={styles.snippetBox} nestedScrollEnabled>
-                  <Text style={styles.snippetText}>{selectedNode.snippet}</Text>
+                  <Text style={styles.snippetText}>{selectedNode!.snippet}</Text>
                 </ScrollView>
-              )}
+              ) : null}
 
-              {selectedNodeConnections.length > 0 && (
+              {selectedNodeConnections.length > 0 ? (
                 <View style={styles.connectionsSection}>
                   <Text style={styles.connectionsHeading}>
                     Connected Synapses ({selectedNodeConnections.length})
@@ -591,14 +840,14 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                     ))}
                   </ScrollView>
                 </View>
-              )}
+              ) : null}
 
               <View style={styles.attachMemoRow}>
                 <TextInput
                   style={styles.attachMemoInput}
                   value={newMemoInput}
                   onChangeText={setNewMemoInput}
-                  placeholder={`Attach memory or rule to ${selectedNode.label}...`}
+                  placeholder={`Attach memory or rule to ${selectedNode!.label}...`}
                   placeholderTextColor={IDE.muted}
                 />
                 <TouchableOpacity style={styles.attachMemoBtn} onPress={handleAttachMemory}>
@@ -607,9 +856,11 @@ export const SynapseGraphView: React.FC<SynapseGraphViewProps> = ({
                 </TouchableOpacity>
               </View>
 
-              {memoSavedToast && <Text style={styles.memoToastText}>{memoSavedToast}</Text>}
+              {Boolean(memoSavedToast) ? (
+                <Text style={styles.memoToastText}>{memoSavedToast}</Text>
+              ) : null}
             </View>
-          )}
+          ) : null}
         </>
       )}
     </View>
@@ -762,8 +1013,10 @@ const styles = StyleSheet.create({
   },
   topStatsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderBottomWidth: 1,
@@ -772,6 +1025,7 @@ const styles = StyleSheet.create({
   },
   statGroup: {
     flex: 1,
+    minWidth: 200,
   },
   statText: {
     fontSize: 12,
@@ -889,6 +1143,44 @@ const styles = StyleSheet.create({
     color: IDE.muted,
     marginTop: 2,
     fontVariant: ['tabular-nums'],
+  },
+  contextMenuCard: {
+    position: 'absolute',
+    width: 196,
+    backgroundColor: IDE.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: IDE.primary,
+    padding: 8,
+    zIndex: 50,
+  },
+  contextMenuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingBottom: 6,
+    marginBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: IDE.border,
+  },
+  contextMenuTitle: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    color: IDE.text,
+  },
+  contextMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+  },
+  contextMenuItemText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: IDE.text,
   },
   inspectorDrawer: {
     backgroundColor: IDE.surface,

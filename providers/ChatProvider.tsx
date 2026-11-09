@@ -12,6 +12,7 @@ import {
   isLearningTool,
   isLearningEnabled,
   isProjectFilesystemOrAgentOnlyTool,
+  isChatModeOnlyTool,
 } from '@/types';
 import {
   callAI,
@@ -35,7 +36,9 @@ import {
 import {
   discoverYamlSkills,
   buildActiveSkillsPromptBlock,
+  matchActiveSkillsForTurn,
   isFileAllowedForSubAgent,
+  createAndValidateYamlSkillFile,
 } from '@/utils/skill-loader';
 import {
   SubAgentQuestionRequest,
@@ -129,6 +132,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
     saveSubAgentTemplate,
     deleteSubAgentTemplate,
     skillEnabledOverrides,
+    skillTriggerOverrides,
+    uploadedSkillFiles,
+    addUploadedSkills,
     subAgentWorkflow,
     updateSubAgentWorkflow,
     togglePauseSubAgent,
@@ -154,8 +160,13 @@ export const [ChatProvider, useChat] = createContextHook(() => {
   } = useProject();
 
   const discoveredSkills = useMemo(() => {
-    return discoverYamlSkills(currentProject?.files || [], skillEnabledOverrides);
-  }, [currentProject?.files, skillEnabledOverrides]);
+    return discoverYamlSkills(
+      currentProject?.files || [],
+      skillEnabledOverrides,
+      uploadedSkillFiles,
+      skillTriggerOverrides,
+    );
+  }, [currentProject?.files, skillEnabledOverrides, uploadedSkillFiles, skillTriggerOverrides]);
 
   const checkToolPermission = useCallback(
     async (
@@ -287,14 +298,46 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         };
       }
 
+      // In Normal Chat Mode, if the model attempts to call sub_agent directly, open the Sub-Agent Configuration Floating Menu instead!
+      if (effectiveNormalChatMode && name === 'sub_agent') {
+        const req = buildSubAgentQuestionRequestFromTool(
+          {
+            is_sub_agent: true,
+            sub_agent_role: args?.role || 'developer',
+            sub_agent_name: args?.name || '',
+            task: args?.task || '',
+            questions: [
+              'Confirm or customize the Sub-Agent role and file scope:',
+              'Confirm the initial task to save and launch this Sub-Agent:',
+            ],
+          },
+          toolCallId || 'tc_sub_' + Date.now().toString(36),
+          'sub_agent',
+        );
+        setPendingSubAgentQuestion(req);
+        const relayResult = await new Promise<string>((resolve) => {
+          pendingQuestionResolverRef.current = resolve;
+        });
+        return { result: relayResult };
+      }
+
       // Strictly block direct project filesystem / agent-only tools in Normal Chat Mode
       if (effectiveNormalChatMode && isProjectFilesystemOrAgentOnlyTool(name)) {
         return {
           result:
             `ERROR: Tool "${name}" is not available in Normal Chat Mode. ` +
             `Use "zip_create" to package files for the user as a downloadable .zip archive, "zip_read" to inspect chat ZIPs, ` +
-            `"draft_agent_plan" to create an interactive execution plan card, "read_other_chat_messages" for cross-chat recall, ` +
+            `"draft_agent_plan" to create an interactive execution plan card, "ask_user_question" (with is_sub_agent: true) to open the Sub-Agent menu, "read_other_chat_messages" for cross-chat recall, ` +
             `or "memory_search" / "memory_update" / "memory_graph_query" for the standalone Memory Graph.`,
+        };
+      }
+
+      // Strictly block Normal Chat Mode ZIP/Draft tools when in Agent Mode
+      if (!effectiveNormalChatMode && isChatModeOnlyTool(name)) {
+        return {
+          result:
+            `ERROR: Tool "${name}" is disabled in Agent Mode. ` +
+            `In Agent Mode, NEVER create ZIP archives — write directly to the project filesystem using "create_file", "write_file", and "edit_file", or create skills using "create_yaml_skill".`,
         };
       }
 
@@ -326,6 +369,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         'zip_create',
         'zip_read',
         'draft_agent_plan',
+        'create_yaml_skill',
         'read_other_chat_messages',
         'memory_search',
         'memory_update',
@@ -465,6 +509,44 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             });
           }
 
+          case 'create_yaml_skill': {
+            const created = createAndValidateYamlSkillFile({
+              name: String(args?.name || '').trim(),
+              description: String(args?.description || '').trim(),
+              trigger: args?.trigger ? String(args.trigger) : 'always_on',
+              alwaysApply: args?.alwaysApply !== undefined ? Boolean(args.alwaysApply) : true,
+              instructions: String(args?.instructions || '').trim(),
+              targetPath: args?.target_path ? String(args.target_path) : undefined,
+            });
+            if (!created.valid) {
+              return { result: `ERROR creating YAML skill: ${created.error}` };
+            }
+            if (currentProject) {
+              const existing = getFileContent(created.path);
+              if (existing !== null) {
+                updateFileContent(created.path, created.content);
+              } else {
+                createFile(created.path, created.content);
+              }
+            } else {
+              addUploadedSkills([
+                {
+                  path: created.path,
+                  content: created.content,
+                  uploadedAt: Date.now(),
+                },
+              ]);
+            }
+            return wrapResult({
+              result:
+                `YAML Skill Created & Validated!\n` +
+                `- Path: \`${created.skill?.displaySource || created.path}\`\n` +
+                `- Name: ${created.skill?.name}\n` +
+                `- Trigger: \`${created.skill?.trigger}\` (alwaysApply: ${created.skill?.alwaysApply})\n` +
+                `This skill is now automatically indexed in the Sub-Agent Studio & YAML Skill Loader.`,
+            });
+          }
+
           case 'read_other_chat_messages': {
             const out = await readOtherChatMessages({
               currentSessionId: currentChatSessionIdRef.current,
@@ -505,9 +587,6 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           }
 
           case 'memory_update': {
-            if (!isLearningEnabled(settingsRef.current)) {
-              return { result: 'ERROR: Learning and memory tools are disabled in settings.' };
-            }
             const content = String(args?.content || '').trim();
             if (!content) {
               return { result: 'ERROR: memory_update requires non-empty "content".' };
@@ -1463,19 +1542,9 @@ export const [ChatProvider, useChat] = createContextHook(() => {
         ? [...currentMessages]
         : [...currentMessages, userMsg];
 
-      // Add immediate thinking placeholder message so the ThinkingBlock is visible right from the start
-      const thinkingPlaceholderId = 'thinking_' + Date.now().toString(36);
-      const placeholderMsg: ChatMessage = {
-        id: thinkingPlaceholderId,
-        role: 'assistant',
-        content: '',
-        thinking: 'Analyzing request and preparing response...',
-        isThinking: true,
-        timestamp: Date.now(),
-      };
-
+      // Do NOT push a duplicate thinking_... message into manualMessages because FlatList ListFooterComponent already renders the live ThinkingBlock
       manualMessagesRef.current = newMessages;
-      setManualMessages([...newMessages, placeholderMsg]);
+      setManualMessages([...newMessages]);
       setManualLoading(true);
       setIsThinking(true);
       setThinkingPhase('Dev0 is thinking...');
@@ -1507,9 +1576,26 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             }));
 
         const activeLearning = isLearningEnabled(settings);
-        const yamlSkillsBlock = effectiveNormalChatMode
-          ? ''
-          : buildActiveSkillsPromptBlock(discoveredSkills);
+        const matchedSkills = matchActiveSkillsForTurn(
+          discoveredSkills,
+          userText,
+          skillTriggerOverrides,
+        );
+        const yamlSkillsBlock = matchedSkills.promptBlock;
+        const loadedSkillNames = matchedSkills.loadedSkillNames;
+
+        if (loadedSkillNames.length > 0 && newMessages.length > 0) {
+          const lastIdx = newMessages.length - 1;
+          if (newMessages[lastIdx].role === 'user') {
+            newMessages[lastIdx] = {
+              ...newMessages[lastIdx],
+              loadedSkills: loadedSkillNames,
+            };
+            manualMessagesRef.current = [...newMessages];
+            setManualMessages([...newMessages]);
+          }
+        }
+
         const customAgentsBlock =
           !effectiveNormalChatMode && customSubAgents.length > 0
             ? '\n## Available Custom Sub-Agent Templates (callable via sub_agent tool)\n' +
@@ -1526,21 +1612,17 @@ export const [ChatProvider, useChat] = createContextHook(() => {
           buildSystemPrompt({
             persona: settings.persona,
             projectTree: effectiveNormalChatMode ? undefined : getProjectTree(),
-            memos: activeLearning ? memos : [],
+            memos,
             todos,
             mentionedFiles,
             yoloMode: settings.yoloMode,
-            agentMd: activeLearning ? getFileContent('.agents/AGENT.md') || agentMd : undefined,
-            soulMd: activeLearning ? getFileContent('.agents/SOUL.md') || soulMd : undefined,
-            identityMd: activeLearning
-              ? getFileContent('.agents/IDENTITY.md') || identityMd
-              : undefined,
-            userMd: activeLearning ? getFileContent('.agents/USER.md') || userMd : undefined,
-            memoryMd: activeLearning ? getFileContent('.agents/MEMORY.md') || memoryMd : undefined,
             betaAgentLearning: activeLearning,
             learningEnabled: activeLearning,
             toolPermissions: settings.toolPermissions,
             isNormalChatMode: effectiveNormalChatMode,
+            agentMode: !effectiveNormalChatMode,
+            customSystemPrompt: settings.customSystemPrompt,
+            customChatModePrompt: settings.customChatModePrompt,
           }) +
           yamlSkillsBlock +
           customAgentsBlock;
@@ -1644,6 +1726,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
               todos: collectedTodos.length > 0 ? [...collectedTodos] : undefined,
               zipArtifact: latestZip,
               draftPlan: latestPlan,
+              loadedSkills: loadedSkillNames.length > 0 ? loadedSkillNames : undefined,
             };
             conversationHistory = [...conversationHistory, assistantMsg];
             manualMessagesRef.current = conversationHistory;
@@ -1681,6 +1764,7 @@ export const [ChatProvider, useChat] = createContextHook(() => {
             timestamp: Date.now(),
             thinking: thinkingContent || undefined,
             isThinking: false,
+            loadedSkills: loadedSkillNames.length > 0 ? loadedSkillNames : undefined,
           };
           conversationHistory = [...conversationHistory, assistantMsg];
           manualMessagesRef.current = conversationHistory;

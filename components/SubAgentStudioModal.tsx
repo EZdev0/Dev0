@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   TextInput,
   Switch,
+  Platform,
 } from 'react-native';
 import {
   Cpu,
@@ -19,10 +20,21 @@ import {
   FileCode,
   Wrench,
   Edit3,
+  Upload,
+  AlertTriangle,
+  Sparkles,
+  FileArchive,
+  Check,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
-import { TOOL_REGISTRY } from '@/types';
-import { CustomSubAgentTemplate, ParsedYamlSkill } from '@/utils/skill-loader';
+import { SkillTriggerOverrideConfig, TOOL_REGISTRY } from '@/types';
+import {
+  CustomSubAgentTemplate,
+  ParsedYamlSkill,
+  UploadedSkillFileEntry,
+  importSkillsFromZipOrFiles,
+  repairCorruptedSkillContent,
+} from '@/utils/skill-loader';
 
 interface SubAgentStudioModalProps {
   visible: boolean;
@@ -33,6 +45,14 @@ interface SubAgentStudioModalProps {
   onDeleteTemplate: (templateId: string) => void;
   onRunTemplateTask: (template: CustomSubAgentTemplate, taskInstruction: string) => void;
   onToggleSkill: (skillId: string, enabled: boolean) => void;
+  skillTriggerOverrides?: Record<string, SkillTriggerOverrideConfig>;
+  onUpdateSkillTrigger?: (
+    skillId: string,
+    config: SkillTriggerOverrideConfig,
+  ) => void;
+  onUploadSkillFiles?: (files: UploadedSkillFileEntry[]) => void;
+  onRepairSkill?: (skill: ParsedYamlSkill) => void;
+  onDeleteUploadedSkill?: (path: string) => void;
 }
 
 export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
@@ -44,6 +64,11 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
   onDeleteTemplate,
   onRunTemplateTask,
   onToggleSkill,
+  skillTriggerOverrides,
+  onUpdateSkillTrigger,
+  onUploadSkillFiles,
+  onRepairSkill,
+  onDeleteUploadedSkill,
 }) => {
   const [activeTab, setActiveTab] = useState<'templates' | 'skills'>('templates');
   const [editingTemplate, setEditingTemplate] = useState<CustomSubAgentTemplate | null>(null);
@@ -66,6 +91,14 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
     'think',
   ]);
   const [canBeCalledByAI, setCanBeCalledByAI] = useState<boolean>(true);
+
+  // Skill upload / paste states
+  const [showPasteSkillBox, setShowPasteSkillBox] = useState<boolean>(false);
+  const [pasteFileName, setPasteFileName] = useState<string>('AGENTS.md');
+  const [pasteContent, setPasteContent] = useState<string>('');
+  const [uploadStatusMsg, setUploadStatusMsg] = useState<string | null>(null);
+  const [keywordDrafts, setKeywordDrafts] = useState<Record<string, string>>({});
+  const fileInputRef = useRef<any>(null);
 
   const openEditor = (tpl?: CustomSubAgentTemplate) => {
     if (tpl) {
@@ -96,7 +129,9 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
       setName('');
       setRole('developer');
       setDescription('');
-      setSystemPrompt('You are a specialized sub-agent. Follow all rules and stay within your allowed file scope.');
+      setSystemPrompt(
+        'You are a specialized sub-agent. Follow all rules and stay within your allowed file scope.',
+      );
       setRulesText('Always read files with read_file before modifying.\nKeep changes minimal and type-safe.');
       setAllowedFilesText('app/**, components/**, utils/**');
       setAllowedTools(fresh.allowedTools);
@@ -134,6 +169,60 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
     );
   };
 
+  const handleWebFileUpload = async (event: any) => {
+    const files: FileList | undefined = event?.target?.files;
+    if (!files || files.length === 0 || !onUploadSkillFiles) return;
+
+    const payloads: {
+      fileName: string;
+      textContent?: string;
+      arrayBuffer?: ArrayBuffer | Uint8Array;
+    }[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (!f) continue;
+      if (f.name.toLowerCase().endsWith('.zip')) {
+        const buf = await f.arrayBuffer();
+        payloads.push({ fileName: f.name, arrayBuffer: new Uint8Array(buf) });
+      } else {
+        const text = await f.text();
+        payloads.push({ fileName: f.name, textContent: text });
+      }
+    }
+
+    const res = await importSkillsFromZipOrFiles(payloads);
+    if (res.importedFiles.length > 0) {
+      onUploadSkillFiles(res.importedFiles);
+      const validCount = Math.max(0, res.importedFiles.length - res.corruptedCount);
+      setUploadStatusMsg(
+        `Imported ${res.importedFiles.length} skill file(s): ${validCount} valid YAML, ${res.corruptedCount} flagged (!) for AI Fix.`,
+      );
+    } else {
+      setUploadStatusMsg('No .md, .yml, or AGENTS.md files found in selection.');
+    }
+    if (event?.target) {
+      event.target.value = '';
+    }
+  };
+
+  const handlePasteImport = async () => {
+    if (!pasteContent.trim() || !onUploadSkillFiles) return;
+    const cleanName = pasteFileName.trim() || 'AGENTS.md';
+    const res = await importSkillsFromZipOrFiles([
+      { fileName: cleanName, textContent: pasteContent },
+    ]);
+    if (res.importedFiles.length > 0) {
+      onUploadSkillFiles(res.importedFiles);
+      setUploadStatusMsg(
+        res.corruptedCount > 0
+          ? `Added "${cleanName}" — flagged (!) as corrupted/non-YAML. Click "Fix with AI" below to format it.`
+          : `Added valid YAML skill "${cleanName}".`,
+      );
+      setPasteContent('');
+      setShowPasteSkillBox(false);
+    }
+  };
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -142,10 +231,10 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Cpu size={20} color={IDE.primary} />
-              <View>
-                <Text style={styles.headerTitle}>Sub-Agent Templates & YAML Skill Loader</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.headerTitle}>Sub-Agent Templates & Extra YAML Skill Studio</Text>
                 <Text style={styles.headerSubtitle}>
-                  Manual & AI-callable sub-agents with file scopes and YAML frontmatter skills
+                  Scoped sub-agents, .zip skill pack importer, AGENTS.md YAML validator & trigger words
                 </Text>
               </View>
             </View>
@@ -172,13 +261,13 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
             >
               <ShieldCheck size={14} color={activeTab === 'skills' ? IDE.primary : IDE.muted} />
               <Text style={[styles.tabText, activeTab === 'skills' && styles.tabTextActive]}>
-                Loaded YAML Skills ({skills.length})
+                YAML Skills & AGENTS.md ({skills.length})
               </Text>
             </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.body} contentContainerStyle={styles.bodyInner}>
-            {activeTab === 'templates' && !editingTemplate && (
+            {activeTab === 'templates' && !editingTemplate ? (
               <>
                 <View style={styles.topRow}>
                   <Text style={styles.sectionDesc}>
@@ -190,11 +279,11 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                   </TouchableOpacity>
                 </View>
 
-                {runningTemplate && (
+                {Boolean(runningTemplate) ? (
                   <View style={styles.runTaskBox}>
                     <View style={styles.runTaskHeader}>
                       <Text style={styles.runTaskTitle}>
-                        Assign Task to {runningTemplate.name}
+                        Assign Task to {runningTemplate?.name}
                       </Text>
                       <TouchableOpacity onPress={() => setRunningTemplate(null)}>
                         <X size={16} color={IDE.muted} />
@@ -211,7 +300,7 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                     <TouchableOpacity
                       style={styles.executeBtn}
                       onPress={() => {
-                        if (!taskInput.trim()) return;
+                        if (!taskInput.trim() || !runningTemplate) return;
                         onRunTemplateTask(runningTemplate, taskInput.trim());
                         setTaskInput('');
                         setRunningTemplate(null);
@@ -222,16 +311,16 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                       <Text style={styles.executeBtnText}>Launch Sub-Agent Now</Text>
                     </TouchableOpacity>
                   </View>
-                )}
+                ) : null}
 
-                {templates.length === 0 && (
+                {templates.length === 0 ? (
                   <View style={styles.templateCard}>
                     <Text style={styles.templateName}>No Sub-Agents Configured Yet</Text>
                     <Text style={styles.templateDesc}>
-                      Zero hardcoded Sub-Agents are loaded by default. Click &quot;New Sub-Agent&quot; above or ask Dev0 in Agent Mode to spawn and save a custom Sub-Agent.
+                      Zero hardcoded Sub-Agents are loaded by default. Click &quot;New Sub-Agent&quot; above or ask Dev0 in Chat to configure and save a custom Sub-Agent.
                     </Text>
                   </View>
-                )}
+                ) : null}
 
                 {templates.map(tpl => (
                   <View key={tpl.id} style={styles.templateCard}>
@@ -280,9 +369,9 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                   </View>
                 ))}
               </>
-            )}
+            ) : null}
 
-            {activeTab === 'templates' && editingTemplate && (
+            {activeTab === 'templates' && Boolean(editingTemplate) ? (
               <View style={styles.formContainer}>
                 <View style={styles.runTaskHeader}>
                   <Text style={styles.runTaskTitle}>Configure Sub-Agent Template</Text>
@@ -380,44 +469,275 @@ export const SubAgentStudioModal: React.FC<SubAgentStudioModalProps> = ({
                   <Text style={styles.executeBtnText}>Save Sub-Agent Template</Text>
                 </TouchableOpacity>
               </View>
-            )}
+            ) : null}
 
-            {activeTab === 'skills' && (
+            {activeTab === 'skills' ? (
               <>
-                <Text style={[styles.sectionDesc, { marginBottom: 12 }]}>
-                  Automatically detected Markdown and YAML files with valid YAML frontmatter (e.g. .qoder/rules/*, .agents/*, and project SKILL.md files). Active skills are injected into the agent reasoning context.
-                </Text>
+                <View style={styles.topRow}>
+                  <Text style={styles.sectionDesc}>
+                    Extra YAML Learning Engine: Upload single .md/.yml/AGENTS.md files or a .zip pack of skills. Non-YAML or corrupted files are flagged with (!) and can be repaired in 1 click.
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {Platform.OS === 'web' ? (
+                      <>
+                        {React.createElement('input', {
+                          ref: fileInputRef,
+                          type: 'file',
+                          accept: '.md,.yml,.yaml,.zip',
+                          multiple: true,
+                          style: { display: 'none' },
+                          onChange: handleWebFileUpload,
+                        })}
+                        <TouchableOpacity
+                          style={styles.createBtn}
+                          onPress={() => fileInputRef.current?.click()}
+                        >
+                          <Upload size={14} color="#fff" />
+                          <Text style={styles.createBtnText}>Upload .md / .zip</Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : null}
+                    <TouchableOpacity
+                      style={[styles.createBtn, { backgroundColor: IDE.accent }]}
+                      onPress={() => setShowPasteSkillBox(v => !v)}
+                    >
+                      <FileArchive size={14} color="#fff" />
+                      <Text style={styles.createBtnText}>Paste / Author Skill</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
 
-                {skills.length === 0 && (
+                {Boolean(uploadStatusMsg) ? (
+                  <View style={styles.statusBanner}>
+                    <Sparkles size={14} color={IDE.accent} />
+                    <Text style={styles.statusBannerText}>{uploadStatusMsg}</Text>
+                    <TouchableOpacity onPress={() => setUploadStatusMsg(null)}>
+                      <X size={14} color={IDE.muted} />
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+
+                {showPasteSkillBox ? (
+                  <View style={styles.formContainer}>
+                    <View style={styles.runTaskHeader}>
+                      <Text style={styles.runTaskTitle}>
+                        Import or Author AGENTS.md / YAML Skill
+                      </Text>
+                      <TouchableOpacity onPress={() => setShowPasteSkillBox(false)}>
+                        <X size={16} color={IDE.muted} />
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={styles.label}>File Name (e.g. AGENTS.md or security-skill.md)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={pasteFileName}
+                      onChangeText={setPasteFileName}
+                      placeholder="AGENTS.md"
+                      placeholderTextColor={IDE.muted}
+                    />
+                    <Text style={styles.label}>
+                      Markdown Content (With or without --- YAML frontmatter ---)
+                    </Text>
+                    <TextInput
+                      style={styles.textArea}
+                      value={pasteContent}
+                      onChangeText={setPasteContent}
+                      multiline
+                      placeholder={`---\nname: Clean Architecture Rules\ndescription: Enforces strict TypeScript and modular files\ntrigger: always\n---\n\nAlways verify types before committing.`}
+                      placeholderTextColor={IDE.muted}
+                    />
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity
+                        style={[styles.executeBtn, { flex: 1, backgroundColor: IDE.accent }]}
+                        onPress={() => {
+                          if (!pasteContent.trim()) return;
+                          setPasteContent(
+                            repairCorruptedSkillContent(pasteFileName || 'AGENTS.md', pasteContent).content,
+                          );
+                        }}
+                      >
+                        <Sparkles size={14} color="#fff" />
+                        <Text style={styles.executeBtnText}>Format YAML with AI</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.executeBtn, { flex: 1 }]}
+                        onPress={handlePasteImport}
+                      >
+                        <Check size={14} color="#fff" />
+                        <Text style={styles.executeBtnText}>Import Skill</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : null}
+
+                {skills.length === 0 ? (
                   <View style={styles.templateCard}>
-                    <Text style={styles.templateName}>No Project YAML Skills Found</Text>
+                    <Text style={styles.templateName}>No YAML Skills or AGENTS.md Loaded Yet</Text>
                     <Text style={styles.templateDesc}>
-                      Add a Markdown file with YAML frontmatter (--- name / description ---) in your active project (e.g. .agents/teamwork/SKILL.md or .qoder/rules/Agent.md) to load it here automatically.
+                      Upload an AGENTS.md file, a SKILL.md file, or a .zip archive of skills above — or ask Dev0 in Chat to call create_yaml_skill.
                     </Text>
                   </View>
-                )}
+                ) : null}
 
-                {skills.map(s => (
-                  <View key={s.id} style={styles.templateCard}>
-                    <View style={styles.templateHeader}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.templateName}>{s.name}</Text>
-                        <Text style={styles.metaLine}>
-                          Source: {s.sourcePath} · Trigger: {s.trigger}
-                          {s.alwaysApply ? ' (alwaysApply: true)' : ''}
-                        </Text>
+                {skills.map(s => {
+                  const currentTrigger =
+                    skillTriggerOverrides?.[s.id]?.mode ?? s.trigger ?? 'always';
+                  const currentKeywordsText =
+                    keywordDrafts[s.id] !== undefined
+                      ? keywordDrafts[s.id]
+                      : (skillTriggerOverrides?.[s.id]?.keywords ?? s.triggerKeywords ?? []).join(', ');
+
+                  return (
+                    <View
+                      key={s.id}
+                      style={[
+                        styles.templateCard,
+                        s.isCorrupted && { borderColor: IDE.danger, backgroundColor: IDE.danger + '10' },
+                      ]}
+                    >
+                      <View style={styles.templateHeader}>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            {s.isCorrupted ? (
+                              <View style={styles.corruptedBadge}>
+                                <AlertTriangle size={12} color="#fff" />
+                                <Text style={styles.corruptedBadgeText}>! CORRUPTED YAML</Text>
+                              </View>
+                            ) : null}
+                            <Text style={styles.templateName}>{s.name}</Text>
+                          </View>
+                          <Text style={styles.metaLine}>
+                            Source: {s.displaySource} · Mode:{' '}
+                            {currentTrigger === 'always'
+                              ? 'Always Load (Background)'
+                              : currentTrigger === 'keywords'
+                                ? 'Custom Trigger Words'
+                                : 'Manual'}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          {s.isCorrupted && onRepairSkill ? (
+                            <TouchableOpacity
+                              style={styles.aiFixBtn}
+                              onPress={() => {
+                                onRepairSkill(s);
+                                setUploadStatusMsg(`Repaired "${s.name}" into valid YAML frontmatter!`);
+                              }}
+                            >
+                              <Sparkles size={12} color="#000" />
+                              <Text style={styles.aiFixBtnText}>Fix with AI</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          {onDeleteUploadedSkill ? (
+                            <TouchableOpacity
+                              style={styles.iconBtn}
+                              onPress={() => onDeleteUploadedSkill(s.sourcePath)}
+                            >
+                              <Trash2 size={13} color={IDE.danger} />
+                            </TouchableOpacity>
+                          ) : null}
+                          <Switch
+                            value={s.enabled}
+                            onValueChange={val => onToggleSkill(s.id, val)}
+                            trackColor={{ false: IDE.border, true: IDE.accent }}
+                          />
+                        </View>
                       </View>
-                      <Switch
-                        value={s.enabled}
-                        onValueChange={val => onToggleSkill(s.id, val)}
-                        trackColor={{ false: IDE.border, true: IDE.accent }}
-                      />
+
+                      {s.isCorrupted && Boolean(s.corruptionReason) ? (
+                        <Text style={styles.corruptionReasonText}>
+                          ! {s.corruptionReason}
+                        </Text>
+                      ) : (
+                        <Text style={styles.templateDesc}>{s.description}</Text>
+                      )}
+
+                      {!s.isCorrupted && onUpdateSkillTrigger ? (
+                        <View style={styles.triggerConfigBox}>
+                          <Text style={styles.triggerConfigLabel}>Load Mode:</Text>
+                          <View style={styles.triggerPillsRow}>
+                            {(
+                              [
+                                { id: 'always', label: 'Always (Background)' },
+                                { id: 'keywords', label: 'Trigger Words / Phrases' },
+                                { id: 'manual', label: 'Manual Only' },
+                              ] as const
+                            ).map(mode => {
+                              const active = currentTrigger === mode.id;
+                              return (
+                                <TouchableOpacity
+                                  key={mode.id}
+                                  style={[styles.triggerPill, active && styles.triggerPillActive]}
+                                  onPress={() =>
+                                    onUpdateSkillTrigger(s.id, {
+                                      mode: mode.id,
+                                      keywords:
+                                        skillTriggerOverrides?.[s.id]?.keywords ??
+                                        s.triggerKeywords ??
+                                        [],
+                                    })
+                                  }
+                                >
+                                  <Text
+                                    style={[
+                                      styles.triggerPillText,
+                                      active && styles.triggerPillTextActive,
+                                    ]}
+                                  >
+                                    {mode.label}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+
+                          {currentTrigger === 'keywords' ? (
+                            <View style={styles.keywordsInputRow}>
+                              <TextInput
+                                style={[styles.input, { flex: 1 }]}
+                                value={currentKeywordsText}
+                                onChangeText={txt =>
+                                  setKeywordDrafts(prev => ({ ...prev, [s.id]: txt }))
+                                }
+                                onBlur={() => {
+                                  const parsed = (keywordDrafts[s.id] ?? currentKeywordsText)
+                                    .split(',')
+                                    .map(k => k.trim())
+                                    .filter(Boolean);
+                                  onUpdateSkillTrigger(s.id, {
+                                    mode: 'keywords',
+                                    keywords: parsed,
+                                  });
+                                }}
+                                placeholder="Custom trigger words, phrases, or letters (comma-separated, e.g. auth,zustand,fix bug)"
+                                placeholderTextColor={IDE.muted}
+                              />
+                              <TouchableOpacity
+                                style={styles.saveKeywordsBtn}
+                                onPress={() => {
+                                  const parsed = (keywordDrafts[s.id] ?? currentKeywordsText)
+                                    .split(',')
+                                    .map(k => k.trim())
+                                    .filter(Boolean);
+                                  onUpdateSkillTrigger(s.id, {
+                                    mode: 'keywords',
+                                    keywords: parsed,
+                                  });
+                                  setUploadStatusMsg(`Saved trigger words for "${s.name}".`);
+                                }}
+                              >
+                                <Check size={13} color="#fff" />
+                                <Text style={styles.saveKeywordsBtnText}>Save</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : null}
+                        </View>
+                      ) : null}
                     </View>
-                    <Text style={styles.templateDesc}>{s.description}</Text>
-                  </View>
-                ))}
+                  );
+                })}
               </>
-            )}
+            ) : null}
           </ScrollView>
         </View>
       </View>
@@ -435,7 +755,7 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
-    maxWidth: 640,
+    maxWidth: 680,
     maxHeight: '90%',
     backgroundColor: IDE.surface,
     borderRadius: 14,
@@ -503,6 +823,7 @@ const styles = StyleSheet.create({
   },
   topRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 12,
@@ -510,6 +831,7 @@ const styles = StyleSheet.create({
   },
   sectionDesc: {
     flex: 1,
+    minWidth: 220,
     fontSize: 12,
     color: IDE.muted,
     lineHeight: 17,
@@ -528,6 +850,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: IDE.accent + '18',
+    borderWidth: 1,
+    borderColor: IDE.accent + '50',
+    marginBottom: 12,
+  },
+  statusBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: IDE.text,
+  },
   templateCard: {
     backgroundColor: IDE.bg,
     borderRadius: 10,
@@ -541,6 +879,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: 6,
+    gap: 8,
   },
   templateName: {
     fontSize: 14,
@@ -587,6 +926,97 @@ const styles = StyleSheet.create({
     color: IDE.textSecondary,
     marginTop: 3,
   },
+  corruptedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: IDE.danger,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  corruptedBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  aiFixBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: IDE.warning,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  aiFixBtnText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#000',
+  },
+  corruptionReasonText: {
+    fontSize: 11,
+    color: IDE.danger,
+    fontWeight: '600',
+    marginTop: 4,
+  },
+  triggerConfigBox: {
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: IDE.border,
+    gap: 6,
+  },
+  triggerConfigLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: IDE.textSecondary,
+  },
+  triggerPillsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  triggerPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: IDE.border,
+    backgroundColor: IDE.surface,
+  },
+  triggerPillActive: {
+    borderColor: IDE.primary,
+    backgroundColor: IDE.primary + '22',
+  },
+  triggerPillText: {
+    fontSize: 11,
+    color: IDE.muted,
+    fontWeight: '600',
+  },
+  triggerPillTextActive: {
+    color: IDE.primary,
+  },
+  keywordsInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  saveKeywordsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: IDE.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  saveKeywordsBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+  },
   runTaskBox: {
     backgroundColor: IDE.bg,
     borderRadius: 10,
@@ -612,6 +1042,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: IDE.border,
     padding: 14,
+    marginBottom: 14,
   },
   label: {
     fontSize: 11,

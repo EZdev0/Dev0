@@ -255,13 +255,23 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
       const updated = prev.filter(p => p.id !== id);
       plansProjectsRef.current = updated;
       persist(updated);
-      if (currentProjectId === id) {
+      try {
+        const sanitized = sanitizeUserSandboxProjects(updated);
+        const serialized = JSON.stringify(sanitized);
+        AsyncStorage.setItem(userSandboxKeyRef.current, serialized).catch(console.log);
+        AsyncStorage.setItem('ide_projects', serialized).catch(console.log);
+      } catch (e) {
+        console.log('[Project] Immediate delete persist error:', e);
+      }
+      if (currentProjectIdRef.current === id || currentProjectId === id) {
         const nextId = updated.length > 0 ? updated[0].id : null;
         currentProjectIdRef.current = nextId;
         setCurrentProjectId(nextId);
         if (nextId) {
+          AsyncStorage.setItem(userCurrentProjKeyRef.current, nextId).catch(console.log);
           AsyncStorage.setItem('ide_current_project', nextId).catch(console.log);
         } else {
+          AsyncStorage.removeItem(userCurrentProjKeyRef.current).catch(console.log);
           AsyncStorage.removeItem('ide_current_project').catch(console.log);
         }
       }
@@ -272,6 +282,7 @@ export const [ProjectProvider, useProject] = createContextHook(() => {
   const selectProject = useCallback((id: string) => {
     currentProjectIdRef.current = id;
     setCurrentProjectId(id);
+    AsyncStorage.setItem(userCurrentProjKeyRef.current, id).catch(console.log);
     AsyncStorage.setItem('ide_current_project', id).catch(console.log);
   }, []);
 

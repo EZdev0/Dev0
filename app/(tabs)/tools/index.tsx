@@ -9,6 +9,7 @@ import {
   Shield, ShieldCheck, ShieldOff, ShieldX, CircleCheck,
   Clock, AlertCircle, Play, RefreshCw, Brain, Globe,
   Folder, ClipboardList, Database, Settings2, Eye, LayoutDashboard,
+  Network, FileCode, Cpu, ExternalLink, Sparkles,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
@@ -17,11 +18,21 @@ import { useChat } from '@/providers/ChatProvider';
 import { useAgent } from '@/providers/AgentProvider';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { AgentDashboard } from '@/components/MultiAgentUI';
+import { SynapseGraphView } from '@/components/SynapseGraphView';
 import { SubAgent, createSubAgent } from '@/utils/multi-agent-system';
 import {
   ToolPermission, TOOL_REGISTRY, TOOL_CATEGORIES, ToolRegistryItem,
   AgentPlan, AgentTask, isLearningTool, isLearningEnabled,
+  isProjectFilesystemOrAgentOnlyTool, isChatModeOnlyTool,
 } from '@/types';
+import { canManageUsers } from '@/utils/free-ai-pool';
+import { discoverYamlSkills } from '@/utils/skill-loader';
+import {
+  buildSynapseGraph,
+  buildMemoryOnlySynapseGraph,
+  cleanStaleMemoryGraphLinks,
+  SynapseNode,
+} from '@/utils/synapse-graph';
 
 const PERMISSION_OPTIONS: { value: ToolPermission; label: string; desc: string; color: string }[] = [
   { value: 'always', label: 'Always allow', desc: 'Run automatically without asking', color: IDE.accent },
@@ -62,7 +73,7 @@ function getCategoryIcon(catId: string) {
   }
 }
 
-type SubTabId = 'dashboard' | 'tools' | 'plans' | 'memos' | 'search' | 'chat';
+type SubTabId = 'dashboard' | 'tools' | 'plans' | 'graph' | 'search' | 'chat';
 
 export default function ToolsScreen() {
   const router = useRouter();
@@ -77,83 +88,130 @@ export default function ToolsScreen() {
     deleteSubAgentTemplate,
     setShowSubAgentStudioModal,
     setShowFreePoolModal,
+    setShowTutorialModal,
+    freePoolState,
+    skillEnabledOverrides,
+    skillTriggerOverrides,
+    uploadedSkillFiles,
   } = useApp();
-  const { getProjectTree, searchFilesInProject, currentProject } = useProject();
+  const {
+    getProjectTree,
+    searchFilesInProject,
+    currentProject,
+    projects,
+    selectProject,
+  } = useProject();
   const { clearChat, startNewChat, compressChat, applyChatCompression, messages, openSubAgentFloatingLauncher } = useChat();
   const { plans, activePlan, clarificationQuestions, skipClarificationQuestions } = useAgent();
 
   const { tab } = useLocalSearchParams<{ tab?: string }>();
   const learningActive = isLearningEnabled(settings);
 
-  const initialTab: SubTabId = (
-    tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'search' || tab === 'chat'
-  ) ? tab : (tab === 'memos' && learningActive ? 'memos' : 'tools');
+  // Dashboard is in Slot 1 and is the default tab unless a specific tab param is provided
+  const normalizeTabParam = (raw?: string): SubTabId => {
+    if (raw === 'memos' || raw === 'graph') return 'graph';
+    if (
+      raw === 'dashboard' ||
+      raw === 'tools' ||
+      raw === 'plans' ||
+      raw === 'search' ||
+      raw === 'chat'
+    ) {
+      return raw;
+    }
+    return 'dashboard';
+  };
 
-  const [activeTab, setActiveTab] = useState<SubTabId>(initialTab);
+  const [activeTab, setActiveTab] = useState<SubTabId>(normalizeTabParam(tab));
   const lastAppliedTabParamRef = useRef<string | undefined>(tab);
   const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
   const [noticeModal, setNoticeModal] = useState<{ title: string; message: string } | null>(null);
   const [confirmClearChatModal, setConfirmClearChatModal] = useState<boolean>(false);
 
-  // Sync incoming URL parameter `tab` ONLY when the route parameter itself changes,
-  // never locking manual sub-tab switches.
+  // Sync incoming URL parameter `tab` ONLY when the route parameter itself changes
   useEffect(() => {
     if (tab !== lastAppliedTabParamRef.current) {
       lastAppliedTabParamRef.current = tab;
-      if (tab === 'dashboard' || tab === 'tools' || tab === 'plans' || tab === 'memos' || tab === 'search' || tab === 'chat') {
-        if (tab === 'memos' && !learningActive) {
-          setActiveTab('tools');
-        } else {
-          setActiveTab(tab);
-        }
+      if (tab) {
+        setActiveTab(normalizeTabParam(tab));
       }
     }
-  }, [tab, learningActive]);
-
-  // Guard memos tab if learning is disabled while on memos tab
-  useEffect(() => {
-    if (!learningActive && activeTab === 'memos') {
-      setActiveTab('tools');
-    }
-  }, [learningActive, activeTab]);
+  }, [tab]);
 
   const handleSelectTab = useCallback((nextTab: SubTabId) => {
-    const resolvedTab: SubTabId = nextTab === 'memos' && !learningActive ? 'tools' : nextTab;
-    lastAppliedTabParamRef.current = resolvedTab;
-    setActiveTab(resolvedTab);
+    lastAppliedTabParamRef.current = nextTab;
+    setActiveTab(nextTab);
     try {
-      router.setParams({ tab: resolvedTab });
+      router.setParams({ tab: nextTab });
     } catch {
       // Ignore router param update errors if unmounted
     }
-  }, [learningActive, router]);
+  }, [router]);
 
-  const [newMemoText, setNewMemoText] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<string>('');
   const [compressSummary, setCompressSummary] = useState<string>('');
   const [showCompress, setShowCompress] = useState<boolean>(false);
   const [selectedTool, setSelectedTool] = useState<ToolRegistryItem | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(['filesystem', 'planning', 'analysis']));
+  const [showHiddenModeTools, setShowHiddenModeTools] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (!learningActive && selectedTool && isLearningTool(selectedTool.name)) {
-      setSelectedTool(null);
+  const discoveredSkills = useMemo(
+    () =>
+      discoverYamlSkills(
+        currentProject?.files || [],
+        skillEnabledOverrides,
+        uploadedSkillFiles,
+        skillTriggerOverrides,
+      ),
+    [currentProject?.files, uploadedSkillFiles, skillEnabledOverrides, skillTriggerOverrides],
+  );
+
+  const combinedGraphForSearch = useMemo(() => {
+    const cleaned = cleanStaleMemoryGraphLinks(memos, currentProject);
+    if (currentProject) {
+      return buildSynapseGraph({
+        project: currentProject,
+        memos: cleaned.cleanedMemos,
+        skills: discoveredSkills,
+      });
     }
-  }, [learningActive, selectedTool]);
+    return buildMemoryOnlySynapseGraph({
+      memos: cleaned.cleanedMemos,
+    });
+  }, [memos, currentProject, discoveredSkills]);
 
-  const handleAddMemo = useCallback(() => {
-    if (!learningActive) return;
-    if (!newMemoText.trim()) return;
-    addMemo(newMemoText.trim());
-    setNewMemoText('');
-  }, [newMemoText, addMemo, learningActive]);
+  const matchingGraphNodes = useMemo((): SynapseNode[] => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return combinedGraphForSearch.nodes.slice(0, 24);
+    return combinedGraphForSearch.nodes.filter(
+      n =>
+        n.label.toLowerCase().includes(q) ||
+        (n.filePath && n.filePath.toLowerCase().includes(q)) ||
+        (n.snippet && n.snippet.toLowerCase().includes(q)) ||
+        (n.signature && n.signature.toLowerCase().includes(q)),
+    );
+  }, [combinedGraphForSearch.nodes, searchQuery]);
+
+  const currentUserRole = useMemo(() => {
+    const u = freePoolState?.users?.find(usr => usr.id === freePoolState.currentUserId);
+    return u?.role || 'user';
+  }, [freePoolState]);
+  const isAdminOrOwner = canManageUsers(currentUserRole);
+  const isNormalChat = !settings.agentMode || !currentProject;
 
   const handleSearch = useCallback(() => {
-    if (!searchQuery.trim()) return;
-    const results = searchFilesInProject(searchQuery.trim());
-    setSearchResults(results);
-  }, [searchQuery, searchFilesInProject]);
+    if (!searchQuery.trim()) {
+      setSearchResults('');
+      return;
+    }
+    if (currentProject) {
+      const results = searchFilesInProject(searchQuery.trim());
+      setSearchResults(results);
+    } else {
+      setSearchResults('');
+    }
+  }, [searchQuery, searchFilesInProject, currentProject]);
 
   const handleCompress = useCallback(async () => {
     const summary = await compressChat();
@@ -185,20 +243,40 @@ export default function ToolsScreen() {
     });
   }, []);
 
+  const isToolHiddenInCurrentMode = useCallback(
+    (toolName: string): boolean => {
+      if (isNormalChat && isProjectFilesystemOrAgentOnlyTool(toolName)) return true;
+      if (!isNormalChat && isChatModeOnlyTool(toolName)) return true;
+      const perm = getToolPermission(toolName);
+      if (perm === 'removed' || perm === 'blocked') return true;
+      return false;
+    },
+    [isNormalChat, getToolPermission],
+  );
+
   const groupedTools = useMemo(() => {
     const groups: Record<string, ToolRegistryItem[]> = {};
     for (const tool of TOOL_REGISTRY) {
-      // Strictly hide all Learn / Memo tools when learningEnabled is false
       if (isLearningTool(tool.name) && !learningActive) continue;
       if (tool.isBeta && !settings.yoloMode) {
         if (tool.name === 'web_search' && !settings.betaWebSearch) continue;
         if (tool.name === 'web_fetch' && !settings.betaWebFetch) continue;
       }
+      if (!showHiddenModeTools && isToolHiddenInCurrentMode(tool.name)) {
+        continue;
+      }
       if (!groups[tool.category]) groups[tool.category] = [];
       groups[tool.category].push(tool);
     }
     return groups;
-  }, [settings.betaWebSearch, settings.betaWebFetch, settings.yoloMode, learningActive]);
+  }, [
+    settings.betaWebSearch,
+    settings.betaWebFetch,
+    settings.yoloMode,
+    learningActive,
+    showHiddenModeTools,
+    isToolHiddenInCurrentMode,
+  ]);
 
   const activeToolCount = useMemo(() => {
     let count = 0;
@@ -208,12 +286,11 @@ export default function ToolsScreen() {
         if (tool.name === 'web_search' && !settings.betaWebSearch) continue;
         if (tool.name === 'web_fetch' && !settings.betaWebFetch) continue;
       }
-      const perm = getToolPermission(tool.name);
-      if (perm !== 'removed') count++;
+      if (isToolHiddenInCurrentMode(tool.name)) continue;
+      count++;
     }
     return count;
-  }, [getToolPermission, learningActive, settings.betaWebSearch, settings.betaWebFetch, settings.yoloMode]);
-
+  }, [learningActive, settings.betaWebSearch, settings.betaWebFetch, settings.yoloMode, isToolHiddenInCurrentMode]);
 
   const activePlans = useMemo(() =>
     (plans ?? []).filter(p => p && (p.status === 'executing' || p.status === 'review')),
@@ -224,14 +301,22 @@ export default function ToolsScreen() {
     [plans]
   );
 
+  // Dashboard in Slot 1! Memos replaced by Graph!
   const tabs: { id: SubTabId; label: string; icon: any; badge?: number }[] = [
-    { id: 'tools', label: 'Tools', icon: Wrench, badge: activeToolCount },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, badge: subAgents.length || undefined },
+    { id: 'tools', label: 'Tools', icon: Wrench, badge: activeToolCount },
     { id: 'plans', label: 'Plans', icon: Brain, badge: activePlans.length || undefined },
-    ...(learningActive ? [{ id: 'memos' as const, label: 'Memos', icon: BookOpen, badge: undefined }] : []),
+    { id: 'graph', label: 'Graph', icon: Network, badge: combinedGraphForSearch.nodes.length || undefined },
     { id: 'search', label: 'Search', icon: Search, badge: undefined },
     { id: 'chat', label: 'Chat', icon: Zap, badge: undefined },
   ];
+
+  const handleOpenFilePathInEditor = useCallback(
+    (filePath: string) => {
+      router.push({ pathname: '/editor' as any, params: { path: filePath } });
+    },
+    [router],
+  );
 
   return (
     <KeyboardAvoidingView
@@ -258,397 +343,476 @@ export default function ToolsScreen() {
               >
                 <Icon size={15} color={isActive ? IDE.primary : IDE.muted} />
                 <Text style={[styles.tabText, isActive && styles.activeTabText]}>{tabItem.label}</Text>
-                {tabItem.badge !== undefined && tabItem.badge > 0 && (
+                {tabItem.badge !== undefined && tabItem.badge > 0 ? (
                   <View style={[styles.tabBadge, isActive && styles.tabBadgeActive]}>
                     <Text style={[styles.tabBadgeText, isActive && styles.tabBadgeTextActive]}>
                       {tabItem.badge}
                     </Text>
                   </View>
-                )}
+                ) : null}
               </TouchableOpacity>
             );
           })}
+
+          <TouchableOpacity
+            style={styles.tutorialHeaderBtn}
+            onPress={() => setShowTutorialModal(true)}
+            activeOpacity={0.75}
+          >
+            <BookOpen size={14} color={IDE.accent} />
+            <Text style={styles.tutorialHeaderBtnText}>Tutorial</Text>
+          </TouchableOpacity>
         </ScrollView>
       </View>
 
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.contentInner}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-      >
-        {activeTab === 'dashboard' && (
-          <AgentDashboard
-            mainAgentStatus={activePlan?.status === 'executing' ? 'executing' : (activePlan?.status === 'review' || activePlan?.status === 'clarifying') ? 'planning' : 'idle'}
-            subAgents={subAgents}
-            savedSubAgentTemplates={customSubAgents}
-            onDeploySubAgent={(type) => {
-              const newAgent = createSubAgent(type);
-              setSubAgents(prev => [...prev, newAgent]);
-              setNoticeModal({ title: 'Agent Deployed', message: `${newAgent.name} is now active and ready for tasks.` });
-            }}
-            onLaunchSavedSubAgent={(tpl) => {
-              router.push('/(tabs)/chat' as any);
-              setTimeout(() => {
-                openSubAgentFloatingLauncher({
-                  role: tpl.role,
-                  name: tpl.name,
-                  task: tpl.description,
-                  questions: [
-                    `What task should the saved Sub-Agent "${tpl.name}" (${tpl.role}) execute for the Main Creator?`,
-                  ],
-                });
-              }, 100);
-            }}
-            onDeleteSavedSubAgent={(tplId) => deleteSubAgentTemplate(tplId)}
-            onViewSubAgentResult={(agentId) => {
-              const ag = subAgents.find(a => a.id === agentId);
-              if (ag?.result) {
-                setNoticeModal({ title: ag.name + ' Result', message: ag.result.summary });
-              }
-            }}
-            currentTask={activePlan?.userRequest}
-            hasClarificationQuestions={Boolean(activePlan?.status === 'clarifying' || (clarificationQuestions && clarificationQuestions.length > 0))}
-            onSkipClarificationQuestions={() => skipClarificationQuestions(activePlan?.id, true)}
-            onNavigateToTools={() => handleSelectTab('tools')}
-            onNavigateToPlans={() => handleSelectTab('plans')}
-            onNavigateToChat={() => router.push('/(tabs)/chat' as any)}
-            onNavigateToProjects={() => router.push('/(tabs)/(home)' as any)}
+      {activeTab === 'graph' ? (
+        <View style={{ flex: 1 }}>
+          <SynapseGraphView
+            project={currentProject}
+            projects={projects}
+            memos={memos}
+            skills={discoveredSkills}
+            onSelectProject={selectProject}
+            onOpenCreateProject={() => router.push('/(tabs)/(home)' as any)}
+            onOpenFileInEditor={handleOpenFilePathInEditor}
+            onAddLinkedMemo={content => addMemo(content)}
+            onDeleteMemo={memoId => deleteMemo(memoId)}
           />
-        )}
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.content}
+          contentContainerStyle={styles.contentInner}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+        >
+          {activeTab === 'dashboard' ? (
+            <AgentDashboard
+              mainAgentStatus={activePlan?.status === 'executing' ? 'executing' : (activePlan?.status === 'review' || activePlan?.status === 'clarifying') ? 'planning' : 'idle'}
+              subAgents={subAgents}
+              savedSubAgentTemplates={customSubAgents}
+              onDeploySubAgent={(type) => {
+                const newAgent = createSubAgent(type);
+                setSubAgents(prev => [...prev, newAgent]);
+                setNoticeModal({ title: 'Agent Deployed', message: `${newAgent.name} is now active and ready for tasks.` });
+              }}
+              onLaunchSavedSubAgent={(tpl) => {
+                router.push('/(tabs)/chat' as any);
+                setTimeout(() => {
+                  openSubAgentFloatingLauncher({
+                    role: tpl.role,
+                    name: tpl.name,
+                    task: tpl.description,
+                    questions: [
+                      `What task should the saved Sub-Agent "${tpl.name}" (${tpl.role}) execute for the Main Creator?`,
+                    ],
+                  });
+                }, 100);
+              }}
+              onDeleteSavedSubAgent={(tplId) => deleteSubAgentTemplate(tplId)}
+              onViewSubAgentResult={(agentId) => {
+                const ag = subAgents.find(a => a.id === agentId);
+                if (ag?.result) {
+                  setNoticeModal({ title: ag.name + ' Result', message: ag.result.summary });
+                }
+              }}
+              currentTask={activePlan?.userRequest}
+              hasClarificationQuestions={Boolean(activePlan?.status === 'clarifying' || (clarificationQuestions && clarificationQuestions.length > 0))}
+              onSkipClarificationQuestions={() => skipClarificationQuestions(activePlan?.id, true)}
+              onNavigateToTools={() => handleSelectTab('tools')}
+              onNavigateToPlans={() => handleSelectTab('plans')}
+              onNavigateToChat={() => router.push('/(tabs)/chat' as any)}
+              onNavigateToProjects={() => router.push('/(tabs)/(home)' as any)}
+            />
+          ) : null}
 
-        {activeTab === 'tools' && (
-          <>
-            <View style={styles.toolsHeader}>
-              <Text style={styles.toolsTitle}>Sub-Agents & YAML Skills</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <TouchableOpacity
-                  style={[styles.openDashboardHeaderBtn, { backgroundColor: IDE.accent + '18', borderColor: IDE.accent + '45' }]}
-                  onPress={() => setShowFreePoolModal(true)}
-                  activeOpacity={0.7}
-                >
-                  <Zap size={13} color={IDE.accent} />
-                  <Text style={[styles.openDashboardHeaderText, { color: IDE.accent }]}>AI for Free</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.openDashboardHeaderBtn}
-                  onPress={() => setShowSubAgentStudioModal(true)}
-                  activeOpacity={0.7}
-                >
-                  <Brain size={14} color={IDE.primary} />
-                  <Text style={styles.openDashboardHeaderText}>Sub-Agent Studio</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            <Text style={styles.toolsSubtitle}>
-              Custom Sub-Agent templates with scoped file permissions and project YAML skills. Tap Sub-Agent Studio to create, edit, or delete templates.
-            </Text>
-            <View style={styles.categorySection}>
-              {customSubAgents.map(tpl => (
-                <View key={tpl.id} style={styles.toolCard}>
+          {activeTab === 'tools' ? (
+            <>
+              <View style={styles.toolsHeader}>
+                <Text style={styles.toolsTitle}>Sub-Agents & YAML Skills</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
                   <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                    style={[styles.openDashboardHeaderBtn, { backgroundColor: IDE.accent + '18', borderColor: IDE.accent + '45' }]}
+                    onPress={() => setShowFreePoolModal(true)}
+                    activeOpacity={0.7}
+                  >
+                    <Zap size={13} color={IDE.accent} />
+                    <Text style={[styles.openDashboardHeaderText, { color: IDE.accent }]}>AI for Free</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.openDashboardHeaderBtn}
                     onPress={() => setShowSubAgentStudioModal(true)}
                     activeOpacity={0.7}
                   >
-                    <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
-                      <Brain size={12} color={IDE.primary} />
-                    </View>
-                    <View style={styles.toolCardContent}>
-                      <View style={styles.toolNameRow}>
-                        <Text style={styles.toolCardName}>{tpl.name}</Text>
-                        <View style={styles.betaPill}>
-                          <Text style={styles.betaPillText}>{tpl.role.toUpperCase()}</Text>
-                        </View>
-                      </View>
-                      <Text style={styles.toolCardDesc} numberOfLines={1}>
-                        {tpl.description} • Files: {tpl.allowedFiles.join(', ')}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => deleteSubAgentTemplate(tpl.id)}
-                    style={{ padding: 6 }}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Trash2 size={14} color={IDE.danger} />
+                    <Brain size={14} color={IDE.primary} />
+                    <Text style={styles.openDashboardHeaderText}>Sub-Agent & Skill Studio</Text>
                   </TouchableOpacity>
                 </View>
-              ))}
-            </View>
-
-            <View style={[styles.toolsHeader, { marginTop: 20 }]}>
-              <Text style={styles.toolsTitle}>Tool Registry</Text>
-              <View style={styles.toolsCountBadge}>
-                <Text style={styles.toolsCountText}>{activeToolCount} active</Text>
               </View>
-            </View>
-            <Text style={styles.toolsSubtitle}>
-              Tap on a tool for details and permissions.
-              {settings.yoloMode && ' YOLO mode overrides all permissions.'}
-            </Text>
-
-            {TOOL_CATEGORIES.map(cat => {
-              const catTools = groupedTools[cat.id];
-              if (!catTools || catTools.length === 0) return null;
-              const isExpanded = expandedCategories.has(cat.id);
-              const CatIcon = getCategoryIcon(cat.id);
-
-              return (
-                <View key={cat.id} style={styles.categorySection}>
-                  <TouchableOpacity
-                    style={styles.categoryHeader}
-                    onPress={() => toggleCategory(cat.id)}
-                    activeOpacity={0.7}
-                  >
-                    <CatIcon size={14} color={IDE.textSecondary} />
-                    <Text style={styles.categoryTitle}>{cat.label}</Text>
-                    <View style={styles.categoryCountBadge}>
-                      <Text style={styles.categoryCountText}>{catTools.length}</Text>
-                    </View>
-                    {isExpanded ? (
-                      <ChevronDown size={14} color={IDE.muted} />
-                    ) : (
-                      <ChevronRight size={14} color={IDE.muted} />
-                    )}
-                  </TouchableOpacity>
-
-                  {isExpanded && catTools.map(tool => {
-                    const rawPerm = settings.toolPermissions?.[tool.name];
-                    const perm = getToolPermission(tool.name);
-                    const isYoloOverride = settings.yoloMode && rawPerm !== 'always' && rawPerm !== undefined;
-                    const PermIcon = settings.yoloMode ? Zap : getPermissionIcon(perm);
-                    const permColor = settings.yoloMode ? IDE.warning : getPermissionColor(perm);
-
-                    return (
-                      <TouchableOpacity
-                        key={tool.name}
-                        style={styles.toolCard}
-                        onPress={() => setSelectedTool(tool)}
-                        activeOpacity={0.7}
-                      >
-                        <View style={[styles.toolPermIcon, { backgroundColor: permColor + '20' }]}>
-                          <PermIcon size={12} color={permColor} />
-                        </View>
-                        <View style={styles.toolCardContent}>
-                          <View style={styles.toolNameRow}>
-                            <Text style={styles.toolCardName}>{tool.displayName}</Text>
-                            {tool.isBeta && (
-                              <View style={styles.betaPill}>
-                                <Text style={styles.betaPillText}>BETA</Text>
-                              </View>
-                            )}
-                            {isYoloOverride && (
-                              <View style={styles.yoloOverridePill}>
-                                <Text style={styles.yoloOverridePillText}>YOLO</Text>
-                              </View>
-                            )}
-                          </View>
-                          <Text style={styles.toolCardDesc} numberOfLines={1}>{tool.description}</Text>
-                        </View>
-                        <ChevronRight size={14} color={IDE.muted} />
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              );
-            })}
-          </>
-        )}
-
-        {activeTab === 'plans' && (
-          <>
-            {activePlans.length > 0 && (
-              <View style={styles.planSection}>
-                <View style={styles.planSectionHeader}>
-                  <Play size={12} color={IDE.primary} />
-                  <Text style={styles.planSectionTitle}>Active Plans</Text>
-                </View>
-                {activePlans.map(plan => (
-                  <PlanCard key={plan.id} plan={plan} />
-                ))}
-              </View>
-            )}
-
-            {completedPlans.length > 0 && (
-              <View style={styles.planSection}>
-                <View style={styles.planSectionHeader}>
-                  <CircleCheck size={12} color={IDE.accent} />
-                  <Text style={styles.planSectionTitle}>Completed Plans ({completedPlans.length})</Text>
-                </View>
-                {completedPlans.map(plan => (
-                  <PlanCard key={plan.id} plan={plan} />
-                ))}
-              </View>
-            )}
-
-            {(plans ?? []).length === 0 && (
-              <View style={styles.emptyBox}>
-                <Brain size={32} color={IDE.muted} />
-                <Text style={styles.emptyText}>No Agent Plans</Text>
-                <Text style={styles.emptyHint}>Use Agent Mode in chat to create plans.</Text>
-              </View>
-            )}
-          </>
-        )}
-
-        {activeTab === 'memos' && learningActive && (
-          <>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={[styles.textInput, { minHeight: 60 }]}
-                placeholder="New note..."
-                placeholderTextColor={IDE.muted}
-                value={newMemoText}
-                onChangeText={setNewMemoText}
-                multiline
-                textAlignVertical="top"
-              />
-              <TouchableOpacity style={styles.addBtn} onPress={handleAddMemo} activeOpacity={0.7}>
-                <Plus size={18} color="#fff" />
-              </TouchableOpacity>
-            </View>
-
-            {memos.length === 0 ? (
-              <View style={styles.emptyBox}>
-                <BookOpen size={32} color={IDE.muted} />
-                <Text style={styles.emptyText}>No memos.</Text>
-                <Text style={styles.emptyHint}>The AI saves important findings here.</Text>
-              </View>
-            ) : (
-              memos.map(memo => (
-                <View key={memo.id} style={styles.memoItem}>
-                  <Text style={styles.memoText}>{memo.content}</Text>
-                  <View style={styles.memoFooter}>
-                    <Text style={styles.memoDate}>
-                      {new Date(memo.createdAt).toLocaleString('en-US')}
-                    </Text>
+              <Text style={styles.toolsSubtitle}>
+                Custom Sub-Agent templates with scoped file permissions and Extra YAML skills (.md/.yml/.zip). Tap Sub-Agent & Skill Studio to upload skills, repair corrupted YAML with AI, or set custom trigger words.
+              </Text>
+              <View style={styles.categorySection}>
+                {customSubAgents.map(tpl => (
+                  <View key={tpl.id} style={styles.toolCard}>
                     <TouchableOpacity
-                      onPress={() => deleteMemo(memo.id)}
+                      style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+                      onPress={() => setShowSubAgentStudioModal(true)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '20' }]}>
+                        <Brain size={12} color={IDE.primary} />
+                      </View>
+                      <View style={styles.toolCardContent}>
+                        <View style={styles.toolNameRow}>
+                          <Text style={styles.toolCardName}>{tpl.name}</Text>
+                          <View style={styles.betaPill}>
+                            <Text style={styles.betaPillText}>{tpl.role.toUpperCase()}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.toolCardDesc} numberOfLines={1}>
+                          {tpl.description} • Files: {tpl.allowedFiles.join(', ')}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => deleteSubAgentTemplate(tpl.id)}
+                      style={{ padding: 6 }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Trash2 size={12} color={IDE.danger} />
+                      <Trash2 size={14} color={IDE.danger} />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+
+              <View style={[styles.toolsHeader, { marginTop: 20 }]}>
+                <Text style={styles.toolsTitle}>
+                  Tool Registry ({isNormalChat ? 'Normal Chat Mode' : 'Agent Mode'})
+                </Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                  {isAdminOrOwner ? (
+                    <TouchableOpacity
+                      style={[
+                        styles.openDashboardHeaderBtn,
+                        showHiddenModeTools && {
+                          backgroundColor: IDE.warning + '20',
+                          borderColor: IDE.warning,
+                        },
+                      ]}
+                      onPress={() => setShowHiddenModeTools(v => !v)}
+                      activeOpacity={0.7}
+                    >
+                      <Eye size={13} color={showHiddenModeTools ? IDE.warning : IDE.muted} />
+                      <Text
+                        style={[
+                          styles.openDashboardHeaderText,
+                          { color: showHiddenModeTools ? IDE.warning : IDE.muted },
+                        ]}
+                      >
+                        {showHiddenModeTools ? 'Hide Disabled Tools' : 'Owner: Show Disabled'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <View style={styles.toolsCountBadge}>
+                    <Text style={styles.toolsCountText}>{activeToolCount} active</Text>
+                  </View>
+                </View>
+              </View>
+              <Text style={styles.toolsSubtitle}>
+                {isNormalChat
+                  ? 'Normal Chat Mode active: Project filesystem & Sub-Agent tools are automatically disabled and hidden. Only ZIP bundle, Draft Plan, Memory Graph & Cross-Chat tools are active.'
+                  : 'Agent Mode active: ZIP bundle & Chat-only tools (zip_create, zip_read, draft_agent_plan) are automatically disabled and hidden so Dev0 writes directly to your project files.'}
+                {settings.yoloMode ? ' YOLO mode overrides all permissions.' : ''}
+              </Text>
+
+              {TOOL_CATEGORIES.map(cat => {
+                const catTools = groupedTools[cat.id];
+                if (!catTools || catTools.length === 0) return null;
+                const isExpanded = expandedCategories.has(cat.id);
+                const CatIcon = getCategoryIcon(cat.id);
+
+                return (
+                  <View key={cat.id} style={styles.categorySection}>
+                    <TouchableOpacity
+                      style={styles.categoryHeader}
+                      onPress={() => toggleCategory(cat.id)}
+                      activeOpacity={0.7}
+                    >
+                      <CatIcon size={14} color={IDE.textSecondary} />
+                      <Text style={styles.categoryTitle}>{cat.label}</Text>
+                      <View style={styles.categoryCountBadge}>
+                        <Text style={styles.categoryCountText}>{catTools.length}</Text>
+                      </View>
+                      {isExpanded ? (
+                        <ChevronDown size={14} color={IDE.muted} />
+                      ) : (
+                        <ChevronRight size={14} color={IDE.muted} />
+                      )}
+                    </TouchableOpacity>
+
+                    {isExpanded
+                      ? catTools.map(tool => {
+                          const rawPerm = settings.toolPermissions?.[tool.name];
+                          const perm = getToolPermission(tool.name);
+                          const isYoloOverride = settings.yoloMode && rawPerm !== 'always' && rawPerm !== undefined;
+                          const PermIcon = settings.yoloMode ? Zap : getPermissionIcon(perm);
+                          const permColor = settings.yoloMode ? IDE.warning : getPermissionColor(perm);
+
+                          return (
+                            <TouchableOpacity
+                              key={tool.name}
+                              style={styles.toolCard}
+                              onPress={() => setSelectedTool(tool)}
+                              activeOpacity={0.7}
+                            >
+                              <View style={[styles.toolPermIcon, { backgroundColor: permColor + '20' }]}>
+                                <PermIcon size={12} color={permColor} />
+                              </View>
+                              <View style={styles.toolCardContent}>
+                                <View style={styles.toolNameRow}>
+                                  <Text style={styles.toolCardName}>{tool.displayName}</Text>
+                                  {tool.isBeta ? (
+                                    <View style={styles.betaPill}>
+                                      <Text style={styles.betaPillText}>BETA</Text>
+                                    </View>
+                                  ) : null}
+                                  {isYoloOverride ? (
+                                    <View style={styles.yoloOverridePill}>
+                                      <Text style={styles.yoloOverridePillText}>YOLO</Text>
+                                    </View>
+                                  ) : null}
+                                </View>
+                                <Text style={styles.toolCardDesc} numberOfLines={1}>{tool.description}</Text>
+                              </View>
+                              <ChevronRight size={14} color={IDE.muted} />
+                            </TouchableOpacity>
+                          );
+                        })
+                      : null}
+                  </View>
+                );
+              })}
+            </>
+          ) : null}
+
+          {activeTab === 'plans' ? (
+            <>
+              {activePlans.length > 0 ? (
+                <View style={styles.planSection}>
+                  <View style={styles.planSectionHeader}>
+                    <Play size={12} color={IDE.primary} />
+                    <Text style={styles.planSectionTitle}>Active Plans</Text>
+                  </View>
+                  {activePlans.map(plan => (
+                    <PlanCard key={plan.id} plan={plan} />
+                  ))}
+                </View>
+              ) : null}
+
+              {completedPlans.length > 0 ? (
+                <View style={styles.planSection}>
+                  <View style={styles.planSectionHeader}>
+                    <CircleCheck size={12} color={IDE.accent} />
+                    <Text style={styles.planSectionTitle}>Completed Plans ({completedPlans.length})</Text>
+                  </View>
+                  {completedPlans.map(plan => (
+                    <PlanCard key={plan.id} plan={plan} />
+                  ))}
+                </View>
+              ) : null}
+
+              {(plans ?? []).length === 0 ? (
+                <View style={styles.emptyBox}>
+                  <Brain size={32} color={IDE.muted} />
+                  <Text style={styles.emptyText}>No Agent Plans</Text>
+                  <Text style={styles.emptyHint}>Use Agent Mode in chat to create plans.</Text>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
+          {activeTab === 'search' ? (
+            <>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Search codebase files, functions, YAML skills & Synapse Graph nodes..."
+                  placeholderTextColor={IDE.muted}
+                  value={searchQuery}
+                  onChangeText={txt => {
+                    setSearchQuery(txt);
+                    if (currentProject && txt.trim()) {
+                      setSearchResults(searchFilesInProject(txt.trim()));
+                    } else {
+                      setSearchResults('');
+                    }
+                  }}
+                  onSubmitEditing={handleSearch}
+                  returnKeyType="search"
+                />
+                <TouchableOpacity style={styles.addBtn} onPress={handleSearch} activeOpacity={0.7}>
+                  <Search size={18} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Interactive Synapse Graph & Codebase Nodes Matching Search */}
+              <View style={styles.treeSection}>
+                <View style={[styles.sectionHeader, { justifyContent: 'space-between' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Network size={14} color={IDE.primary} />
+                    <Text style={styles.sectionTitle}>
+                      Codebase & Synapse Graph Nodes ({matchingGraphNodes.length})
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.openDashboardHeaderBtn}
+                    onPress={() => handleSelectTab('graph')}
+                  >
+                    <Sparkles size={12} color={IDE.primary} />
+                    <Text style={styles.openDashboardHeaderText}>Open Full 2D Graph</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={{ gap: 6, marginBottom: 14 }}>
+                  {matchingGraphNodes.slice(0, 18).map(node => (
+                    <TouchableOpacity
+                      key={node.id}
+                      style={styles.toolCard}
+                      onPress={() => {
+                        if (node.filePath && !node.filePath.startsWith('.qoder')) {
+                          handleOpenFilePathInEditor(node.filePath);
+                        } else {
+                          handleSelectTab('graph');
+                        }
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      <View style={[styles.toolPermIcon, { backgroundColor: IDE.primary + '18' }]}>
+                        {node.type === 'file' ? <FileCode size={13} color={IDE.primary} /> : null}
+                        {node.type === 'function' ? <Cpu size={13} color={IDE.warning} /> : null}
+                        {node.type === 'memo' ? <Brain size={13} color={IDE.accent} /> : null}
+                        {node.type === 'skill' ? <ShieldCheck size={13} color={IDE.primary} /> : null}
+                        {node.type === 'project' ? <Folder size={13} color={IDE.primary} /> : null}
+                      </View>
+                      <View style={styles.toolCardContent}>
+                        <View style={styles.toolNameRow}>
+                          <Text style={styles.toolCardName}>{node.label}</Text>
+                          <View style={styles.betaPill}>
+                            <Text style={styles.betaPillText}>{node.type.toUpperCase()}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.toolCardDesc} numberOfLines={1}>
+                          {node.filePath ? `${node.filePath} · ` : ''}
+                          {node.signature || node.snippet || `${node.degree} connected synapses`}
+                        </Text>
+                      </View>
+                      {Boolean(node.filePath && !node.filePath.startsWith('.qoder')) ? (
+                        <ExternalLink size={14} color={IDE.primary} />
+                      ) : (
+                        <ChevronRight size={14} color={IDE.muted} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {Boolean(searchResults) ? (
+                <View style={styles.searchResultsBox}>
+                  <ScrollView horizontal={false} nestedScrollEnabled>
+                    <Text style={styles.searchResultsText} selectable>{searchResults}</Text>
+                  </ScrollView>
+                </View>
+              ) : null}
+
+              {Boolean(currentProject) ? (
+                <View style={styles.treeSection}>
+                  <View style={styles.sectionHeader}>
+                    <FolderTree size={14} color={IDE.muted} />
+                    <Text style={styles.sectionTitle}>Codebase Structure ({currentProject?.name})</Text>
+                  </View>
+                  <View style={styles.treeBox}>
+                    <ScrollView horizontal={false} nestedScrollEnabled>
+                      <Text style={styles.treeText} selectable>{getProjectTree()}</Text>
+                    </ScrollView>
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.emptyText}>
+                  Open a project in the Projects tab to inspect its full file tree structure.
+                </Text>
+              )}
+            </>
+          ) : null}
+
+          {activeTab === 'chat' ? (
+            <>
+              <View style={styles.chatSection}>
+                <Text style={styles.sectionTitle}>Chat History</Text>
+                <Text style={styles.chatInfo}>
+                  {messages.length} messages in current chat
+                </Text>
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, messages.length < 4 && styles.actionBtnDisabled]}
+                  onPress={handleCompress}
+                  disabled={messages.length < 4}
+                  activeOpacity={0.7}
+                >
+                  <Zap size={16} color={messages.length >= 4 ? IDE.warning : IDE.muted} />
+                  <Text style={[styles.actionBtnText, messages.length < 4 && styles.actionBtnTextDisabled]}>
+                    Compress chat
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={startNewChat}
+                  activeOpacity={0.7}
+                >
+                  <Zap size={16} color={IDE.primary} />
+                  <Text style={styles.actionBtnText}>New Chat</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.dangerBtn]}
+                  onPress={() => setConfirmClearChatModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <Trash2 size={16} color={IDE.danger} />
+                  <Text style={[styles.actionBtnText, { color: IDE.danger }]}>Clear Chat</Text>
+                </TouchableOpacity>
+              </View>
+
+              {showCompress ? (
+                <View style={styles.compressBox}>
+                  <Text style={styles.compressTitle}>Edit Summary</Text>
+                  <Text style={styles.compressHint}>
+                    Edit the summary and confirm. All old messages will be replaced by this.
+                  </Text>
+                  <TextInput
+                    style={styles.compressInput}
+                    value={compressSummary}
+                    onChangeText={setCompressSummary}
+                    multiline
+                    textAlignVertical="top"
+                  />
+                  <View style={styles.compressActions}>
+                    <TouchableOpacity
+                      style={styles.compressCancelBtn}
+                      onPress={() => setShowCompress(false)}
+                    >
+                      <Text style={styles.compressCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.compressApplyBtn} onPress={handleApplyCompress}>
+                      <Text style={styles.compressApplyText}>Apply</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
-              ))
-            )}
-          </>
-        )}
-
-        {activeTab === 'search' && (
-          <>
-            <View style={styles.inputRow}>
-              <TextInput
-                style={styles.textInput}
-                placeholder="Search text in files (grep)..."
-                placeholderTextColor={IDE.muted}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                onSubmitEditing={handleSearch}
-                returnKeyType="search"
-              />
-              <TouchableOpacity style={styles.addBtn} onPress={handleSearch} activeOpacity={0.7}>
-                <Search size={18} color="#fff" />
-              </TouchableOpacity>
-            </View>
-
-            {!currentProject && (
-              <Text style={styles.emptyText}>Please open a project first.</Text>
-            )}
-
-            {searchResults ? (
-              <View style={styles.searchResultsBox}>
-                <ScrollView horizontal={false} nestedScrollEnabled>
-                  <Text style={styles.searchResultsText} selectable>{searchResults}</Text>
-                </ScrollView>
-              </View>
-            ) : null}
-
-            {currentProject && (
-              <View style={styles.treeSection}>
-                <View style={styles.sectionHeader}>
-                  <FolderTree size={14} color={IDE.muted} />
-                  <Text style={styles.sectionTitle}>Project Structure</Text>
-                </View>
-                <View style={styles.treeBox}>
-                  <ScrollView horizontal={false} nestedScrollEnabled>
-                    <Text style={styles.treeText} selectable>{getProjectTree()}</Text>
-                  </ScrollView>
-                </View>
-              </View>
-            )}
-          </>
-        )}
-
-        {activeTab === 'chat' && (
-          <>
-            <View style={styles.chatSection}>
-              <Text style={styles.sectionTitle}>Chat History</Text>
-              <Text style={styles.chatInfo}>
-                {messages.length} messages in current chat
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.actionBtn, messages.length < 4 && styles.actionBtnDisabled]}
-                onPress={handleCompress}
-                disabled={messages.length < 4}
-                activeOpacity={0.7}
-              >
-                <Zap size={16} color={messages.length >= 4 ? IDE.warning : IDE.muted} />
-                <Text style={[styles.actionBtnText, messages.length < 4 && styles.actionBtnTextDisabled]}>
-                  Compress chat
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={startNewChat}
-                activeOpacity={0.7}
-              >
-                <Zap size={16} color={IDE.primary} />
-                <Text style={styles.actionBtnText}>New Chat</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.actionBtn, styles.dangerBtn]}
-                onPress={() => setConfirmClearChatModal(true)}
-                activeOpacity={0.7}
-              >
-                <Trash2 size={16} color={IDE.danger} />
-                <Text style={[styles.actionBtnText, { color: IDE.danger }]}>Clear Chat</Text>
-              </TouchableOpacity>
-            </View>
-
-            {showCompress && (
-              <View style={styles.compressBox}>
-                <Text style={styles.compressTitle}>Edit Summary</Text>
-                <Text style={styles.compressHint}>
-                  Edit the summary and confirm. All old messages will be replaced by this.
-                </Text>
-                <TextInput
-                  style={styles.compressInput}
-                  value={compressSummary}
-                  onChangeText={setCompressSummary}
-                  multiline
-                  textAlignVertical="top"
-                />
-                <View style={styles.compressActions}>
-                  <TouchableOpacity
-                    style={styles.compressCancelBtn}
-                    onPress={() => setShowCompress(false)}
-                  >
-                    <Text style={styles.compressCancelText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.compressApplyBtn} onPress={handleApplyCompress}>
-                    <Text style={styles.compressApplyText}>Apply</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </>
-        )}
-      </ScrollView>
+              ) : null}
+            </>
+          ) : null}
+        </ScrollView>
+      )}
 
       <ToolDetailModal
         tool={selectedTool}
@@ -718,7 +882,6 @@ function PlanCard({ plan }: { plan: AgentPlan }) {
   const completed = tasks.filter(t => t?.status === 'completed').length;
   const errors = tasks.filter(t => t?.status === 'error').length;
   const running = tasks.filter(t => t?.status === 'running').length;
-  const pending = tasks.filter(t => t?.status === 'pending' || t?.status === 'draft').length;
   const total = tasks.length;
 
   const statusColor = plan.status === 'completed' ? IDE.accent
@@ -747,39 +910,39 @@ function PlanCard({ plan }: { plan: AgentPlan }) {
               <Text style={[planStyles.statusText, { color: statusColor }]}>{statusLabel}</Text>
             </View>
             <Text style={planStyles.taskCount}>{completed}/{total} Tasks</Text>
-            {errors > 0 && <Text style={planStyles.errorCount}>{errors} Errors</Text>}
+            {errors > 0 ? <Text style={planStyles.errorCount}>{errors} Errors</Text> : null}
           </View>
         </View>
         {expanded ? <ChevronDown size={14} color={IDE.muted} /> : <ChevronRight size={14} color={IDE.muted} />}
       </TouchableOpacity>
 
-      {total > 0 && (
+      {total > 0 ? (
         <View style={planStyles.progressBarOuter}>
           <View style={[planStyles.progressBarFill, { flex: total > 0 ? completed / total : 0, backgroundColor: IDE.accent }]} />
-          {errors > 0 && <View style={[planStyles.progressBarFill, { flex: errors / total, backgroundColor: IDE.danger }]} />}
-          {running > 0 && <View style={[planStyles.progressBarFill, { flex: running / total, backgroundColor: IDE.primary }]} />}
+          {errors > 0 ? <View style={[planStyles.progressBarFill, { flex: errors / total, backgroundColor: IDE.danger }]} /> : null}
+          {running > 0 ? <View style={[planStyles.progressBarFill, { flex: running / total, backgroundColor: IDE.primary }]} /> : null}
         </View>
-      )}
+      ) : null}
 
-      {expanded && (
+      {expanded ? (
         <View style={planStyles.body}>
           {tasks.map((task, i) => task ? (
             <PlanTaskRow key={task.id} task={task} index={i} />
           ) : null)}
 
-          {plan.summary && (
+          {Boolean(plan.summary) ? (
             <View style={planStyles.summaryBox}>
               <Text style={planStyles.summaryLabel}>Summary</Text>
               <Text style={planStyles.summaryText}>{plan.summary}</Text>
             </View>
-          )}
+          ) : null}
 
           <Text style={planStyles.dateText}>
             Created: {new Date(plan.createdAt).toLocaleString('en-US')}
             {plan.completedAt ? ' · Finished: ' + new Date(plan.completedAt).toLocaleString('en-US') : ''}
           </Text>
         </View>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -818,40 +981,40 @@ function PlanTaskRow({ task, index }: { task: AgentTask; index: number }) {
             <Text style={[planStyles.taskStatus, { color: statusColor }]}>
               {task.status === 'completed' ? 'Done' : task.status === 'error' ? 'Error' : task.status === 'running' ? 'Running' : task.status === 'pending' ? 'Pending' : 'Draft'}
             </Text>
-            {fileCount > 0 && <Text style={planStyles.taskFileMeta}>{fileCount} files</Text>}
+            {fileCount > 0 ? <Text style={planStyles.taskFileMeta}>{fileCount} files</Text> : null}
           </View>
         </View>
         {expanded ? <ChevronDown size={12} color={IDE.muted} /> : <ChevronRight size={12} color={IDE.muted} />}
       </TouchableOpacity>
 
-      {expanded && (
+      {expanded ? (
         <View style={planStyles.taskDetails}>
           <Text style={planStyles.taskDesc}>{task.description}</Text>
-          {task.error && (
+          {Boolean(task.error) ? (
             <View style={planStyles.taskErrorBox}>
               <AlertCircle size={10} color={IDE.danger} />
               <Text style={planStyles.taskErrorText}>{task.error}</Text>
             </View>
-          )}
-          {task.filesCreated?.length > 0 && (
+          ) : null}
+          {task.filesCreated?.length > 0 ? (
             <View style={planStyles.fileList}>
               <Text style={[planStyles.fileLabel, { color: IDE.accent }]}>Created:</Text>
               {task.filesCreated.map(f => <Text key={f} style={planStyles.filePath}>{f}</Text>)}
             </View>
-          )}
-          {task.filesModified?.length > 0 && (
+          ) : null}
+          {task.filesModified?.length > 0 ? (
             <View style={planStyles.fileList}>
               <Text style={[planStyles.fileLabel, { color: IDE.primary }]}>Modified:</Text>
               {task.filesModified.map(f => <Text key={f} style={planStyles.filePath}>{f}</Text>)}
             </View>
-          )}
-          {task.result && task.status === 'completed' && (
+          ) : null}
+          {Boolean(task.result && task.status === 'completed') ? (
             <View style={planStyles.resultBox}>
               <Text style={planStyles.resultText} numberOfLines={4}>{task.result}</Text>
             </View>
-          )}
+          ) : null}
         </View>
-      )}
+      ) : null}
     </View>
   );
 }
@@ -897,7 +1060,7 @@ function ToolDetailModal({ tool, permission, onChangePermission, onClose, yoloMo
               </View>
             </View>
 
-            {tool.parameters.length > 0 && (
+            {tool.parameters.length > 0 ? (
               <View style={tdStyles.paramSection}>
                 <Text style={tdStyles.descLabel}>Parameters</Text>
                 {tool.parameters.map((p, i) => (
@@ -912,25 +1075,25 @@ function ToolDetailModal({ tool, permission, onChangePermission, onClose, yoloMo
                   </View>
                 ))}
               </View>
-            )}
+            ) : null}
 
             <View style={tdStyles.permSection}>
               <View style={tdStyles.permHeaderRow}>
                 <Text style={tdStyles.descLabel}>Permission</Text>
-                {yoloMode && (
+                {yoloMode ? (
                   <View style={tdStyles.yoloBadge}>
                     <Zap size={10} color={IDE.warning} />
                     <Text style={tdStyles.yoloBadgeText}>YOLO overrides</Text>
                   </View>
-                )}
+                ) : null}
               </View>
-              {yoloMode && (
+              {yoloMode ? (
                 <View style={tdStyles.yoloNotice}>
                   <Text style={tdStyles.yoloNoticeText}>
                     YOLO mode is active. All tools are executed automatically without asking. Disable YOLO in settings to use individual permissions.
                   </Text>
                 </View>
-              )}
+              ) : null}
               {PERMISSION_OPTIONS.map(opt => {
                 const isSelected = !yoloMode && permission === opt.value;
                 const isYoloAlways = yoloMode && opt.value === 'always';
@@ -953,7 +1116,7 @@ function ToolDetailModal({ tool, permission, onChangePermission, onClose, yoloMo
                       { backgroundColor: isSelected ? opt.color : isYoloAlways ? IDE.warning : IDE.border },
                       isDisabled && !isYoloAlways && { opacity: 0.3 },
                     ]}>
-                      {(isSelected || isYoloAlways) && <View style={tdStyles.permDotInner} />}
+                      {(isSelected || isYoloAlways) ? <View style={tdStyles.permDotInner} /> : null}
                     </View>
                     <View style={tdStyles.permContent}>
                       <Text style={[
@@ -967,8 +1130,8 @@ function ToolDetailModal({ tool, permission, onChangePermission, onClose, yoloMo
                         isDisabled && !isYoloAlways && { opacity: 0.4 },
                       ]}>{opt.desc}</Text>
                     </View>
-                    {isSelected && <CircleCheck size={16} color={opt.color} />}
-                    {isYoloAlways && <Zap size={16} color={IDE.warning} />}
+                    {isSelected ? <CircleCheck size={16} color={opt.color} /> : null}
+                    {isYoloAlways ? <Zap size={16} color={IDE.warning} /> : null}
                   </TouchableOpacity>
                 );
               })}
@@ -1199,12 +1362,31 @@ const styles = StyleSheet.create({
   tabBadgeActive: { backgroundColor: IDE.primary + '25' },
   tabBadgeText: { fontSize: 9, fontWeight: '700' as const, color: IDE.muted },
   tabBadgeTextActive: { color: IDE.primary },
+  tutorialHeaderBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 5,
+    marginLeft: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: IDE.accent + '18',
+    borderWidth: 1,
+    borderColor: IDE.accent + '50',
+  },
+  tutorialHeaderBtnText: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    color: IDE.accent,
+  },
   content: { flex: 1 },
   contentInner: { padding: 16, paddingBottom: 40 },
   toolsHeader: {
     flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
     alignItems: 'center' as const,
     justifyContent: 'space-between' as const,
+    gap: 8,
     marginBottom: 4,
   },
   toolsTitle: { fontSize: 18, fontWeight: '700' as const, color: IDE.text },
@@ -1316,32 +1498,6 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 14, color: IDE.muted, textAlign: 'center' as const },
   emptyHint: { fontSize: 12, color: IDE.muted, textAlign: 'center' as const, opacity: 0.7 },
-  todoSection: { marginBottom: 16 },
-  todoSectionHeader: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 6,
-    marginBottom: 8,
-    paddingHorizontal: 4,
-  },
-  todoSectionTitle: { fontSize: 12, fontWeight: '600' as const, color: IDE.textSecondary },
-  todoItem: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    backgroundColor: IDE.surface,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: IDE.border,
-    marginBottom: 4,
-  },
-  todoItemCompleted: { opacity: 0.6 },
-  todoCheck: { padding: 2 },
-  todoText: { flex: 1, fontSize: 14, color: IDE.text, lineHeight: 20 },
-  todoCompleted: { textDecorationLine: 'line-through' as const, color: IDE.muted },
-  deleteBtn: { padding: 6 },
   planSection: { marginBottom: 16 },
   planSectionHeader: {
     flexDirection: 'row' as const,
@@ -1351,22 +1507,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   planSectionTitle: { fontSize: 12, fontWeight: '600' as const, color: IDE.textSecondary },
-  memoItem: {
-    backgroundColor: IDE.surface,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: IDE.border,
-    padding: 12,
-    marginBottom: 8,
-  },
-  memoText: { fontSize: 13, color: IDE.text, lineHeight: 20 },
-  memoFooter: {
-    flexDirection: 'row' as const,
-    justifyContent: 'space-between' as const,
-    alignItems: 'center' as const,
-    marginTop: 8,
-  },
-  memoDate: { fontSize: 11, color: IDE.muted },
   searchResultsBox: {
     backgroundColor: IDE.surface,
     borderRadius: 8,

@@ -741,3 +741,68 @@ export function localizeCodeSubgraph(
 
   return { matchedNodes: primary, summaryMarkdown: md };
 }
+
+/**
+ * Non-destructive Memory Graph cleanup:
+ * Repairs or strips stale `[Synapse: <deleted_file_path>...]` prefixes that point to
+ * files no longer present in the active project while preserving 100% of the memory content.
+ * Never deletes any MemoEntry.
+ */
+export function cleanStaleMemoryGraphLinks(
+  memos: MemoEntry[],
+  project: Project | null,
+): {
+  cleanedMemos: MemoEntry[];
+  repairedCount: number;
+  stalePaths: string[];
+} {
+  if (!Array.isArray(memos) || memos.length === 0) {
+    return { cleanedMemos: [], repairedCount: 0, stalePaths: [] };
+  }
+
+  const validFilePaths = new Set<string>();
+  if (project) {
+    const flatFiles = flattenProjectFiles(project.files);
+    for (const f of flatFiles) {
+      validFilePaths.add(f.path.toLowerCase());
+      validFilePaths.add(f.name.toLowerCase());
+    }
+  }
+
+  let repairedCount = 0;
+  const stalePaths: string[] = [];
+  const synapsePrefixRegex = /^\[Synapse:\s*([^\]:]+?)(?::\d+)?(?:\s*\([^)]*\))?\]\s*/i;
+
+  const cleanedMemos = memos.map(memo => {
+    const match = memo.content.match(synapsePrefixRegex);
+    if (!match) {
+      return memo;
+    }
+
+    const referencedTarget = (match[1] || '').trim();
+    const looksLikeFilePath =
+      referencedTarget.includes('/') ||
+      /\.(ts|tsx|js|jsx|json|md|py|css|html)$/i.test(referencedTarget);
+
+    if (looksLikeFilePath && project && !validFilePaths.has(referencedTarget.toLowerCase())) {
+      repairedCount++;
+      if (!stalePaths.includes(referencedTarget)) {
+        stalePaths.push(referencedTarget);
+      }
+      const preservedBody = memo.content.replace(synapsePrefixRegex, '').trim();
+      return {
+        ...memo,
+        content: preservedBody || memo.content,
+      };
+    }
+
+    return memo;
+  });
+
+  return {
+    cleanedMemos,
+    repairedCount,
+    stalePaths,
+  };
+}
+

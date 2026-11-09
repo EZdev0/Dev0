@@ -472,19 +472,30 @@ const ChatBubble = React.memo(
             </View>
           )}
 
-          {hasToolCalls && <CollapsedToolCalls toolCalls={visibleToolCalls} />}
+          {hasToolCalls ? <CollapsedToolCalls toolCalls={visibleToolCalls} /> : null}
 
-          {hasCopyButton && (
-            <TouchableOpacity
-              style={styles.copyMsgBtn}
-              onPress={handleCopyMessage}
-              activeOpacity={0.6}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Copy size={12} color={IDE.muted} />
-              <Text style={styles.copyMsgText}>Copy</Text>
-            </TouchableOpacity>
-          )}
+          <View style={styles.bottomMetaRow}>
+            {Boolean(hasCopyButton) ? (
+              <TouchableOpacity
+                style={styles.copyMsgBtn}
+                onPress={handleCopyMessage}
+                activeOpacity={0.6}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Copy size={12} color={IDE.muted} />
+                <Text style={styles.copyMsgText}>Copy</Text>
+              </TouchableOpacity>
+            ) : <View />}
+
+            {Array.isArray(message.loadedSkills) && message.loadedSkills.length > 0 ? (
+              <View style={styles.loadedSkillsBadge}>
+                <Sparkles size={10} color={IDE.keyword} />
+                <Text style={styles.loadedSkillsText} numberOfLines={1}>
+                  Loaded: {message.loadedSkills.join(' · ')}
+                </Text>
+              </View>
+            ) : null}
+          </View>
         </View>
 
         {/* Floating Plan Editor Modal */}
@@ -1373,13 +1384,39 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through' as const,
     color: IDE.muted,
   },
+  bottomMetaRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    flexWrap: 'wrap' as const,
+    gap: 8,
+    marginTop: 6,
+  },
   copyMsgBtn: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: 4,
-    marginTop: 8,
-    paddingVertical: 4,
+    paddingVertical: 2,
     alignSelf: 'flex-start' as const,
+  },
+  loadedSkillsBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 4,
+    alignSelf: 'flex-end' as const,
+    marginLeft: 'auto' as const,
+    backgroundColor: IDE.keyword + '12',
+    borderWidth: 1,
+    borderColor: IDE.keyword + '30',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    maxWidth: '100%',
+  },
+  loadedSkillsText: {
+    fontSize: 10,
+    color: IDE.muted,
+    fontWeight: '600' as const,
   },
   tableContainer: {
     borderWidth: 1,

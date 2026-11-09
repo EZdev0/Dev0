@@ -318,23 +318,23 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
         )}
       </TouchableOpacity>
 
-      {liveThinkingContent && !expanded && (
+      {Boolean(liveThinkingContent) && !expanded ? (
         <View style={styles.liveThinkingPreview}>
           <Animated.View style={[styles.liveThinkingDot, { opacity: pulseAnim }]} />
           <Text style={styles.liveThinkingPreviewText} numberOfLines={2}>{liveThinkingContent}</Text>
         </View>
-      )}
+      ) : null}
 
-      {expanded && !editing && (
+      {expanded && !editing ? (
         <View style={styles.details}>
-          {!isThinkingType && !isWebSearchType && (
+          {!isThinkingType && !isWebSearchType ? (
             <Text style={styles.description}>{task.description}</Text>
-          )}
-          {isWebSearchType && (
+          ) : null}
+          {isWebSearchType ? (
             <Text style={[styles.description, { color: '#2196F3' }]}>{task.description}</Text>
-          )}
+          ) : null}
 
-          {isThinkingType && (task.thinkingContent || isRunningThinking) && (
+          {isThinkingType && Boolean(task.thinkingContent || isRunningThinking) ? (
             <View style={styles.thinkingSection}>
               <TouchableOpacity
                 style={styles.thinkingHeader}
@@ -345,15 +345,15 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                 <Text style={[styles.thinkingSectionTitle, { color: typeConfig.color }]}>
                   {isRunningThinking ? 'Thinking...' : taskType === 'thinking' ? 'Thought Process' : 'Brainstorm Result'}
                 </Text>
-                {isRunningThinking && (
+                {isRunningThinking ? (
                   <View style={styles.liveIndicator}>
                     <Animated.View style={[styles.liveDotSmall, { opacity: pulseAnim }]} />
                     <Text style={styles.liveText}>LIVE</Text>
                   </View>
-                )}
+                ) : null}
                 {thinkingExpanded ? <ChevronDown size={12} color={IDE.muted} /> : <ChevronRight size={12} color={IDE.muted} />}
               </TouchableOpacity>
-              {thinkingExpanded && (
+              {thinkingExpanded ? (
                 <ScrollView
                   ref={thinkingScrollRef}
                   style={styles.thinkingScroll}
@@ -363,26 +363,26 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                   <Text style={styles.thinkingText}>
                     {stripMarkdown(task.thinkingContent || task.description || 'Thinking...')}
                   </Text>
-                  {isRunningThinking && (
+                  {isRunningThinking ? (
                     <Animated.View style={[styles.cursor, { opacity: pulseAnim }]} />
-                  )}
+                  ) : null}
                 </ScrollView>
-              )}
+              ) : null}
             </View>
-          )}
+          ) : null}
 
-          {isThinkingType && !task.thinkingContent && !isRunningThinking && (
+          {isThinkingType && !task.thinkingContent && !isRunningThinking ? (
             <Text style={styles.description}>{task.description}</Text>
-          )}
+          ) : null}
 
-          {task.error && (
+          {Boolean(task.error) ? (
             <View style={styles.errorBox}>
               <AlertCircle size={12} color={IDE.danger} />
               <Text style={styles.errorText}>{task.error}</Text>
             </View>
-          )}
+          ) : null}
 
-          {(task.filesCreated?.length ?? 0) > 0 && (
+          {(task.filesCreated?.length ?? 0) > 0 ? (
             <View style={styles.fileSection}>
               <View style={styles.fileSectionHeader}>
                 <FilePlus size={12} color={IDE.accent} />
@@ -392,9 +392,9 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                 <Text key={f} style={styles.filePath}>{f}</Text>
               ))}
             </View>
-          )}
+          ) : null}
 
-          {(task.filesModified?.length ?? 0) > 0 && (
+          {(task.filesModified?.length ?? 0) > 0 ? (
             <View style={styles.fileSection}>
               <View style={styles.fileSectionHeader}>
                 <FileText size={12} color={IDE.primary} />
@@ -404,9 +404,9 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                 <Text key={f} style={styles.filePath}>{f}</Text>
               ))}
             </View>
-          )}
+          ) : null}
 
-          {(task.filesDeleted?.length ?? 0) > 0 && (
+          {(task.filesDeleted?.length ?? 0) > 0 ? (
             <View style={styles.fileSection}>
               <View style={styles.fileSectionHeader}>
                 <FileX size={12} color={IDE.danger} />
@@ -416,9 +416,9 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                 <Text key={f} style={styles.filePath}>{f}</Text>
               ))}
             </View>
-          )}
+          ) : null}
 
-          {isWebSearchType && webSearchResults.length > 0 && (
+          {isWebSearchType && webSearchResults.length > 0 ? (
             <View style={styles.webResultsSection}>
               <View style={styles.webResultsHeader}>
                 <Globe size={12} color="#2196F3" />
@@ -434,9 +434,9 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                 </View>
               ))}
             </View>
-          )}
+          ) : null}
 
-          {task.result && task.status === 'completed' && !isThinkingType && (
+          {Boolean(task.result) && task.status === 'completed' && !isThinkingType ? (
             <View style={styles.thinkingSection}>
               <TouchableOpacity
                 style={styles.thinkingHeader}
@@ -447,19 +447,19 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
                 <Text style={[styles.thinkingSectionTitle, { color: IDE.accent }]}>Result</Text>
                 {resultExpanded ? <ChevronDown size={12} color={IDE.muted} /> : <ChevronRight size={12} color={IDE.muted} />}
               </TouchableOpacity>
-              {resultExpanded && (
+              {resultExpanded ? (
                 <ScrollView
                   style={styles.thinkingScroll}
                   nestedScrollEnabled
                   showsVerticalScrollIndicator
                 >
                   <Text style={styles.thinkingText}>
-                    {stripMarkdown(task.result)}
+                    {stripMarkdown(task.result || '')}
                   </Text>
                 </ScrollView>
-              )}
+              ) : null}
             </View>
-          )}
+          ) : null}
 
           {toolCallCount > 0 && (task.status === 'completed' || task.status === 'error') && (
             <View style={styles.toolCallsSection}>
@@ -496,15 +496,15 @@ const AgentTaskCard = React.memo(({ task, index, editable, onUpdate, onRemove, o
             </View>
           )}
 
-          {toolCallCount > 0 && task.status === 'running' && (
+          {toolCallCount > 0 && task.status === 'running' ? (
             <View style={styles.toolSummary}>
               <Text style={styles.toolSummaryText}>
                 {toolCallCount} Tool calls · Running...
               </Text>
             </View>
-          )}
+          ) : null}
         </View>
-      )}
+      ) : null}
     </View>
     </Animated.View>
   );

@@ -1,7 +1,7 @@
-import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS, isLearningTool, isProjectFilesystemOrAgentOnlyTool } from '@/types';
+import { ChatMessage, ToolDefinition, AIProviderType, MemoEntry, TodoItem, AI_PROVIDERS, isLearningTool, isProjectFilesystemOrAgentOnlyTool, isChatModeOnlyTool } from '@/types';
 import { MAX_TOOL_RESULT_LENGTH, truncateToolResult, compressAndSanitizeMessagesForAPI } from '@/utils/chat-compression';
 import { runSubAISearchAgent } from '@/utils/web-tools';
-import { extractActualTokenUsage, TokenUsageRecord } from '@/utils/free-ai-pool';
+import { extractActualTokenUsage, TokenUsageRecord, inspectPromptForKeyJailbreak } from '@/utils/free-ai-pool';
 
 export const DEFAULT_RORK_MODEL = 'gpt-4o-mini';
 
@@ -26,8 +26,12 @@ export function buildPlannerPrompt(options: {
   memos: MemoEntry[];
   todos: TodoItem[];
   learningEnabled?: boolean;
+  customPlannerPrompt?: string;
 }): string {
   let prompt = 'You are the main agent (Planner) of a mobile IDE called "Dev0".\n';
+  if (options.customPlannerPrompt && options.customPlannerPrompt.trim()) {
+    prompt += '\n## OWNER CUSTOM PLANNER DIRECTIVES\n' + options.customPlannerPrompt.trim() + '\n\n';
+  }
   prompt += 'Your task is to break down the user request into distinct, clearly defined steps.\n';
   prompt += '\n';
   prompt += '## IMPORTANT NOTICE\n';
@@ -635,6 +639,40 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['id_or_hash'],
     },
   },
+  {
+    name: 'create_yaml_skill',
+    description: 'Creates and validates a reusable YAML-frontmatter Skill/Rule markdown file (e.g. .qoder/rules/<slug>.md or .agents/skills/<slug>.md) in the active project so Dev0 and Sub-Agents automatically load it.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Human-readable skill title',
+        },
+        description: {
+          type: 'string',
+          description: 'Concise description of when and why this skill applies',
+        },
+        trigger: {
+          type: 'string',
+          description: 'Trigger mode: "always_on" or "manual"',
+        },
+        alwaysApply: {
+          type: 'boolean',
+          description: 'Whether to always inject this skill into the system prompt',
+        },
+        instructions: {
+          type: 'string',
+          description: 'Detailed English markdown instructions for the skill',
+        },
+        target_path: {
+          type: 'string',
+          description: 'Optional relative path (default: .qoder/rules/<slug>.md)',
+        },
+      },
+      required: ['name', 'instructions'],
+    },
+  },
 ];
 
 export function getAvailableTools(options?: {
@@ -650,12 +688,16 @@ export function getAvailableTools(options?: {
   const learningActive = Boolean(options?.learningEnabled ?? options?.betaAgentLearning ?? false);
   const perms = options?.toolPermissions || {};
   const isNormalChat = options?.chatModeOnly === true || options?.agentMode === false;
+  const isAgentModeActive = options?.agentMode === true && options?.chatModeOnly !== true;
 
   return TOOL_DEFINITIONS.filter(tool => {
     if (!learningActive && isLearningTool(tool.name)) {
       return false;
     }
     if (isNormalChat && isProjectFilesystemOrAgentOnlyTool(tool.name)) {
+      return false;
+    }
+    if (isAgentModeActive && isChatModeOnlyTool(tool.name)) {
       return false;
     }
     const perm = perms[tool.name];
@@ -692,6 +734,8 @@ export function buildSystemPrompt(options: {
   synapseLocalizationBlock?: string;
   isNormalChatMode?: boolean;
   agentMode?: boolean;
+  customSystemPrompt?: string;
+  customChatModePrompt?: string;
 }): string {
   const learningActive = Boolean(options.learningEnabled ?? options.betaAgentLearning ?? false);
   const isNormalChat = options.isNormalChatMode === true || options.agentMode === false;
@@ -706,9 +750,10 @@ export function buildSystemPrompt(options: {
 
   let prompt = personaPrompts[options.persona || 'standard'] || personaPrompts.standard;
   if (isNormalChat) {
-    prompt += `\n\n# NORMAL CHAT MODE (NO DIRECT PROJECT FILESYSTEM ACCESS)\n` +
+    prompt += `\n\n# NORMAL CHAT MODE (NO DIRECT PROJECT FILESYSTEM OR SILENT SUB-AGENT SPAWNING)\n` +
       `- You are currently in **NORMAL CHAT MODE** (not Agent Mode).\n` +
       `- You do NOT have direct access to project filesystem tools (\`read_file\`, \`write_file\`, \`edit_file\`, \`delete_file\`, \`sub_agent\`, etc.).\n` +
+      `- **SUB-AGENT CREATION MENU RULE**: In Normal Chat Mode, you CANNOT directly spawn or execute a Sub-Agent silently. If the user asks to create, configure, or start a Sub-Agent, you MUST call \`ask_user_question\` with \`is_sub_agent: true\` (specifying \`sub_agent_name\`, \`sub_agent_role\`, and configuration \`questions\`) to open the interactive **Sub-Agent Configuration Floating Modal** so the Sub-Agent is properly defined and saved into the user's Saved Sub-Agents list.\n` +
       `- To provide code or files for the user to download, call \`zip_create\` to package one or more files into a downloadable \`.zip\` bundle card in the chat, and use \`zip_read\` to inspect any ZIP archive stored in this chat.\n` +
       `- To design a structured multi-step implementation plan that the user can launch in Agent Mode with one click ("Proceed in Agent Mode") or refine in a floating editor, call \`draft_agent_plan\`.\n` +
       `- You can also read snippets from other chat sessions via \`read_other_chat_messages\` and manage the standalone Synapse Memory Graph via \`memory_search\`, \`memory_update\`, \`memory_delete\`, and \`memory_graph_query\`.`;
@@ -716,6 +761,11 @@ export function buildSystemPrompt(options: {
   prompt += `\n\n
 # ROLE & IDENTITY: Dev0
 You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an isolated user sandbox in the Dev0 IDE. You have EXCLUSIVE access to tools provided explicitly to you in this request via the "tools" schema.
+
+# MANDATORY EXTENDED THINKING PROTOCOL (<think>...</think>)
+- Before answering or invoking tools on any non-trivial request, you MUST perform structured extended thinking inside a single \`<think>...</think>\` block at the very start of your response (or via the \`think\` tool).
+- Inside \`<think>...</think>\`, systematically analyze: (1) user intent & active YAML skills / \`AGENTS.md\` rules, (2) affected files or memory nodes, and (3) exact tool sequence.
+- Never output multiple separate \`<think>\` blocks in a single turn; stream all reasoning cleanly inside ONE unified thinking block.
 
 # STRICT RULE: GENUINE TOOL CALLS ONLY, NO TEXT SIMULATIONS
 - A tool MUST ALWAYS be called via the native Function Calling mechanism, NEVER via
@@ -725,6 +775,22 @@ You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an i
   Never describe an action as completed if you did not execute it via a real tool call.
 - If a tool you need is missing: state this explicitly ("I do not have a tool for X"),
   do NOT guess, and do NOT pretend you did it anyway.
+
+# YAML SKILL & AGENTS.md LEARNING ARCHITECTURE
+- Dev0 learns via **YAML-Frontmatter Skills & \`AGENTS.md\` Rule Files** (stored in \`AGENTS.md\`, \`.agents/skills/<slug>.md\`, or uploaded via \`.zip\` / file import) and the **Synapse Memory Graph** (\`memory_search\`, \`memory_update\`, \`memory_delete\`, \`memory_graph_query\`).
+- Every valid \`AGENTS.md\` or Skill file MUST begin with a valid YAML frontmatter block:
+\`\`\`markdown
+---
+name: "Skill or AGENTS.md Title"
+description: "When and why this rule or skill applies"
+trigger: always_on
+alwaysApply: true
+keywords: ["optional", "trigger", "words"]
+---
+# Instructions
+...
+\`\`\`
+- Whenever you create a new skill or rule file in Agent Mode, use \`create_yaml_skill\` so the YAML frontmatter is automatically validated.
 
 # SUB-AGENT WORKSPACES (.agents/<slug>/), CRON JOBS, SLEEP MODE & MANDATORY finish_task
 - Every Sub-Agent (e.g., \`teamworker\`, \`auditor\`, \`developer\`, \`localizer\`, \`critic\`) has its own hidden workspace folder under \`.agents/<slug>/\` containing English documentation: \`README.md\`, \`RULES.md\`, \`STATUS.md\`, and \`LOG.md\`.
@@ -785,54 +851,11 @@ You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an i
   prompt += '- If edit_file fails (text not found), read the file again with read_file.\n';
   prompt += '- DO NOT invent tools that do not exist. You only have the defined tools.\n';
   prompt += '- ACT IMMEDIATELY. DO NOT ask in plain text if you should do something. Use tools DIRECTLY.\n';
-  prompt += '- QUESTION & SUB-AGENT FLOATING WINDOW RULE: If you genuinely need to ask clarifying questions, OR if the user asks to start/configure a sub-agent without specifying role and task, you MUST call the `ask_user_question` tool (with `is_sub_agent: true` for sub-agent questions) instead of writing plain-text questions.\n';
-  prompt += '- For complex tasks: Use "think" tool to reason, then act immediately.\n';
+  prompt += '- QUESTION & SUB-AGENT FLOATING WINDOW RULE: If you genuinely need to ask clarifying questions, OR if the user asks to start/configure a sub-agent without specifying role and task (or in Normal Chat Mode), you MUST call the `ask_user_question` tool (with `is_sub_agent: true` for sub-agent questions) instead of writing plain-text questions.\n';
+  prompt += '- Always begin complex reasoning inside a single `<think>...</think>` block or `think` tool call.\n';
   prompt += '- Format responses with Markdown: **bold**, `code`, lists etc.\n';
-  prompt += '- If you need to change multiple files, use "think" first to create a plan, then execute EVERYTHING immediately.\n';
   prompt += '- Be efficient: Explain briefly what you are doing, but act above all.\n';
-  prompt += '- For complex tasks: ALWAYS use the "think" tool FIRST to analyze the approach.\n';
-  prompt += '- Mention in your thought process which tools you will use (e.g., "I need to work with read_file").\n';
   prompt += '- ALWAYS write complete sentences. No incomplete sentences!\n';
-
-  if (learningActive) {
-    prompt += '\n## Learning Capability (Active)\n';
-    prompt += 'You have access to 5 persistent identity files. These files survive sessions and define who you are and what you know about the user.\n';
-    prompt += 'You MUST actively update these files when you gain new insights.\n\n';
-    prompt += '### Identity Files\n';
-    prompt += '- **SOUL.md** — Your personality, values, and behavioral philosophy. Update with `update_soul_md`.\n';
-    prompt += '- **AGENTS.md** — Your behavioral rules, reasoning protocol, and tool usage. Update with `update_agents_md`.\n';
-    prompt += '- **IDENTITY.md** — Your name, role, and outward presentation. Update with `update_identity_md`.\n';
-    prompt += '- **USER.md** — User profile: preferences, style, context, projects. Update with `update_user_md`.\n';
-    prompt += '- **MEMORY.md** — Long-term memory: decisions, errors, learned patterns. Update with `update_memory_md`.\n\n';
-    prompt += '### Learning Rules\n';
-    prompt += '- Only use `read_identity_files` at the very beginning of a completely new user session if you need full context. Do not read them repeatedly for sub-tasks.\n';
-    prompt += '- Update USER.md when you discover new user preferences.\n';
-    prompt += '- Update MEMORY.md at the end of important tasks with a summary.\n';
-    prompt += '- Update AGENTS.md when you find new effective workflows.\n';
-    prompt += '- Update SOUL.md only if fundamental values/style should change.\n';
-    prompt += '- NEVER DELETE these files. You may only update them.\n';
-    prompt += '- Always write the FULL new content, not just changes.\n';
-
-    if (options.soulMd && options.soulMd.trim()) {
-      prompt += '\n## SOUL.md\n' + options.soulMd.slice(0, 500) + (options.soulMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
-    }
-
-    if (options.agentMd && options.agentMd.trim()) {
-      prompt += '\n## AGENTS.md\n' + options.agentMd.slice(0, 500) + (options.agentMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
-    }
-
-    if (options.identityMd && options.identityMd.trim()) {
-      prompt += '\n## IDENTITY.md\n' + options.identityMd.slice(0, 500) + (options.identityMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
-    }
-
-    if (options.userMd && options.userMd.trim()) {
-      prompt += '\n## USER.md\n' + options.userMd.slice(0, 500) + (options.userMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
-    }
-
-    if (options.memoryMd && options.memoryMd.trim()) {
-      prompt += '\n## MEMORY.md\n' + options.memoryMd.slice(0, 500) + (options.memoryMd.length > 500 ? '... (use read_identity_files to read more)' : '') + '\n';
-    }
-  }
 
   if (options.toolPermissions) {
     const blocked = Object.entries(options.toolPermissions)
@@ -862,8 +885,8 @@ You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an i
   prompt += '\n## Project Structure\n```\n' + (options.projectTree || '(Empty Project)') + '\n```\n';
 
   if (learningActive && options.memos && options.memos.length > 0) {
-    prompt += '\n## Project Memos\n';
-    options.memos.forEach(m => { prompt += '- ' + m.content + '\n'; });
+    prompt += '\n## Synapse Memory Graph Nodes\n';
+    options.memos.slice(0, 15).forEach(m => { prompt += '- ' + m.content + '\n'; });
   }
 
   if (options.todos && options.todos.length > 0) {
@@ -886,6 +909,12 @@ You are **Dev0**, a Coding & Multi-Agent Orchestration Agent running inside an i
 
   if (options.activeSkillsBlock && options.activeSkillsBlock.trim()) {
     prompt += '\n' + options.activeSkillsBlock.trim() + '\n';
+  }
+
+  if (isNormalChat && options.customChatModePrompt && options.customChatModePrompt.trim()) {
+    prompt += '\n## OWNER CUSTOM CHAT MODE DIRECTIVES\n' + options.customChatModePrompt.trim() + '\n';
+  } else if (!isNormalChat && options.customSystemPrompt && options.customSystemPrompt.trim()) {
+    prompt += '\n## OWNER CUSTOM AGENT SYSTEM DIRECTIVES\n' + options.customSystemPrompt.trim() + '\n';
   }
 
   return prompt;
@@ -1904,7 +1933,15 @@ export async function callAI(
   fallbackSettings?: Record<string, string>,
 ): Promise<{ content: string; toolCalls: { id: string; name: string; arguments: Record<string, any>; thoughtSignature?: string; extra_content?: Record<string, any> }[]; usedFallback?: boolean; fallbackProvider?: string; tokenUsage?: TokenUsageRecord }> {
   if (!apiKey && provider !== 'rork' && provider !== 'custom') {
-    throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "AI for Free" or "Studio KI" as provider for free usage!');
+    throw new Error('API key missing. Please configure in settings.\n\nTip: Choose "AI for Free" or "Studio AI" as provider for free usage!');
+  }
+
+  const latestUserMsg = [...(messages || [])].reverse().find(m => m.role === 'user');
+  if (latestUserMsg && latestUserMsg.content) {
+    const jailbreakCheck = inspectPromptForKeyJailbreak(latestUserMsg.content);
+    if (!jailbreakCheck.safe) {
+      throw new Error(jailbreakCheck.reason || 'Security Guard: Prompt blocked to protect shared API keys.');
+    }
   }
 
   const safeModel = resolveDefaultModel(provider, model);

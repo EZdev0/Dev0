@@ -29,7 +29,7 @@ import {
   Terminal,
 } from 'lucide-react-native';
 import { IDE } from '@/constants/colors';
-import { AI_PROVIDERS, AIProviderType } from '@/types';
+import { AI_PROVIDERS, AIProviderType, AppSettings } from '@/types';
 import {
   FreePoolState,
   SharedPoolKey,
@@ -39,12 +39,15 @@ import {
   maskEmailAddress,
   canManageUsers,
   canViewUserChats,
+  detectAuthOrKeyPlaceholder,
 } from '@/utils/free-ai-pool';
 
 interface FreeAIPoolModalProps {
   visible: boolean;
   onClose: () => void;
   poolState: FreePoolState;
+  settings?: AppSettings;
+  onUpdateSettings?: (partial: Partial<AppSettings>) => void;
   onTogglePoolEnabled: (enabled: boolean) => void;
   onShareKeyToPool: (params: {
     provider: AIProviderType;
@@ -53,15 +56,32 @@ interface FreeAIPoolModalProps {
     tokenLimit: number;
     durationMinutes: number | null;
     targetUserId: string;
+    notifyAtPercent?: number;
+    emergencyCutoffEnabled?: boolean;
+    emergencyCutoffPercent?: number;
   }) => void;
   onRemovePoolKey: (keyId: string) => void;
   onTogglePoolKeyActive: (keyId: string) => void;
+  onUpdatePoolKeyThresholds?: (
+    keyId: string,
+    updates: {
+      notifyAtPercent?: number;
+      emergencyCutoffEnabled?: boolean;
+      emergencyCutoffPercent?: number;
+      tokenLimit?: number;
+      isActive?: boolean;
+    },
+  ) => void;
   onSwitchUserIdentity: (
     email: string,
     displayName: string,
     authProvider?: 'google' | 'local',
     ownerPassphrase?: string,
   ) => void;
+  onSignInWithFirebaseGoogle?: (
+    ownerPassphrase?: string,
+  ) => Promise<{ success: boolean; message: string }>;
+  onSignOutFirebaseGoogle?: () => Promise<void>;
   onClaimOwnerRole?: (passphrase: string) => boolean;
   onSetUserRole?: (userId: string, role: GovernanceRole) => void;
   onTimeoutUser: (userId: string, minutes: number | null) => void;
@@ -74,11 +94,16 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
   visible,
   onClose,
   poolState,
+  settings,
+  onUpdateSettings,
   onTogglePoolEnabled,
   onShareKeyToPool,
   onRemovePoolKey,
   onTogglePoolKeyActive,
+  onUpdatePoolKeyThresholds,
   onSwitchUserIdentity,
+  onSignInWithFirebaseGoogle,
+  onSignOutFirebaseGoogle,
   onClaimOwnerRole,
   onSetUserRole,
   onTimeoutUser,
@@ -93,9 +118,12 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
   const [shareProvider, setShareProvider] = useState<AIProviderType>('groq');
   const [shareModel, setShareModel] = useState<string>('llama-3.3-70b-versatile');
   const [shareRawKey, setShareRawKey] = useState<string>('');
-  const [shareTokenLimit, setShareTokenLimit] = useState<string>('50000');
+  const [shareTokenLimit, setShareTokenLimit] = useState<string>('100000');
   const [shareDurationMins, setShareDurationMins] = useState<number | null>(120);
   const [shareTargetUserId, setShareTargetUserId] = useState<string>('*');
+  const [shareNotifyPercent, setShareNotifyPercent] = useState<number>(40);
+  const [shareEmergencyCutoffEnabled, setShareEmergencyCutoffEnabled] = useState<boolean>(true);
+  const [shareEmergencyCutoffPercent, setShareEmergencyCutoffPercent] = useState<number>(50);
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
 
   // Google Sign-In & Owner Claim State
@@ -104,6 +132,16 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
   const [ownerClaimCode, setOwnerClaimCode] = useState<string>('');
   const [authFeedback, setAuthFeedback] = useState<string | null>(null);
   const [inspectingUserChat, setInspectingUserChat] = useState<GovernanceUser | null>(null);
+  const [customQuotaDrafts, setCustomQuotaDrafts] = useState<Record<string, string>>({});
+  const [systemPromptDraft, setSystemPromptDraft] = useState<string>(
+    settings?.customSystemPrompt || '',
+  );
+  const [plannerPromptDraft, setPlannerPromptDraft] = useState<string>(
+    settings?.customPlannerPrompt || '',
+  );
+  const [chatPromptDraft, setChatPromptDraft] = useState<string>(
+    settings?.customChatModePrompt || '',
+  );
 
   const currentUser = useMemo(
     () =>
@@ -137,6 +175,11 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
       setFormFeedback('Please enter an API key to share with the pool.');
       return;
     }
+    const keyPlaceholderCheck = detectAuthOrKeyPlaceholder({ apiKey: shareRawKey.trim() });
+    if (keyPlaceholderCheck.isPlaceholder) {
+      setFormFeedback(keyPlaceholderCheck.reasons.join(' '));
+      return;
+    }
     const parsedLimit = Math.max(0, parseInt(shareTokenLimit, 10) || 0);
     onShareKeyToPool({
       provider: shareProvider,
@@ -145,15 +188,43 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
       tokenLimit: parsedLimit,
       durationMinutes: shareDurationMins,
       targetUserId: shareTargetUserId.trim() || '*',
+      notifyAtPercent: shareNotifyPercent,
+      emergencyCutoffEnabled: shareEmergencyCutoffEnabled,
+      emergencyCutoffPercent: shareEmergencyCutoffPercent,
     });
     setShareRawKey('');
     setShowAddKeyForm(false);
-    setFormFeedback('Key encrypted, masked, and added to the AI for Free pool.');
+    setFormFeedback(
+      `Key encrypted in Server Vault (/api/pool). Notify at ${shareNotifyPercent}%, Emergency Auto-Cutoff (Not-Aus) at ${shareEmergencyCutoffEnabled ? shareEmergencyCutoffPercent + '%' : 'OFF'}.`,
+    );
     setTimeout(() => setFormFeedback(null), 4000);
   };
 
+  const handleFirebaseGooglePopupSignIn = async () => {
+    if (onSignInWithFirebaseGoogle) {
+      setAuthFeedback('Opening real Firebase Google Sign-In...');
+      const res = await onSignInWithFirebaseGoogle(ownerClaimCode.trim() || undefined);
+      setAuthFeedback(res.message);
+      if (res.success) {
+        setOwnerClaimCode('');
+      }
+      setTimeout(() => setAuthFeedback(null), 5000);
+      return;
+    }
+    handleGoogleSignIn();
+  };
+
   const handleGoogleSignIn = () => {
-    const emailToUse = loginEmail.trim() || 'google.user@gmail.com';
+    const emailToUse = loginEmail.trim();
+    if (!emailToUse) {
+      setAuthFeedback('Use "Sign in with Google (Firebase)" or enter your real verified Google email (placeholders are blocked).');
+      return;
+    }
+    const placeholderCheck = detectAuthOrKeyPlaceholder({ email: emailToUse });
+    if (placeholderCheck.isPlaceholder) {
+      setAuthFeedback(`Placeholder blocked: ${placeholderCheck.reasons.join(' ')}`);
+      return;
+    }
     const nameToUse = loginName.trim() || emailToUse.split('@')[0];
     onSwitchUserIdentity(emailToUse, nameToUse, 'google', ownerClaimCode.trim() || undefined);
     setLoginEmail('');
@@ -441,13 +512,80 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                       placeholderTextColor={IDE.muted}
                     />
 
+                    <Text style={styles.inputLabel}>
+                      7. Notify Owner At (%) — Early Warning Before Cutoff
+                    </Text>
+                    <View style={styles.presetRow}>
+                      {[25, 40, 50, 75, 80].map(pctVal => (
+                        <TouchableOpacity
+                          key={pctVal}
+                          style={[
+                            styles.chipBtn,
+                            shareNotifyPercent === pctVal && styles.chipBtnActive,
+                          ]}
+                          onPress={() => setShareNotifyPercent(pctVal)}
+                        >
+                          <Text
+                            style={[
+                              styles.chipBtnText,
+                              shareNotifyPercent === pctVal && styles.chipBtnTextActive,
+                            ]}
+                          >
+                            Notify at {pctVal}%
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginTop: 6,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <Text style={[styles.inputLabel, { marginBottom: 0 }]}>
+                        8. Emergency Auto-Cutoff / Not-Aus (%) — Pauses Key Without Deleting
+                      </Text>
+                      <Switch
+                        value={shareEmergencyCutoffEnabled}
+                        onValueChange={setShareEmergencyCutoffEnabled}
+                        trackColor={{ false: IDE.border, true: IDE.danger }}
+                      />
+                    </View>
+                    {shareEmergencyCutoffEnabled && (
+                      <View style={styles.presetRow}>
+                        {[30, 50, 75, 90, 100].map(cutVal => (
+                          <TouchableOpacity
+                            key={cutVal}
+                            style={[
+                              styles.chipBtn,
+                              shareEmergencyCutoffPercent === cutVal && styles.chipBtnActive,
+                            ]}
+                            onPress={() => setShareEmergencyCutoffPercent(cutVal)}
+                          >
+                            <Text
+                              style={[
+                                styles.chipBtnText,
+                                shareEmergencyCutoffPercent === cutVal && styles.chipBtnTextActive,
+                              ]}
+                            >
+                              {cutVal === 50 ? '50% Not-Aus (Default)' : `Cutoff at ${cutVal}%`}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+
                     <TouchableOpacity
                       style={styles.submitShareBtn}
                       onPress={handleCreateSharedKey}
                     >
                       <Shield size={16} color="#fff" />
                       <Text style={styles.submitShareBtnText}>
-                        Add Masked Key to Free Pool
+                        Add Masked Key to Server Vault & Pool
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -460,6 +598,9 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                     k.tokenLimit > 0
                       ? Math.min(100, Math.round((k.tokensUsed / k.tokenLimit) * 100))
                       : 0;
+                  const notifyPct = k.notifyAtPercent ?? 40;
+                  const cutoffEnabled = k.emergencyCutoffEnabled !== false;
+                  const cutoffPct = k.emergencyCutoffPercent ?? 50;
                   const statusColor =
                     status === 'active'
                       ? IDE.accent
@@ -478,27 +619,39 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                         </View>
                         <View style={styles.keyStatusGroup}>
                           <Text style={[styles.keyStatusLabel, { color: statusColor }]}>
-                            {status.toUpperCase()}
+                            {status === 'emergency_stop' ? 'NOT-AUS (50% CUTOFF)' : status.toUpperCase()}
                           </Text>
                           {(isAdminOrOwner || k.ownerUserId === poolState.currentUserId) && (
                             <TouchableOpacity
                               style={styles.smallIconBtn}
-                              onPress={() => onTogglePoolKeyActive(k.id)}
+                              onPress={() => {
+                                if (status === 'emergency_stop' && onUpdatePoolKeyThresholds) {
+                                  onUpdatePoolKeyThresholds(k.id, {
+                                    emergencyCutoffEnabled: false,
+                                    isActive: true,
+                                  });
+                                } else {
+                                  onTogglePoolKeyActive(k.id);
+                                }
+                              }}
                             >
                               <Text style={{ fontSize: 11, color: IDE.primary, fontWeight: '600' }}>
-                                {k.isActive ? 'Pause' : 'Resume'}
+                                {status === 'emergency_stop'
+                                  ? 'Unlock Not-Aus'
+                                  : k.isActive
+                                    ? 'Pause'
+                                    : 'Resume'}
                               </Text>
                             </TouchableOpacity>
                           )}
-                          {k.id !== 'pool_builtin_studio_free' &&
-                            (isAdminOrOwner || k.ownerUserId === poolState.currentUserId) && (
-                              <TouchableOpacity
-                                style={styles.smallIconBtn}
-                                onPress={() => onRemovePoolKey(k.id)}
-                              >
-                                <Trash2 size={14} color={IDE.danger} />
-                              </TouchableOpacity>
-                            )}
+                          {(isAdminOrOwner || k.ownerUserId === poolState.currentUserId) && (
+                            <TouchableOpacity
+                              style={styles.smallIconBtn}
+                              onPress={() => onRemovePoolKey(k.id)}
+                            >
+                              <Trash2 size={14} color={IDE.danger} />
+                            </TouchableOpacity>
+                          )}
                         </View>
                       </View>
 
@@ -509,7 +662,36 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                         <Text style={styles.keyMetaText}>·</Text>
                         <Clock size={12} color={IDE.muted} />
                         <Text style={styles.keyMetaText}>{formatRemainingTime(k.expiresAt)}</Text>
+                        <Text style={styles.keyMetaText}>·</Text>
+                        <Text style={[styles.keyMetaText, { color: IDE.warning }]}>
+                          Notify: {notifyPct}%
+                        </Text>
+                        <Text style={styles.keyMetaText}>·</Text>
+                        <Text style={[styles.keyMetaText, { color: cutoffEnabled ? IDE.danger : IDE.muted }]}>
+                          Not-Aus: {cutoffEnabled ? `${cutoffPct}%` : 'OFF'}
+                        </Text>
                       </View>
+
+                      {status === 'emergency_stop' && (
+                        <View
+                          style={{
+                            marginTop: 6,
+                            padding: 8,
+                            borderRadius: 6,
+                            backgroundColor: IDE.danger + '18',
+                            borderWidth: 1,
+                            borderColor: IDE.danger + '50',
+                          }}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: IDE.danger }}>
+                            Emergency Auto-Cutoff (Not-Aus) Active — Key Paused & Protected (Not Deleted)
+                          </Text>
+                          <Text style={{ fontSize: 10, color: IDE.text, marginTop: 2 }}>
+                            {k.emergencyStopReason ||
+                              `Reached ${pct}% of token budget (cutoff set to ${cutoffPct}%). Click "Unlock Not-Aus" to resume or adjust threshold.`}
+                          </Text>
+                        </View>
+                      )}
 
                       {/* Token Quota Bar */}
                       <View style={styles.quotaRow}>
@@ -653,11 +835,10 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                 {/* Google Sign-In & Owner Passphrase Claim */}
                 <View style={styles.shareFormCard}>
                   <Text style={styles.sectionHeading}>
-                    Google Sign-In & Role Verification (Zero Email Leak)
+                    Real Firebase Google Sign-In & Role Verification (Zero Placeholders)
                   </Text>
                   <Text style={styles.recommendDesc}>
-                    Sign in with Google to participate in the "AI for Free" program and isolate your sandboxed projects.
-                    Admins can moderate users but CANNOT view private chats; only the verified Owner can audit chats.
+                    Sign in with real Firebase Google Authentication (`phoenixos-v11`) to persist your sandboxed projects and manage the AI for Free key vault. All dummy placeholders (`google.user@gmail.com`) are strictly rejected.
                   </Text>
 
                   {authFeedback && (
@@ -667,12 +848,33 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                     </View>
                   )}
 
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                    <TouchableOpacity
+                      style={[styles.offerKeyBtn, { backgroundColor: IDE.primary, paddingVertical: 10 }]}
+                      onPress={handleFirebaseGooglePopupSignIn}
+                    >
+                      <Globe size={15} color="#fff" />
+                      <Text style={styles.offerKeyBtnText}>
+                        Sign in with Google (Firebase Auth)
+                      </Text>
+                    </TouchableOpacity>
+
+                    {poolState.isAuthenticated && onSignOutFirebaseGoogle && (
+                      <TouchableOpacity
+                        style={[styles.offerKeyBtn, { backgroundColor: IDE.surface, borderWidth: 1, borderColor: IDE.border }]}
+                        onPress={() => onSignOutFirebaseGoogle()}
+                      >
+                        <Text style={[styles.offerKeyBtnText, { color: IDE.text }]}>Sign Out</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
                   <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                     <TextInput
                       style={[styles.textInput, { flex: 1, marginBottom: 0 }]}
                       value={loginEmail}
                       onChangeText={setLoginEmail}
-                      placeholder="Google Account Email (masked in UI)"
+                      placeholder="Verified Google Email (no placeholders)"
                       placeholderTextColor={IDE.muted}
                       autoCapitalize="none"
                     />
@@ -690,29 +892,121 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                       style={[styles.textInput, { flex: 1, marginBottom: 0 }]}
                       value={ownerClaimCode}
                       onChangeText={setOwnerClaimCode}
-                      placeholder="Optional Owner Claim Code (e.g. DEV0-OWNER-2026)"
+                      placeholder="Owner Claim Passphrase (e.g. DEV0-OWNER-2026)"
                       placeholderTextColor={IDE.muted}
                       secureTextEntry
                       autoCapitalize="characters"
                     />
-                    <TouchableOpacity
-                      style={[styles.offerKeyBtn, { backgroundColor: IDE.primary }]}
-                      onPress={handleGoogleSignIn}
-                    >
-                      <UserCheck size={14} color="#fff" />
-                      <Text style={styles.offerKeyBtnText}>Sign in with Google</Text>
-                    </TouchableOpacity>
-                    {ownerClaimCode.trim().length > 0 && (
+                    {loginEmail.trim().length > 0 && (
                       <TouchableOpacity
-                        style={[styles.offerKeyBtn, { backgroundColor: IDE.accent }]}
-                        onPress={handleClaimOwner}
+                        style={[styles.offerKeyBtn, { backgroundColor: IDE.primary }]}
+                        onPress={handleGoogleSignIn}
                       >
-                        <Shield size={14} color="#000" />
-                        <Text style={[styles.offerKeyBtnText, { color: '#000' }]}>Claim Owner</Text>
+                        <UserCheck size={14} color="#fff" />
+                        <Text style={styles.offerKeyBtnText}>Verify Email</Text>
                       </TouchableOpacity>
                     )}
+                    <TouchableOpacity
+                      style={[styles.offerKeyBtn, { backgroundColor: IDE.accent }]}
+                      onPress={handleClaimOwner}
+                    >
+                      <Shield size={14} color="#000" />
+                      <Text style={[styles.offerKeyBtnText, { color: '#000' }]}>Claim Owner</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
+
+                {/* Owner / Admin Live System Prompts & Agent Rules Controller */}
+                {isAdminOrOwner && onUpdateSettings && (
+                  <View style={styles.shareFormCard}>
+                    <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.sectionHeading}>
+                        Owner / Admin Live System Prompts & Agent Directives (100% English)
+                      </Text>
+                    </View>
+                    <Text style={styles.recommendDesc}>
+                      Directly control the English system prompts injected into Dev0 Main Agent, Planner, and Normal Chat Mode in real time.
+                    </Text>
+
+                    <Text style={[styles.inputLabel, { marginTop: 10 }]}>
+                      1. Custom Main Agent System Prompt Override / Directives
+                    </Text>
+                    <TextInput
+                      style={[styles.textInput, { minHeight: 72, textAlignVertical: 'top' }]}
+                      value={systemPromptDraft}
+                      onChangeText={setSystemPromptDraft}
+                      multiline
+                      placeholder="Optional custom English instructions injected at the top of Dev0's system prompt..."
+                      placeholderTextColor={IDE.muted}
+                    />
+
+                    <Text style={styles.inputLabel}>
+                      2. Custom Planner Prompt Directives (Agent Mode Planning)
+                    </Text>
+                    <TextInput
+                      style={[styles.textInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                      value={plannerPromptDraft}
+                      onChangeText={setPlannerPromptDraft}
+                      multiline
+                      placeholder="Optional custom English instructions for the Agent Planner..."
+                      placeholderTextColor={IDE.muted}
+                    />
+
+                    <Text style={styles.inputLabel}>
+                      3. Custom Normal Chat Mode Rules
+                    </Text>
+                    <TextInput
+                      style={[styles.textInput, { minHeight: 60, textAlignVertical: 'top' }]}
+                      value={chatPromptDraft}
+                      onChangeText={setChatPromptDraft}
+                      multiline
+                      placeholder="Optional custom English instructions for Normal Chat Mode..."
+                      placeholderTextColor={IDE.muted}
+                    />
+
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                      <TouchableOpacity
+                        style={[styles.offerKeyBtn, { backgroundColor: IDE.accent }]}
+                        onPress={() => {
+                          onUpdateSettings({
+                            customSystemPrompt: systemPromptDraft,
+                            customPlannerPrompt: plannerPromptDraft,
+                            customChatModePrompt: chatPromptDraft,
+                          });
+                          setAuthFeedback('Live System Prompts saved and applied to Dev0.');
+                          setTimeout(() => setAuthFeedback(null), 4000);
+                        }}
+                      >
+                        <CheckCircle size={14} color="#000" />
+                        <Text style={[styles.offerKeyBtnText, { color: '#000' }]}>
+                          Save & Apply System Prompts
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.offerKeyBtn,
+                          { backgroundColor: IDE.surface, borderWidth: 1, borderColor: IDE.border },
+                        ]}
+                        onPress={() => {
+                          setSystemPromptDraft('');
+                          setPlannerPromptDraft('');
+                          setChatPromptDraft('');
+                          onUpdateSettings({
+                            customSystemPrompt: '',
+                            customPlannerPrompt: '',
+                            customChatModePrompt: '',
+                          });
+                          setAuthFeedback('Reset custom prompt overrides to default English rules.');
+                          setTimeout(() => setAuthFeedback(null), 4000);
+                        }}
+                      >
+                        <Text style={[styles.offerKeyBtnText, { color: IDE.muted }]}>
+                          Reset to Default
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
 
                 {/* Role-Scoped Governance View */}
                 {!isAdminOrOwner ? (
@@ -727,7 +1021,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                       Tokens Consumed: {currentUser?.tokensConsumed.toLocaleString()} · Quota:{' '}
                       {currentUser?.tokenQuota && currentUser.tokenQuota > 0
                         ? currentUser.tokenQuota.toLocaleString()
-                        : 'Unlimited'}
+                        : 'Unlimited (No Cap)'}
                     </Text>
                     <Text style={[styles.recommendDesc, { marginTop: 6 }]}>
                       Privacy Guarantee: Regular users and Admins cannot view your private chat history.
@@ -737,7 +1031,7 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                   <>
                     <Text style={[styles.sectionHeading, { marginTop: 12, marginBottom: 8 }]}>
                       {isOwner
-                        ? `Owner Governance & Full Chat Audit (${poolState.users.length} Users)`
+                        ? `Owner Governance, Custom Quotas & Full Chat Audit (${poolState.users.length} Users)`
                         : `Admin User Directory (${poolState.users.length} Users — Private Chats Hidden)`}
                     </Text>
 
@@ -747,6 +1041,10 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                         poolState.currentUserId,
                         u.id,
                       );
+                      const draftQuota =
+                        customQuotaDrafts[u.id] !== undefined
+                          ? customQuotaDrafts[u.id]
+                          : String(u.tokenQuota || 0);
                       return (
                         <View key={u.id} style={styles.keyCard}>
                           <View style={styles.keyCardTop}>
@@ -776,8 +1074,46 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
 
                           <Text style={styles.keyMetaText}>
                             Tokens Consumed: {u.tokensConsumed.toLocaleString()} · Quota:{' '}
-                            {u.tokenQuota > 0 ? u.tokenQuota.toLocaleString() : 'Unlimited'}
+                            {u.tokenQuota > 0 ? u.tokenQuota.toLocaleString() : 'Unlimited (0 = No Cap)'}
                           </Text>
+
+                          {/* Custom Token Quota Setter (No Hardcoded 50k Cap) */}
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                            <Text style={{ fontSize: 11, color: IDE.muted }}>Custom Token Quota (0=Unlimited):</Text>
+                            <TextInput
+                              style={[
+                                styles.textInput,
+                                { width: 110, marginBottom: 0, paddingVertical: 4, paddingHorizontal: 8, fontSize: 11 },
+                              ]}
+                              value={draftQuota}
+                              onChangeText={val =>
+                                setCustomQuotaDrafts(prev => ({ ...prev, [u.id]: val }))
+                              }
+                              keyboardType="numeric"
+                              placeholder="0 (Unlimited)"
+                              placeholderTextColor={IDE.muted}
+                            />
+                            <TouchableOpacity
+                              style={styles.adminBtn}
+                              onPress={() => {
+                                const parsed = Math.max(0, parseInt(draftQuota, 10) || 0);
+                                onUpdateUserTokenQuota(u.id, parsed);
+                              }}
+                            >
+                              <Text style={[styles.adminBtnText, { color: IDE.accent }]}>Set Quota</Text>
+                            </TouchableOpacity>
+                            {u.tokenQuota > 0 && (
+                              <TouchableOpacity
+                                style={styles.adminBtn}
+                                onPress={() => {
+                                  setCustomQuotaDrafts(prev => ({ ...prev, [u.id]: '0' }));
+                                  onUpdateUserTokenQuota(u.id, 0);
+                                }}
+                              >
+                                <Text style={styles.adminBtnText}>Unlimited</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
 
                           {u.role !== 'owner' && (
                             <View style={styles.adminActionRow}>
@@ -803,20 +1139,6 @@ export const FreeAIPoolModal: React.FC<FreeAIPoolModalProps> = ({
                                 <Ban size={12} color={IDE.danger} />
                                 <Text style={[styles.adminBtnText, { color: IDE.danger }]}>
                                   {u.status === 'suspended' ? 'Unsuspend' : 'Suspend'}
-                                </Text>
-                              </TouchableOpacity>
-
-                              <TouchableOpacity
-                                style={styles.adminBtn}
-                                onPress={() =>
-                                  onUpdateUserTokenQuota(
-                                    u.id,
-                                    u.tokenQuota === 50000 ? 0 : 50000,
-                                  )
-                                }
-                              >
-                                <Text style={styles.adminBtnText}>
-                                  {u.tokenQuota === 50000 ? 'Remove Cap' : 'Cap 50k'}
                                 </Text>
                               </TouchableOpacity>
 

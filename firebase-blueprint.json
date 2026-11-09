@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "GovernanceUser": {
+      "title": "GovernanceUser",
+      "description": "Public/governance profile for a Dev0 user with masked email and token quotas.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Firebase Auth UID or local user ID" },
+        "maskedEmail": { "type": "string", "description": "Masked email address (zero PII leak)" },
+        "displayName": { "type": "string", "description": "Display name" },
+        "authProvider": { "type": "string", "enum": ["google", "local", "guest"] },
+        "role": { "type": "string", "enum": ["owner", "admin", "user"] },
+        "status": { "type": "string", "enum": ["active", "timeout", "suspended"] },
+        "tokenQuota": { "type": "number", "description": "Max token quota (0 = unlimited)" },
+        "tokensConsumed": { "type": "number", "description": "Total tokens consumed" },
+        "createdAt": { "type": "number" },
+        "lastActiveAt": { "type": "number" }
+      },
+      "required": ["id", "maskedEmail", "displayName", "authProvider", "role", "status", "tokenQuota", "tokensConsumed", "createdAt", "lastActiveAt"]
+    },
+    "SharedPoolKeyMeta": {
+      "title": "SharedPoolKeyMeta",
+      "description": "Masked metadata for a shared API key in AI for Free (raw secret never stored in client Firestore).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "maskedKey": { "type": "string" },
+        "ownerUserId": { "type": "string" },
+        "ownerLabel": { "type": "string" },
+        "targetUserId": { "type": "string" },
+        "tokenLimit": { "type": "number" },
+        "tokensUsed": { "type": "number" },
+        "notifyAtPercent": { "type": "number" },
+        "emergencyCutoffEnabled": { "type": "boolean" },
+        "emergencyCutoffPercent": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["active", "warning", "emergency_stop", "exhausted", "expired", "paused"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "provider", "model", "maskedKey", "ownerUserId", "targetUserId", "tokenLimit", "tokensUsed", "notifyAtPercent", "emergencyCutoffEnabled", "emergencyCutoffPercent", "isActive", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/GovernanceUser" },
+      "description": "Authenticated user governance profiles with masked email."
+    },
+    "/poolKeys/{keyId}": {
+      "schema": { "$ref": "#/entities/SharedPoolKeyMeta" },
+      "description": "Masked shared pool key metadata and emergency cutoff status."
+    }
+  }
+}

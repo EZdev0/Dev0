@@ -1,103 +1,131 @@
-# Implementation Plan: Dev0 v1.6 — Chat vs. Agent Tool Isolation, ZIP Bundles, Dual Git/Restore Points, Separate Memory & Project Graphs, 2026 Sub-Agent Lifecycle & 100% English UI
+# Dev0 v1.8 — Extra YAML Skill & AGENTS.md Learning Engine, Interactive Drag-and-Drop Synapse Graph, Animated Reasoning Orb + Single Streaming Box, Classic Projects View & Interactive English Tutorial
 
-## 1. Architectural Overview & Core Goals
-
-This plan upgrades **Dev0** to cleanly separate **Normal Chat Mode** from **Project Agent Mode**, eliminate hardcoded agent/skill presets, provide a dual-mode **Built-in Git & Restore Point System** (Docker real Git + Browser Snapshot fallback), split the **Synapse Graph** into separate **Memory Graph** (always available without a project) and **Project Code Graph** tabs, refine the **2026 Sub-Agent Architecture** with live read-only stream inspection, automatic Cron wakeup on `finish_task`, and a diagonal striped **AI Auto-Generate** lock state, fix initial **Thinking / Reasoning** streaming visibility, and ensure **100% English UI copy** across all screens and modals.
+This plan restructures **Dev0** into a cleanly separated, responsive desktop-and-Android IDE experience: removing legacy Beta Memory (`SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` and the old `Memos` tab), introducing the **Extra YAML Learning & Skill Engine** (with `.zip` skill pack import, corrupted-file `!` detection, 1-click **AI Fix**, and custom keyword/phrase triggers), restoring the classic **Projects** file-tree view with working project deletion, placing **Dashboard** in the first slot of **Tools** (`[Dashboard, Tools, Plans, Graph, Search, Chat]`), upgrading the **Synapse Graph** with drag-and-drop and left/right-click menus, replacing duplicate thinking boxes with a **Pulsing Reasoning Orb → Single Text-Streaming Extended Thinking Box**, and adding an **Interactive English Tutorial & Architecture Guide**.
 
 ---
 
-## 2. Normal Chat Mode vs. Agent Mode Tool Isolation & ZIP Artifacts
+## User Review & Confirmed Decisions
 
-### Problem Fixed
-Previously, when chatting in the standard **AI Chat** view without an active project or outside Agent Mode, the model still received project filesystem tools (`create_file`, `write_file`, `read_file`, `update_todo`), causing the AI to create project files in normal chat or hallucinate tools like `verify_file`.
+> [!IMPORTANT]
+> All three core UX and architectural decisions were confirmed in Phase 1 and take highest precedence:
 
-### Solution Architecture
-1. **Strict Mode-Aware Tool Filtering (`providers/ChatProvider.tsx`, `constants/tools.ts`)**:
-   - **Normal Chat Mode (`chatMode === 'chat'` or no active project)**:
-     - **Stripped**: All project filesystem and code-mutation tools (`read_file`, `write_file`, `create_file`, `edit_file`, `delete_file`, `list_files`, `search_files`, `localize_code_graph`, `execute_code`, `git_diff`).
-     - **Allowed in Normal Chat Mode**:
-       - **ZIP Bundle Tools (`zip_create`, `zip_read`)**: Allows the AI to package single or multiple generated files into an in-chat downloadable `.zip` archive (`ChatZipArtifact`) stored in the conversation state, and read/inspect entries from any ZIP artifact in the chat without requiring a full project. If a model attempts a raw `write_file` / `create_file` call in Normal Chat Mode, an intelligent interceptor automatically converts it into a `zip_create` artifact card so it never fails.
-       - **Memory Tools (`memory_add`, `memory_search`, `memory_update`, `memory_delete`, `memory_graph_query`)**: Full access to persistent AI memories and the Memory Graph even when no project is open.
-       - **Plan Drafting Tool (`draft_agent_plan`)**: Allows the AI to collaboratively design a structured execution plan in Normal Chat Mode and render it as an interactive **Plan Graphic Card** with **Proceed (Launch in Agent Mode)** and **Edit Plan** buttons.
-       - **Token-Efficient Cross-Chat Reader (`read_other_chat_messages`)**: Allows any AI instance to search or read summarized/paginated messages across other chat sessions using BM25 keyword filtering and strict character caps (`maxChars: 1800`) to prevent token bloat.
-       - **Web & Clarification Tools (`web_search`, `web_fetch`, `ask_user_question`)**.
-   - **Project Agent Mode (`chatMode === 'agent'` with an active project)**:
-     - Full access to project filesystem tools, `localize_code_graph`, Built-in Git & Restore Point tools, Sub-Agent orchestration (`spawn_sub_agent`, `finish_task`, `create_cron_job`, `sleep_agent`), plus Memory, ZIP, Cross-Chat, and Web tools.
-   - **YOLO Mode & Permission Enforcement Audit**:
-     - Audits `yoloMode` and per-tool permissions so disabled tools are excluded from both the system prompt schema and runtime tool dispatcher, while clarify-first rules ensure the Main Agent asks clarifying questions via `ask_user_question` before executing ambiguous multi-step plans.
-
-2. **Interactive ZIP Artifact Graphic Card (`utils/chat-zip.ts`, `components/ChatZipCard.tsx`)**:
-   - Generates real standards-compliant `.zip` binary archives in-memory (CRC32 + store/deflate headers, zero external native dependencies required) with a `data:application/zip;base64,...` or Blob download trigger.
-   - Displays a crisp card inside the chat message stream showing archive name, file count, total byte size (`tabular-nums`), expandable file list preview, and a 1-tap **Download ZIP** button.
+- **Confirmed Decision 1 — Animated Reasoning Orb → Single Text-Streaming Thinking Box**:
+  - While the AI initiates forced extended reasoning, display **only** a sleek animated **Reasoning Orb** (no duplicate boxes). As reasoning tokens/text stream in, render **only one** unified text-streaming Extended Thinking box (`<think>...</think>` forced in system prompt).
+- **Confirmed Decision 2 — Auto-Extract Skills from `.zip` & Flag Corrupted YAML with 1-Click AI Fix**:
+  - Users can upload `.md` / `.yml` / `AGENTS.md` files or `.zip` skill bundles directly on-site. All valid YAML skills are auto-extracted and registered; any file with missing or corrupted YAML frontmatter is listed with an **Exclamation Warning (`!`)** and a **"Fix with AI"** button that automatically repairs and formats the file into valid YAML frontmatter.
+- **Confirmed Decision 3 — Classic Projects View + Graphs & Interactive English Tutorial in Tools**:
+  - The **Projects** tab returns to the clean classic File Tree & Project Switcher (with an explicit **Delete Project** button and fixed per-user storage cleanup) plus a quick launcher to the **Git & Restore Points** modal.
+  - The **Tools** tab places **Dashboard** in **Slot 1** (`Dashboard` → `Tools` → `Plans` → `Graph` (replaces `Memos`) → `Search` → `Chat`), hosts the interactive **Synapse Memory & Code Graph**, and includes a comprehensive **English Interactive Tutorial** explaining every workflow.
 
 ---
 
-## 3. Interactive Chat Plan Graphic Card & Cross-Chat Message Reader
+## 1. Overview & Core Concept
 
-1. **Interactive Plan Card in Chat (`components/ChatPlanGraphicCard.tsx`, `app/(tabs)/chat/index.tsx`)**:
-   - Whenever the AI drafts a plan in Chat (`draft_agent_plan` or structured plan state), renders a visual architecture/step card directly inside the chat stream.
-   - Includes two primary actions:
-     - **Proceed in Agent Mode**: Switches to Agent Mode (creating or selecting a sandbox project if needed) and starts autonomous execution of the approved steps.
-     - **Edit / Refine Plan**: Opens a floating Plan Editor Modal where the user can directly edit steps/title or type a short instruction for the AI to revise the plan in-place.
-2. **Token-Safe Cross-Chat Message Reader (`utils/cross-chat-reader.ts`)**:
-   - Implements `read_other_chat_messages({ query?, conversationId?, limit?: 5 })` which indexes other user conversations locally, ranks matching messages via BM25/keyword relevance, strips tool noise, and returns concise snippets (`<= 1,800 chars`) with conversation title and timestamp.
-
----
-
-## 4. Built-in Dual Git & Restore Point System (Docker Real Git + Browser Snapshot Engine)
-
-1. **Unified Git & Restore Point Service (`utils/git-restore.ts`, `app/api/sandbox+api.ts`)**:
-   - **Docker Container Mode (`/api/sandbox`)**: Executes real `git init`, `git status -s`, `git add -A && git commit -m "..."`, `git log --oneline`, and `git reset --hard <commit>` inside the isolated per-user sandbox directory (`/workspace/sandboxes/<userId>/<projectId>`).
-   - **Browser IndexedDB Sandbox Fallback**: Automatically maintains lightweight content-addressed **Restore Points (Snapshots)** in IndexedDB (`dev0_git_snapshots_v1_<userId>_<projectId>`).
-   - **Automatic Pre-Mutation Restore Points**: Before destructive or multi-file AI edits (`delete_file`, batch `write_file`), automatically records an auto-snapshot (`Auto Restore Point before <action>`) so deleted or broken files can always be recovered in 1 click.
-2. **AI Git Tools & User Restore Point UI (`constants/tools.ts`, `components/GitRestoreModal.tsx`)**:
-   - Exposes `git_create_restore_point`, `git_list_restore_points`, `git_restore_point`, and `git_status` to the AI in Agent Mode so both the AI and the user can inspect history and roll back project state at any time.
-
----
-
-## 5. Separate Tabs for Memory Graph vs. Project Code Graph & Zero Hardcoded Presets
-
-1. **Zero Hardcoded Sub-Agents or YAML Skills (`utils/skill-loader.ts`)**:
-   - Empties `BUILT_IN_SUB_AGENT_TEMPLATES` and `BUILT_IN_YAML_SKILLS` so no hardcoded agents (`RepoGraph Localizer`, `UI/UX Component Architect`, `Security & Bug Auditor`) or hardcoded skills appear by default. Only genuine user-created or AI-created Sub-Agents and real `.agents/*` / `.qoder/rules/*` files in the active project are listed.
-2. **Separate Graph Tabs (`components/SynapseGraphView.tsx`, `utils/synapse-graph.ts`, `app/(tabs)/(home)/index.tsx`)**:
-   - **Tab 1: Memory Graph (Always Available — No Project Required)**:
-     - Visualizes persistent `MemoEntry` nodes (user preferences, learned engineering rules, cross-chat facts, semantic tag clusters, and conversation links) as an interactive 2D neural synapse network.
-     - Allows adding, editing, searching, and deleting memories directly from the Memory Graph view, plus new AI memory tools (`memory_search`, `memory_add`, `memory_update`, `memory_delete`, `memory_graph_query`).
-   - **Tab 2: Project Code Graph (Active Project Only)**:
-     - Visualizes project files, exported functions/classes/components, imports, and call edges. If no project is currently active, displays a clean empty state with a **Create Project** button rather than failing or mixing code nodes into the Memory Graph.
+- **What It Does**:
+  1. **Complete Removal of Legacy Beta Memory & 5 Identity Files**: Strips `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, legacy non-YAML `AGENTS.md`, `betaAgentLearning`, and the old `Memos` list from Settings, Tools, and all AI System/Planner prompts.
+  2. **Extra YAML Learning & Skill System (`.qoder` Hidden from Display)**:
+     - Recognizes `AGENTS.md` and Skill `.md`/`.yml` files strictly via structured YAML frontmatter (`name`, `description`, `trigger`, `keywords`, `alwaysApply`).
+     - Hides internal `.qoder/` path prefixes in the UI so skills display clean human titles and source badges.
+     - Supports **3 Trigger Modes** per skill / `AGENTS.md`:
+       - **Always Load (Background)** (`always_on`)
+       - **Custom Trigger Words / Phrases / Letters** (`keywords: ["auth", " refactor ", "fix bug"]`)
+       - **Manual / On-Demand** (`manual`)
+     - Supports uploading individual `.md`/`.yml` files or `.zip` archives containing multiple skills/rules. Files with missing or broken YAML frontmatter are flagged as **Corrupted / Invalid YAML (`!`)** with a 1-click **"Fix with AI"** button and explicit AI formatting instructions so the AI repairs them in-place.
+  3. **Subtle Bottom-Right Active Skills & `AGENTS.md` Indicator in Chat**:
+     - Whenever a message is sent and processed, the chat turn records and displays a compact, unboxed typographic caption at the bottom-right of the message showing exactly which Skills and/or `AGENTS.md` rules the system loaded and used for that turn (not just user-typed triggers, but all background + keyword-matched skills actually injected).
+  4. **Normal Chatbot Sub-Agent Menu Enforcement**:
+     - In Normal Chat Mode, the chatbot can **never** directly spawn or run a Sub-Agent on its own. If the user asks to create or use a Sub-Agent, the chatbot opens the **Sub-Agent Configuration Floating Modal** (`SubAgentFloatingQuestionModal`). If a Sub-Agent template/definition is already configured or completed in that modal, it is then created and saved to the Sub-Agents list.
+  5. **Forced Extended Thinking + Animated Orb → Single Streaming Box**:
+     - Enforces `<think>...</think>` extended reasoning across AI turns so the model always reasons thoroughly before acting.
+     - Eliminates duplicate thinking boxes: shows a **Pulsing Reasoning Orb** while waiting/initializing, and transitions into **one** clean text-streaming reasoning box once reasoning text streams in.
+  6. **Classic Projects View, Working Project Deletion & Tools Re-Ordering (`Dashboard` First)**:
+     - Restores the classic **Projects** screen (file tree, file actions, project tabs with an explicit trash/delete button that properly deletes from both `AsyncStorage` and `IndexedDB`,even when deleting the last project).
+     - Re-orders the **Tools** sub-tabs to: **`1. Dashboard` | `2. Tools` | `3. Plans` | `4. Graph` | `5. Search` | `6. Chat`**.
+     - Replaces `Memos` with **`Graph`** (Interactive Synapse Memory & Code Graph supporting **Drag & Drop** node positioning, **Left-Click** Node Inspector, and **Right-Click** Context Menu for Pin, Edit, Link, and Delete).
+     - Upgrades **`Search`** in Tools to display the **Codebase Structure Tree & Interactive Graph Nodes** alongside text/symbol search matches.
+     - Adds an **Interactive English Tutorial** modal accessible from Tools and Projects that walks through Chat vs. Agent Mode, YAML Skills & `.zip` Upload/AI-Fix, the Synapse Graph, Sub-Agents & Cron Jobs, and Git Restore Points.
+  7. **Fix `Unexpected text node: . A text node cannot be a child of a <View>` & Responsive Window Scaling**:
+     - Sanitizes all JSX `<View>` children across the entire app so stray dots (`.`), whitespace text nodes, or boolean/string short-circuits never render raw strings inside `<View>`.
+     - Uses wrapping flex rows (`flexWrap: 'wrap'`), horizontal scroll containers with `flexShrink: 0`, and responsive breakpoints so shrinking the browser window on PC or running on Android never hides or clips action buttons or custom tool cards.
 
 ---
 
-## 6. 2026 Sub-Agent Architecture: "AI Generate" Striped Lock UI, Live Read-Only Stream View, Cron Wakeup & Deletion
+## 2. User Experience & Visual Design
 
-1. **100% English `SubAgentFloatingQuestionModal` + "AI Generate All" Striped Lock Overlay (`components/SubAgentFloatingQuestionModal.tsx`)**:
-   - Translates every header, label, placeholder, and toggle into clean English (`Configure Sub-Agent & Answer Questions`, `1. Select Sub-Agent Role`, `2. Name (for Saved List)`, `Allowed Files (Globs)`, `Clarifying Questions — Relayed to Main Creator`, `3. Concrete Mission / Task`, `Save to Sub-Agent List`, `Send to Main Creator & Save`).
-   - Replaces the bottom-left skip button with **"AI Generate All"**.
-   - When clicked, activates an animated **diagonal striped, slightly dimmed lock overlay** across the modal (`isAiGeneratingConfig = true`, inputs disabled) while the AI automatically synthesizes the optimal Sub-Agent role, name, file globs, clarifying answers, and mission prompt, then populates the fields and submits.
-2. **2026 Sub-Agent Creation Rules (`utils/subagent-workspace.ts`, `providers/AgentProvider.tsx`)**:
-   - Enforces Single-Responsibility scoping, Clean-Slate vs. Forked Context Summary isolation, strict Least-Privilege tool allowlists per role, and mandatory termination via `finish_task`.
-3. **Automatic Cron/Event Wakeup to Main AI on `finish_task` (`providers/ChatProvider.tsx`)**:
-   - When a spawned Sub-Agent invokes `finish_task` (or completes its background run), the internal Cron/Event coordinator immediately wakes the Main AI with a structured handoff summary (`[SUB-AGENT HANDOFF COMPLETED]`) so the Main AI seamlessly continues without stalling.
-4. **Live Read-Only Sub-Agent Inspector & Sub-Agent Deletion (`components/SubAgentLiveViewerModal.tsx`, `components/MultiAgentUI.tsx`, `app/(tabs)/chat/index.tsx`)**:
-   - Displays currently working Sub-Agents with a live status badge. Clicking any active or completed Sub-Agent opens a **Live Read-Only Inspector Modal** showing its real-time thinking stream, tool calls, and `.agents/<slug>/LOG.md` output, with a **grayed-out, disabled bottom input bar** (`Read-Only Sub-Agent Stream — Managed by Main Agent`).
-   - Adds a **Delete** button (trash icon with confirmation) on every saved and active Sub-Agent across `ChatScreen`, `AgentDashboard`, and `SubAgentStudioModal`.
-
----
-
-## 7. Live Thinking / Reasoning Streaming Fix & Complete English Localization
-
-1. **Immediate Thinking / Reasoning Display & Clean Markdown Formatting (`utils/ai-service.ts`, `providers/ChatProvider.tsx`, `components/ThinkingBlock.tsx`)**:
-   - Updates `callOpenAI`, `callOpenRouter`, and `callGemini` to stream incremental deltas (including `<think>...</think>`, `reasoning_content`, and initial planning tokens) directly into the active message state from the first token, ensuring the **Thinking / Reasoning** block appears immediately when generation starts and formats markdown cleanly without raw tag leakage.
-2. **100% English UI Audit Across the Entire Codebase**:
-   - Audits and translates all remaining German UI strings in `app/(tabs)/chat/index.tsx`, `app/(tabs)/(home)/index.tsx`, `app/(tabs)/tools/index.tsx`, `app/(tabs)/settings/index.tsx`, `components/MultiAgentUI.tsx`, `components/AgentPlanView.tsx`, `components/FreeAIPoolModal.tsx`, `components/SubAgentFloatingQuestionModal.tsx`, and `utils/subagent-question-relay.ts` into crisp English.
+- **Aesthetic Direction & Color Palette**:
+  - **60% Dominant Canvas**: Deep Slate (`#0B0F19`) workspace background.
+  - **30% Structural Surfaces**: Elevated Slate (`#111827`) panels and modals with `1px` hairline borders (`#1E293B`).
+  - **10% Semantic Accents**: Electric Blue (`#3B82F6`) for primary actions, Emerald (`#10B981`) for active Memory/Skill synapses, Amber (`#F59E0B`) for corrupted YAML warnings (`!`) and Git restore points, and Violet (`#8B5CF6`) for the Animated Reasoning Orb.
+- **Typography & Tabular Discipline**:
+  - Crisp geometric sans headings paired with monospace tabular numerals (`tabular-nums`) for all node counts, token telemetry, and line numbers.
+  - Unboxed bottom-right metadata in Chat (`Loaded: Master Agent Rules · API Security Skill`) using `·` separators in `11px` muted text.
+- **Interactive Feedback & Motion**:
+  - **Animated Reasoning Orb**: Smooth compositor-friendly pulsing/scaling energy sphere (`Animated.Value` scale + glow opacity) shown before text arrives, seamlessly morphing into a single live text-streaming reasoning box.
+  - **Interactive Graph Canvas**: Pan/drag nodes directly on the canvas, left-click any node to inspect code/memory details, and right-click (or long-press on Android) any node or canvas area to open a contextual action menu (`Create Linked Node`, `Edit Content`, `Pin Position`, `Open File`, `Delete Node`).
 
 ---
 
-## 8. Verification & Branch / PR Delivery
+## 3. Key Product Decisions & Trade-Offs
 
-1. **Automated Unit Tests (`__tests__/`)**:
-   - Add unit tests covering Normal Chat vs. Agent Mode tool isolation, `zip_create` / `zip_read` binary archive roundtrip, Cross-Chat BM25 message reader, Dual Git/Restore Point snapshots and rollback, Memory Graph vs. Project Code Graph separation, zero hardcoded Sub-Agents/Skills, and Sub-Agent `finish_task` wakeup relay.
-2. **Quality Gates**:
-   - Run `npx tsc --noEmit`, `npm test`, and `compile_applet` until 0 errors.
-3. **Isolated Feature Branch & Pull Request**:
-   - Commit all changes to a dedicated feature branch (`feat/v1-6-chat-zip-git-memory-graph-en`), push to remote, and provide the English Pull Request template.
+- **Decision 1 — Replacing Legacy 5 Identity Files with Validated YAML Skills & `AGENTS.md`**:
+  - *Chosen Approach*: Unify all agent learning and rules around YAML-frontmatter files (`AGENTS.md`, `SKILL.md`, `.yml`/`.md`), with automatic corruption detection (`!`) and 1-click AI repair.
+  - *Why*: Eliminates prompt bloat and unvalidated free-form identity files while giving the user full control over **when** each rule loads (`Always in Background` vs. `Custom Trigger Words/Phrases` vs. `Manual`).
+- **Decision 2 — Classic Projects File Tree vs. Dedicated Graph Tab in Tools**:
+  - *Chosen Approach*: Keep the **Projects** screen focused on fast file-tree navigation, editing, and project management, and place the **Synapse Graph** (`Graph` tab) and **Codebase Structure + Node Search** (`Search` tab) inside **Tools** (with `Dashboard` in Slot 1).
+  - *Why*: Prevents overcrowding the Projects screen while making the Graph and Dashboard immediately accessible in a logical order.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### Architecture & Component Diagram
+
+```text
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                                 Dev0 IDE (v1.8)                                   │
+├─────────────────────────┬────────────────────────────┬────────────────────────────┤
+│   Projects Tab (Home)   │      AI Chat Tab           │     Tools Tab (Reordered)  │
+│  ┌───────────────────┐  │  ┌──────────────────────┐  │  1. [Dashboard] (Slot 1)   │
+│  │ Classic File Tree │  │  │ Single Reasoning Orb │  │  2. [Tools Registry]       │
+│  │ + Project Tabs    │  │  │  ↓ (Text Streams)    │  │  3. [Plans]                │
+│  │ + Explicit Delete │  │  │ Single Thinking Box  │  │  4. [Graph] (Replaces Memo)│
+│  │ + Git Restore Btn │  │  ├──────────────────────┤  │     • Drag & Drop Nodes    │
+│  └───────────────────┘  │  │ Custom Tool Cards    │  │     • Left/Right Click Menu│
+│                         │  │ (ZIP / Plan / Diff)  │  │  5. [Search]               │
+│                         │  ├──────────────────────┤  │     • Codebase Tree + Nodes│
+│                         │  │ Bottom-Right Caption:│  │  6. [Chat Actions]         │
+│                         │  │ "Loaded: AGENTS.md…" │  │  + [English Tutorial Modal]│
+│                         │  └──────────────────────┘  │                            │
+└─────────────────────────┴──────────────┬─────────────┴────────────────────────────┘
+                                         │
+                                         ▼
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                Extra YAML Skill & AGENTS.md Learning Engine                       │
+│  • Single File (.md/.yml/AGENTS.md) & .zip Skill Pack Importer                    │
+│  • Corrupted / Missing YAML Detector (!) + 1-Click "Fix with AI" Auto-Formatter   │
+│  • Trigger Modes: Always (Background) | Custom Keywords/Phrases/Letters | Manual  │
+│  • Strips ".qoder/" from UI Display · Injects Active Skills + Formatting Rules    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Interactive Component & State Mapping
+
+1. **Extra YAML Learning & `.zip` Skill Importer (`utils/skill-loader.ts`, `components/SubAgentStudioModal.tsx`, `app/(tabs)/settings/index.tsx`)**:
+   - Extends `ParsedYamlSkill` with `triggerMode: 'always' | 'keywords' | 'manual'`, `triggerKeywords: string[]`, `isCorrupted: boolean`, and `corruptionReason?: string`.
+   - Adds `importSkillsFromZipOrFiles`: unpacks `.zip` archives via `JSZip`, inspects every `.md` / `.yml` / `AGENTS.md` file, validates YAML frontmatter, imports valid skills, and flags corrupted/unformatted files with `!` so the user can click **"Fix with AI"** (`repairCorruptedSkillWithAI`) to automatically add valid YAML frontmatter and structure.
+   - Removes all `.qoder` prefixes from visible UI labels (`formatSkillSourceForDisplay`).
+   - Completely removes legacy `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, and `betaAgentLearning` from Settings and `buildSystemPrompt`.
+2. **Active Skill & `AGENTS.md` Bottom-Right Badge (`types/index.ts`, `providers/ChatProvider.tsx`, `components/ChatBubble.tsx`)**:
+   - Adds `loadedSkills?: string[]` to `ChatMessage`.
+   - On every chat turn, `matchActiveSkillsForTurn(skills, userMessage)` resolves all background (`always`) + keyword-matched (`keywords`) skills and `AGENTS.md` files, injects them into the system prompt, and stores their display names on the assistant message so `ChatBubble` renders `Used: <Skill / AGENTS.md names>` in small muted text at the bottom-right.
+3. **Forced Extended Thinking + Reasoning Orb → Single Streaming Box (`components/ThinkingBlock.tsx`, `app/(tabs)/chat/index.tsx`, `utils/ai-service.ts`)**:
+   - Updates `buildSystemPrompt` to enforce mandatory `<think>...</think>` reasoning before every response/tool call.
+   - Updates `ThinkingBlock.tsx`: when `isLive` is true and no thinking text has streamed yet (or during initial connection), renders only the **Animated Reasoning Orb**; once thinking text streams in, renders the single expandable streaming text box.
+4. **Interactive Drag-and-Drop + Left/Right-Click Synapse Graph (`components/SynapseGraphView.tsx`, `app/(tabs)/tools/index.tsx`)**:
+   - Replaces the `Memos` sub-tab in `ToolsScreen` with `Graph` (`SynapseGraphView`), and moves `Dashboard` to the first sub-tab slot (`['dashboard', 'tools', 'plans', 'graph', 'search', 'chat']`).
+   - Adds pointer/touch drag-and-drop (`nodePositionOverrides`), Left-Click node selection, and Right-Click (`onContextMenu` on Web / long-press on Android) floating context menu at cursor coordinates.
+   - Upgrades the `Search` sub-tab in `ToolsScreen` to show the **Codebase File/Directory Structure** and matching **Synapse Graph Nodes** (Functions, Files, Skills, Memories) with 1-click navigation.
+5. **Project Deletion Fix, `<View>` Text Node Sanitization & English Tutorial Modal (`providers/ProjectProvider.tsx`, `app/(tabs)/(home)/index.tsx`, `components/TutorialModal.tsx`)**:
+   - Fixes `deleteProject` in `ProjectProvider.tsx` to clear both `userSandboxKey` and `userCurrentProjKey` in `AsyncStorage` and `IndexedDB`, and adds a visible **Trash / Delete Project** button in `ProjectsScreen`.
+   - Audits and removes all raw text / `.` nodes inside `<View>` components to eliminate `Unexpected text node: . A text node cannot be a child of a <View>`.
+   - Adds `components/TutorialModal.tsx` providing a structured, interactive **English Tutorial & System Guide** accessible from the Tools and Projects headers.

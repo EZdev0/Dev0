@@ -29,15 +29,27 @@ import {
   evaluatePoolKeyStatus,
   selectActivePoolKeyForUser,
   verifyOwnerClaimPassphrase,
+  detectAuthOrKeyPlaceholder,
 } from '@/utils/free-ai-pool';
 import {
+  signInWithFirebaseGooglePopup,
+  signOutFirebaseUser,
+  subscribeToFirebaseAuth,
+} from '@/utils/firebase-client';
+import {
   CustomSubAgentTemplate,
+  UploadedSkillFileEntry,
   DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES,
   loadCustomSubAgentTemplates,
   saveCustomSubAgentTemplates,
   loadSkillEnabledOverrides,
   saveSkillEnabledOverrides,
+  loadSkillTriggerOverrides,
+  saveSkillTriggerOverrides,
+  loadUploadedSkillFiles,
+  saveUploadedSkillFiles,
 } from '@/utils/skill-loader';
+import { SkillTriggerOverrideConfig } from '@/types';
 import {
   SubAgentWorkflowGraphState,
   SubAgentCronJob,
@@ -70,6 +82,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [showSponsorModal, setShowSponsorModal] = useState<boolean>(false);
   const [showFreePoolModal, setShowFreePoolModal] = useState<boolean>(false);
   const [showSubAgentStudioModal, setShowSubAgentStudioModal] = useState<boolean>(false);
+  const [showTutorialModal, setShowTutorialModal] = useState<boolean>(false);
   const sponsorInteractionCountRef = useRef<number>(0);
 
   // "AI for Free" Pool & Zero-PII 3-Tier RBAC Governance State
@@ -77,11 +90,13 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const freePoolStateRef = useRef<FreePoolState>(freePoolState);
   freePoolStateRef.current = freePoolState;
 
-  // Custom Sub-Agent Templates & YAML Skill Overrides
+  // Custom Sub-Agent Templates & YAML Skill Overrides + Uploaded Skill Files
   const [customSubAgents, setCustomSubAgents] = useState<CustomSubAgentTemplate[]>(
     DEFAULT_CUSTOM_SUB_AGENT_TEMPLATES,
   );
   const [skillEnabledOverrides, setSkillEnabledOverrides] = useState<Record<string, boolean>>({});
+  const [skillTriggerOverrides, setSkillTriggerOverrides] = useState<Record<string, SkillTriggerOverrideConfig>>({});
+  const [uploadedSkillFiles, setUploadedSkillFiles] = useState<UploadedSkillFileEntry[]>([]);
 
   // Dev0 Sub-Agent Workflow & Cron State (.agents/<slug>/)
   const [subAgentWorkflow, setSubAgentWorkflow] = useState<SubAgentWorkflowGraphState>(() =>
@@ -93,7 +108,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const learningActive = isLearningEnabled(settings);
 
   useEffect(() => {
-    setMemoSystemEnabled(learningActive);
+    setMemoSystemEnabled(true);
   }, [learningActive]);
 
   useEffect(() => {
@@ -106,6 +121,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
           loadedPool,
           loadedTemplates,
           loadedSkillOverrides,
+          loadedTriggerOverrides,
+          loadedUploadedSkills,
           loadedWorkflow,
         ] = await Promise.all([
           AsyncStorage.getItem('ide_settings'),
@@ -114,13 +131,15 @@ export const [AppProvider, useApp] = createContextHook(() => {
           loadFreePoolState(),
           loadCustomSubAgentTemplates(),
           loadSkillEnabledOverrides(),
+          loadSkillTriggerOverrides(),
+          loadUploadedSkillFiles(),
           loadSubAgentWorkflowState(),
         ]);
         if (settingsStr) {
           const parsed = JSON.parse(settingsStr);
           setSettings(prev => {
             const merged = syncLearningSettings(prev, parsed);
-            setMemoSystemEnabled(isLearningEnabled(merged));
+            setMemoSystemEnabled(true);
             return merged;
           });
         }
@@ -132,6 +151,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
         }
         if (loadedTemplates) setCustomSubAgents(loadedTemplates);
         if (loadedSkillOverrides) setSkillEnabledOverrides(loadedSkillOverrides);
+        if (loadedTriggerOverrides) setSkillTriggerOverrides(loadedTriggerOverrides);
+        if (loadedUploadedSkills) setUploadedSkillFiles(loadedUploadedSkills);
         if (loadedWorkflow) {
           setSubAgentWorkflow(loadedWorkflow);
           subAgentWorkflowRef.current = loadedWorkflow;
@@ -252,9 +273,16 @@ export const [AppProvider, useApp] = createContextHook(() => {
     tokenLimit: number;
     durationMinutes: number | null;
     targetUserId: string;
+    notifyAtPercent?: number;
+    emergencyCutoffEnabled?: boolean;
+    emergencyCutoffPercent?: number;
   }) => {
     const now = Date.now();
     const expiresAt = params.durationMinutes ? now + params.durationMinutes * 60 * 1000 : null;
+    const notifyAtPercent = Math.min(99, Math.max(5, params.notifyAtPercent ?? 40));
+    const emergencyCutoffEnabled = params.emergencyCutoffEnabled !== false;
+    const emergencyCutoffPercent = Math.min(100, Math.max(10, params.emergencyCutoffPercent ?? 50));
+
     const newKey: SharedPoolKey = {
       id: uniqueId('pool_'),
       provider: params.provider,
@@ -272,7 +300,36 @@ export const [AppProvider, useApp] = createContextHook(() => {
       expiresAt,
       isActive: true,
       status: 'active',
+      notifyAtPercent,
+      emergencyCutoffEnabled,
+      emergencyCutoffPercent,
+      notifiedThreshold: false,
+      notifiedEmergencyStop: false,
     };
+
+    // Sync key into server-side /api/pool vault so raw keys are protected server-side
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'register_key',
+          key: {
+            id: newKey.id,
+            provider: newKey.provider,
+            model: newKey.model,
+            rawKey: params.rawKey,
+            ownerUserId: newKey.ownerUserId,
+            targetUserId: newKey.targetUserId,
+            tokenLimit: newKey.tokenLimit,
+            expiresAt: newKey.expiresAt,
+            notifyAtPercent,
+            emergencyCutoffEnabled,
+            emergencyCutoffPercent,
+          },
+        }),
+      }).catch(() => {});
+    }
 
     updateFreePoolState(prev => ({
       ...prev,
@@ -282,8 +339,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
         {
           id: uniqueId('notif_'),
           level: 'success',
-          title: 'New Key Added to Free Pool',
-          message: `Masked key (${newKey.maskedKey}) for ${params.provider.toUpperCase()} (${params.model}) is now active for ${newKey.targetUserId === '*' ? 'all users' : newKey.targetUserId}.`,
+          title: 'New Key Added to Server Vault & Free Pool',
+          message: `Masked key (${newKey.maskedKey}) for ${params.provider.toUpperCase()} (${params.model}) is active. Notify at ${notifyAtPercent}%, Emergency Cutoff (Not-Aus) at ${emergencyCutoffEnabled ? emergencyCutoffPercent + '%' : 'OFF'}.`,
           timestamp: now,
           read: false,
         },
@@ -305,12 +362,70 @@ export const [AppProvider, useApp] = createContextHook(() => {
       sharedKeys: prev.sharedKeys.map(k => {
         if (k.id !== keyId) return k;
         const nextActive = !k.isActive;
-        const updated = { ...k, isActive: nextActive };
+        const updated: SharedPoolKey = {
+          ...k,
+          isActive: nextActive,
+          notifiedEmergencyStop: nextActive ? false : k.notifiedEmergencyStop,
+          emergencyStopReason: nextActive ? undefined : k.emergencyStopReason,
+        };
         updated.status = evaluatePoolKeyStatus(updated);
         return updated;
       }),
     }));
   }, [updateFreePoolState]);
+
+  const updatePoolKeyThresholds = useCallback(
+    (
+      keyId: string,
+      updates: {
+        notifyAtPercent?: number;
+        emergencyCutoffEnabled?: boolean;
+        emergencyCutoffPercent?: number;
+        tokenLimit?: number;
+        isActive?: boolean;
+      },
+    ) => {
+      updateFreePoolState(prev => ({
+        ...prev,
+        sharedKeys: prev.sharedKeys.map(k => {
+          if (k.id !== keyId) return k;
+          const updated: SharedPoolKey = {
+            ...k,
+            ...(updates.notifyAtPercent !== undefined
+              ? { notifyAtPercent: Math.min(99, Math.max(5, updates.notifyAtPercent)), notifiedThreshold: false }
+              : {}),
+            ...(updates.emergencyCutoffEnabled !== undefined
+              ? { emergencyCutoffEnabled: updates.emergencyCutoffEnabled }
+              : {}),
+            ...(updates.emergencyCutoffPercent !== undefined
+              ? { emergencyCutoffPercent: Math.min(100, Math.max(10, updates.emergencyCutoffPercent)), notifiedEmergencyStop: false }
+              : {}),
+            ...(updates.tokenLimit !== undefined
+              ? { tokenLimit: Math.max(0, updates.tokenLimit) }
+              : {}),
+            ...(updates.isActive !== undefined ? { isActive: updates.isActive } : {}),
+          };
+          updated.status = evaluatePoolKeyStatus(updated);
+          if (typeof fetch !== 'undefined') {
+            fetch('/api/pool', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'update_key_thresholds',
+                keyId: updated.id,
+                notifyAtPercent: updated.notifyAtPercent,
+                emergencyCutoffEnabled: updated.emergencyCutoffEnabled,
+                emergencyCutoffPercent: updated.emergencyCutoffPercent,
+                isActive: updated.isActive,
+              }),
+            }).catch(() => {});
+          }
+          return updated;
+        }),
+      }));
+    },
+    [updateFreePoolState],
+  );
 
   const switchUserIdentity = useCallback(
     (
@@ -426,6 +541,55 @@ export const [AppProvider, useApp] = createContextHook(() => {
     [updateFreePoolState],
   );
 
+  // Real Firebase Google Sign-In Subscription & Actions
+  useEffect(() => {
+    const unsub = subscribeToFirebaseAuth(fbUser => {
+      if (fbUser && fbUser.email) {
+        const check = detectAuthOrKeyPlaceholder({ email: fbUser.email });
+        if (!check.isPlaceholder) {
+          switchUserIdentity(fbUser.email, fbUser.displayName || fbUser.email.split('@')[0], 'google');
+        }
+      }
+    });
+    return () => unsub();
+  }, [switchUserIdentity]);
+
+  const signInWithRealGoogleFirebase = useCallback(
+    async (ownerPassphrase?: string): Promise<{ success: boolean; message: string }> => {
+      try {
+        const fbUser = await signInWithFirebaseGooglePopup();
+        const emailStr = fbUser.email || '';
+        const check = detectAuthOrKeyPlaceholder({ email: emailStr });
+        if (check.isPlaceholder) {
+          return { success: false, message: check.reasons.join(' ') };
+        }
+        switchUserIdentity(emailStr, fbUser.displayName || emailStr.split('@')[0], 'google', ownerPassphrase);
+        return {
+          success: true,
+          message: `Verified via Firebase Google Auth (${maskEmailAddress(emailStr)}).`,
+        };
+      } catch (err: any) {
+        return {
+          success: false,
+          message: err?.message || 'Firebase Google Sign-In popup could not complete.',
+        };
+      }
+    },
+    [switchUserIdentity],
+  );
+
+  const signOutRealGoogleFirebase = useCallback(async () => {
+    await signOutFirebaseUser();
+    updateFreePoolState(prev => ({
+      ...prev,
+      currentUserId: 'usr_guest_session',
+      currentUserEmail: 'guest@local.sandbox',
+      isAuthenticated: false,
+      isAuthenticatedGoogle: false,
+      authProvider: 'guest',
+    }));
+  }, [updateFreePoolState]);
+
   const setUserRole = useCallback(
     (userId: string, role: PoolUserRole) => {
       updateFreePoolState(prev => {
@@ -509,23 +673,46 @@ export const [AppProvider, useApp] = createContextHook(() => {
             promptTokensUsed: k.promptTokensUsed + usage.promptTokens,
             completionTokensUsed: k.completionTokensUsed + usage.completionTokens,
           };
-          updated.status = evaluatePoolKeyStatus(updated, now);
+          const nextStatus = evaluatePoolKeyStatus(updated, now);
+          updated.status = nextStatus;
 
-          if (prevStatus === 'active' && updated.status === 'warning') {
+          const notifyPct = updated.notifyAtPercent ?? 40;
+          const cutoffPct = updated.emergencyCutoffPercent ?? 50;
+          const usagePct =
+            updated.tokenLimit > 0 ? Math.round((updated.tokensUsed / updated.tokenLimit) * 100) : 0;
+
+          if (nextStatus === 'emergency_stop') {
+            // Pause key in-place without deleting it!
+            updated.isActive = false;
+            updated.emergencyStopReason = `Emergency Auto-Cutoff (Not-Aus) triggered at ${usagePct}% (threshold: ${cutoffPct}%).`;
+            if (!updated.notifiedEmergencyStop) {
+              updated.notifiedEmergencyStop = true;
+              newAlerts.unshift({
+                id: uniqueId('notif_'),
+                level: 'critical',
+                title: `EMERGENCY STOP (Not-Aus at ${cutoffPct}%) — Key Paused (Not Deleted)`,
+                message: `Owner Alert: Shared key ${k.maskedKey} (${k.provider.toUpperCase()}) reached ${usagePct}% (${updated.tokensUsed.toLocaleString()} / ${k.tokenLimit.toLocaleString()} tokens). Auto-paused to prevent over-billing. Nothing was deleted; Owner can resume or raise the cutoff anytime.`,
+                timestamp: now,
+                read: false,
+              });
+            }
+          } else if (nextStatus === 'warning' && !updated.notifiedThreshold) {
+            updated.notifiedThreshold = true;
             newAlerts.unshift({
               id: uniqueId('notif_'),
               level: 'warning',
-              title: 'Free Pool Key Approaching Limit (80%)',
-              message: `Key ${k.maskedKey} (${k.provider.toUpperCase()}) has used ${updated.tokensUsed.toLocaleString()} / ${k.tokenLimit.toLocaleString()} tokens.`,
+              title: `Owner Alert: Key Reached ${usagePct}% (Notify Threshold: ${notifyPct}%)`,
+              message: `Key ${k.maskedKey} (${k.provider.toUpperCase()}) has consumed ${updated.tokensUsed.toLocaleString()} / ${k.tokenLimit.toLocaleString()} tokens (${usagePct}%).`,
               timestamp: now,
               read: false,
             });
-          } else if (prevStatus !== 'exhausted' && updated.status === 'exhausted') {
+          } else if (prevStatus !== 'exhausted' && nextStatus === 'exhausted') {
+            updated.isActive = false;
             newAlerts.unshift({
               id: uniqueId('notif_'),
               level: 'critical',
-              title: 'Pool Key Quota Reached — Auto-Switched to Next Key',
-              message: `Key ${k.maskedKey} reached its ${k.tokenLimit.toLocaleString()} token limit. Automatically rotating to the next available Free Pool key.`,
+              title: 'Pool Key 100% Quota Reached — Paused & Auto-Switched (Not Deleted)',
+              message: `Key ${k.maskedKey} reached its ${k.tokenLimit.toLocaleString()} token limit. Key is preserved in the pool (paused) and requests rotated to the next available key.`,
               timestamp: now,
               read: false,
             });
@@ -628,10 +815,51 @@ export const [AppProvider, useApp] = createContextHook(() => {
     });
   }, []);
 
+  const updateSkillTriggerConfig = useCallback(
+    (skillId: string, config: SkillTriggerOverrideConfig) => {
+      setSkillTriggerOverrides(prev => {
+        const updated = { ...prev, [skillId]: config };
+        saveSkillTriggerOverrides(updated).catch(console.log);
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const addUploadedSkills = useCallback((entries: UploadedSkillFileEntry[]) => {
+    setUploadedSkillFiles(prev => {
+      const map = new Map<string, UploadedSkillFileEntry>();
+      for (const p of prev) map.set(p.path, p);
+      for (const e of entries) map.set(e.path, e);
+      const updated = Array.from(map.values());
+      saveUploadedSkillFiles(updated).catch(console.log);
+      return updated;
+    });
+  }, []);
+
+  const updateUploadedSkillContent = useCallback((path: string, content: string) => {
+    setUploadedSkillFiles(prev => {
+      const exists = prev.some(f => f.path === path);
+      const updated = exists
+        ? prev.map(f => (f.path === path ? { ...f, content, uploadedAt: Date.now() } : f))
+        : [{ path, content, uploadedAt: Date.now() }, ...prev];
+      saveUploadedSkillFiles(updated).catch(console.log);
+      return updated;
+    });
+  }, []);
+
+  const removeUploadedSkill = useCallback((path: string) => {
+    setUploadedSkillFiles(prev => {
+      const updated = prev.filter(f => f.path !== path);
+      saveUploadedSkillFiles(updated).catch(console.log);
+      return updated;
+    });
+  }, []);
+
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
     setSettings(prev => {
       const updated = syncLearningSettings(prev, partial);
-      setMemoSystemEnabled(isLearningEnabled(updated));
+      setMemoSystemEnabled(true);
       AsyncStorage.setItem('ide_settings', JSON.stringify(updated)).catch(e =>
         console.log('[App] Error saving settings:', e),
       );
@@ -685,10 +913,6 @@ export const [AppProvider, useApp] = createContextHook(() => {
   }, []);
 
   const addMemo = useCallback((content: string) => {
-    if (!isLearningEnabled(settings)) {
-      console.log('[App] Blocked addMemo because learning/memo function is disabled.');
-      return '';
-    }
     const item: MemoEntry = { id: uniqueId('mm_'), content, createdAt: Date.now() };
     setMemos(prev => {
       const updated = [...prev, item];
@@ -696,19 +920,16 @@ export const [AppProvider, useApp] = createContextHook(() => {
       return updated;
     });
     return item.id;
-  }, [settings]);
+  }, []);
 
   const updateMemo = useCallback((id: string, content: string) => {
-    if (!isLearningEnabled(settings)) {
-      return false;
-    }
     setMemos(prev => {
       const updated = prev.map(m => (m.id === id ? { ...m, content } : m));
       AsyncStorage.setItem('ide_memos', JSON.stringify(updated)).catch(console.log);
       return updated;
     });
     return true;
-  }, [settings]);
+  }, []);
 
   const deleteMemo = useCallback((id: string) => {
     setMemos(prev => {
@@ -871,7 +1092,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   return {
     settings, updateSettings, isLoaded, learningEnabled: learningActive,
     todos, addTodo, updateTodoItem, deleteTodo, clearAllTodos,
-    memos: learningActive ? memos : [], addMemo, updateMemo, deleteMemo, clearAllMemos,
+    memos, addMemo, updateMemo, deleteMemo, clearAllMemos,
     getApiKey, getFallbackSettings, resolveEffectiveProviderAndKey,
     getToolPermission, setToolPermission,
     agentMd, setAgentMd, soulMd, setSoulMd,
@@ -883,7 +1104,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
     shareKeyToPool,
     removePoolKey,
     togglePoolKeyActive,
+    updatePoolKeyThresholds,
     switchUserIdentity,
+    signInWithRealGoogleFirebase,
+    signOutRealGoogleFirebase,
     claimOwnerRole,
     setUserRole,
     timeoutUser,
@@ -899,8 +1123,16 @@ export const [AppProvider, useApp] = createContextHook(() => {
     deleteSubAgentTemplate,
     skillEnabledOverrides,
     toggleYamlSkill,
+    skillTriggerOverrides,
+    updateSkillTriggerConfig,
+    uploadedSkillFiles,
+    addUploadedSkills,
+    updateUploadedSkillContent,
+    removeUploadedSkill,
     showSubAgentStudioModal,
     setShowSubAgentStudioModal,
+    showTutorialModal,
+    setShowTutorialModal,
     subAgentWorkflow,
     updateSubAgentWorkflow,
     togglePauseSubAgent,

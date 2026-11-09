@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwnerUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidUserDoc(data) {
+      return data.keys().hasAll(['id', 'maskedEmail', 'displayName', 'authProvider', 'role', 'status', 'tokenQuota', 'tokensConsumed', 'createdAt', 'lastActiveAt'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.maskedEmail is string && data.maskedEmail.size() <= 120
+        && data.displayName is string && data.displayName.size() <= 120
+        && data.authProvider in ['google', 'local', 'guest']
+        && data.role in ['owner', 'admin', 'user']
+        && data.status in ['active', 'timeout', 'suspended']
+        && data.tokenQuota is number && data.tokenQuota >= 0
+        && data.tokensConsumed is number && data.tokensConsumed >= 0;
+    }
+
+    function isValidPoolKeyMeta(data) {
+      return data.keys().hasAll(['id', 'provider', 'model', 'maskedKey', 'ownerUserId', 'targetUserId', 'tokenLimit', 'tokensUsed', 'notifyAtPercent', 'emergencyCutoffEnabled', 'emergencyCutoffPercent', 'isActive', 'status', 'createdAt'])
+        && data.id is string && data.id.size() > 0 && data.id.size() <= 128
+        && data.provider is string && data.provider.size() <= 64
+        && data.model is string && data.model.size() <= 160
+        && data.maskedKey is string && data.maskedKey.size() <= 80
+        && data.ownerUserId is string && data.ownerUserId.size() <= 128
+        && data.targetUserId is string && data.targetUserId.size() <= 128
+        && data.tokenLimit is number && data.tokenLimit >= 0
+        && data.tokensConsumed == null
+        && data.tokensUsed is number && data.tokensUsed >= 0
+        && data.notifyAtPercent is number && data.notifyAtPercent >= 1 && data.notifyAtPercent <= 100
+        && data.emergencyCutoffEnabled is bool
+        && data.emergencyCutoffPercent is number && data.emergencyCutoffPercent >= 5 && data.emergencyCutoffPercent <= 100
+        && data.isActive is bool
+        && data.status in ['active', 'warning', 'emergency_stop', 'exhausted', 'expired', 'paused'];
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwnerUser(userId) && isValidUserDoc(request.resource.data);
+      allow update: if isOwnerUser(userId) && isValidUserDoc(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /poolKeys/{keyId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.ownerUserId == request.auth.uid
+        && isValidPoolKeyMeta(request.resource.data);
+      allow update: if isAuthenticated()
+        && (resource.data.ownerUserId == request.auth.uid || request.resource.data.ownerUserId == resource.data.ownerUserId)
+        && isValidPoolKeyMeta(request.resource.data);
+      allow delete: if isAuthenticated() && resource.data.ownerUserId == request.auth.uid;
+    }
+  }
+}

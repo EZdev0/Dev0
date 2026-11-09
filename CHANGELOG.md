@@ -6,7 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.7.0] - 2026-11-09
+
+### Added
+- **Real Free Firebase Google Sign-In & Zero-Placeholder Guard (`utils/firebase-client.ts`, `firebase-applet-config.json`, `firestore.rules`, `utils/free-ai-pool.ts`, `providers/AppProvider.tsx`, `components/FreeAIPoolModal.tsx`)**:
+  - Provisioned real Firebase Authentication (`GoogleAuthProvider` + `signInWithPopup`) and Firestore persistence (`users`, `pool_keys`, `pool_logs`).
+  - Added `detectAuthOrKeyPlaceholder` to reject simulated emails (`google.user@gmail.com`), built-in placeholder pool keys (`pool_builtin_studio_free`, `rork_builtin`), and dummy keys.
+- **Server-Only API Key Vault Proxy (`/api/pool`) & 50% Emergency Auto-Cutoff (Not-Aus) Without Deletion (`app/api/pool+api.ts`, `utils/free-ai-pool.ts`, `utils/ai-service.ts`)**:
+  - Added server-side `/api/pool` vault proxy that stores raw shared API keys off the client, enforces `clampMaxTokensForPoolKey`, and blocks key-extraction prompt jailbreaks (`inspectPromptForKeyJailbreak`).
+  - Added configurable `notifyAtPercent` (default `40%`) and `emergencyCutoffPercent` (default `50%` Emergency Auto-Cutoff / Not-Aus) that pauses the key (`status: 'emergency_stop'`, `isActive: false`) and alerts the Owner **without deleting any key**.
+- **Mutual-Exclusive Tool Isolation, Hidden Disabled Tools & Full Owner Governance (`types/index.ts`, `utils/ai-service.ts`, `providers/ChatProvider.tsx`, `app/(tabs)/tools/index.tsx`, `components/FreeAIPoolModal.tsx`)**:
+  - Blocked `zip_create`, `zip_read`, and `draft_agent_plan` (`isChatModeOnlyTool`) in Agent Mode (`agentMode: true`) so the agent never creates ZIP archives when working inside a project.
+  - Hid disabled/mode-excluded tools from standard users in `ToolsScreen` while adding an Owner/Admin toggle (`Owner: Show Disabled`).
+  - Replaced the hardcoded `Cap 50k` button with a custom numeric token quota setter (`0` = Unlimited) and added a **Live Owner System Prompts & Agent Directives** controller (`customSystemPrompt`, `customChatModePrompt`, `customPlannerPrompt`).
+- **AI YAML Skill Creator (`create_yaml_skill`) & Non-Destructive Memory Graph Cleanup (`utils/skill-loader.ts`, `utils/synapse-graph.ts`, `components/SynapseGraphView.tsx`, `.qoder/rules/Agent.md`)**:
+  - Added `create_yaml_skill` (`createAndValidateYamlSkillFile`) so Dev0 can create validated `.qoder/rules/<slug>.md` or `.agents/skills/<slug>.md` files with proper YAML frontmatter.
+  - Added `cleanStaleMemoryGraphLinks` to repair stale `[Synapse: <deleted_file>]` references without deleting any user memory.
+  - Rewrote `.qoder/rules/Agent.md` in 100% English.
+
+### Fixed
+- **Metro Watcher `ENOENT` Crash on `@firebase/.bun-tmp-*` (`metro.config.js`, `scripts/patch-modules.js`)**:
+  - Blocked `/\/\.bun-tmp-[^/]+/` in `metro.config.js` (`resolver.blockList`), cleaned leftover `.bun-tmp-*` directories in `scripts/patch-modules.js`, and patched `metro-file-map` watchers (`FallbackWatcher.js` / `NodeWatcher.js`) to ignore transient `ENOENT` errors.
+- **Duplicate Live `ThinkingBlock` & Normal Chat Mode Sub-Agent Bar (`providers/ChatProvider.tsx`, `app/(tabs)/chat/index.tsx`)**:
+  - Removed the duplicate `thinking_...` placeholder message in `ChatProvider.tsx` (`runManualLoop`) so only a single live `ThinkingBlock` renders in `ChatScreen`, and hid the Sub-Agents / Workflow bar when in Normal Chat Mode (`!agentMode`).
+
+---
+
 ## [1.6.0] - 2026-10-27
+
 
 ### Added
 - **Normal Chat Mode vs. Agent Mode Tool Isolation & Downloadable ZIP Bundles (`utils/chat-zip.ts`, `utils/ai-service.ts`, `providers/ChatProvider.tsx`, `components/ChatBubble.tsx`, `types/index.ts`)**:

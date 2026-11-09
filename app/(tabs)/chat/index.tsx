@@ -861,7 +861,7 @@ export default function ChatScreen() {
           ListFooterComponent={
             isThinking ? (
               <View style={styles.thinkingContainer}>
-                <ThinkingBlock thinking={thinkingPhase || 'Dev0 is thinking...'} isLive phase={thinkingPhase} />
+                <ThinkingBlock thinking="" isLive phase={thinkingPhase || 'Dev0 is thinking...'} />
               </View>
             ) : null
           }
@@ -949,12 +949,12 @@ export default function ChatScreen() {
         </View>
       )}
 
-      {lastFallbackInfo && (
+      {Boolean(lastFallbackInfo) ? (
         <View style={styles.fallbackBanner}>
           <Info size={12} color={IDE.warning} />
           <Text style={styles.fallbackText}>{lastFallbackInfo}</Text>
         </View>
-      )}
+      ) : null}
 
       {(pendingApproval || pendingToolApproval) && (
         <View style={styles.approvalBanner}>
@@ -1075,11 +1075,12 @@ export default function ChatScreen() {
         </View>
       )}
 
-      {/* Sub-Agents & Workflow Quick List Bar */}
-      {!keyboardVisible && (
+      {/* Sub-Agents & Workflow Quick List Bar (Available in both Normal Chat Mode & Agent Mode; in Normal Chat Mode opens the Sub-Agent Configuration Menu) */}
+      {!keyboardVisible ? (
         <View style={{
           flexDirection: 'row',
           alignItems: 'center',
+          flexWrap: 'wrap',
           backgroundColor: IDE.bg,
           borderTopWidth: 1,
           borderTopColor: IDE.border,
@@ -1187,12 +1188,12 @@ export default function ChatScreen() {
               activeOpacity={0.75}
             >
               <Text style={{ fontSize: 10, fontWeight: '700', color: IDE.accent }}>
-                + Launch Sub-Agent
+                + Configure / Launch Sub-Agent
               </Text>
             </TouchableOpacity>
           </ScrollView>
         </View>
-      )}
+      ) : null}
 
       {showAgentBadge && (
         <TouchableOpacity
@@ -1365,7 +1366,7 @@ export default function ChatScreen() {
                       Relay Task via Dev0
                     </Text>
                   </TouchableOpacity>
-                  {viewedSubAgentNode.templateId && (
+                  {Boolean(viewedSubAgentNode.templateId) ? (
                     <TouchableOpacity
                       onPress={() => {
                         if (viewedSubAgentNode.templateId) {
@@ -1381,7 +1382,7 @@ export default function ChatScreen() {
                     >
                       <Trash2 size={15} color={IDE.danger} />
                     </TouchableOpacity>
-                  )}
+                  ) : null}
                   <TouchableOpacity onPress={() => setViewingSubAgentSlug(null)}>
                     <X size={20} color={IDE.muted} />
                   </TouchableOpacity>

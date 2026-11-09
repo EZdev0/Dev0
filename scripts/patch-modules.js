@@ -416,3 +416,45 @@ if (fs.existsSync(corsMiddlewarePath)) {
   }
 }
 
+// Clean any leftover transient .bun-tmp-* directories inside node_modules to prevent Metro ENOENT watcher crashes
+function cleanBunTmpDirs(dir, depth = 0) {
+  if (depth > 3 || !fs.existsSync(dir)) return;
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.name.startsWith('.bun-tmp-')) {
+        fs.rmSync(fullPath, { recursive: true, force: true });
+      } else if (entry.name.startsWith('@') || depth === 0) {
+        cleanBunTmpDirs(fullPath, depth + 1);
+      }
+    }
+  } catch (_e) {
+    // Ignore transient fs errors
+  }
+}
+cleanBunTmpDirs(nodeModulesRoot);
+
+// Patch metro-file-map FallbackWatcher / NodeWatcher to ignore ENOENT on transient node_modules directories
+const watcherDirs = [
+  path.join(__dirname, '..', 'node_modules', 'metro-file-map', 'src', 'watchers'),
+];
+for (const wDir of watcherDirs) {
+  if (fs.existsSync(wDir)) {
+    for (const fileName of ['FallbackWatcher.js', 'NodeWatcher.js']) {
+      const wFile = path.join(wDir, fileName);
+      if (fs.existsSync(wFile)) {
+        let wContent = fs.readFileSync(wFile, 'utf8');
+        if (!wContent.includes('ENOENT_GUARD_PATCHED')) {
+          wContent = wContent.replace(
+            /this\.emit\('error',\s*error\)/g,
+            "/* ENOENT_GUARD_PATCHED */ (error && (error.code === 'ENOENT' || String(error.message || '').includes('.bun-tmp-')) ? undefined : this.emit('error', error))"
+          );
+          fs.writeFileSync(wFile, wContent, 'utf8');
+        }
+      }
+    }
+  }
+}
+
+

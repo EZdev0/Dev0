@@ -1,16 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
-import { Platform } from 'react-native';
-
-if (Platform.OS === 'web' && typeof process !== 'undefined' && process.env) {
-  // Proxy Rork SDK requests to avoid CORS in browser
-  // We use a relative path if window is defined, which Expo Router proxies internally
-  // Wait, if it's an API route we can't use relative in EXPO_PUBLIC_TOOLKIT_URL if it's evaluated elsewhere. We'll leave it as cors proxy for simplicity or use absolute localhost URL.
-}
 
 import { AppProvider, useApp } from '@/providers/AppProvider';
 import { ProjectProvider, useProject } from '@/providers/ProjectProvider';
@@ -20,8 +13,8 @@ import { IDE } from '@/constants/colors';
 import { SponsorOverlay } from '@/components/SponsorBanner';
 import { FreeAIPoolModal } from '@/components/FreeAIPoolModal';
 import { SubAgentStudioModal } from '@/components/SubAgentStudioModal';
-import { discoverYamlSkills } from '@/utils/skill-loader';
-import { useRouter } from 'expo-router';
+import TutorialModal from '@/components/TutorialModal';
+import { discoverYamlSkills, repairCorruptedSkillContent } from '@/utils/skill-loader';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -30,6 +23,8 @@ const queryClient = new QueryClient();
 function GlobalModalsHost() {
   const router = useRouter();
   const {
+    settings,
+    updateSettings,
     freePoolState,
     showFreePoolModal,
     setShowFreePoolModal,
@@ -37,7 +32,10 @@ function GlobalModalsHost() {
     shareKeyToPool,
     removePoolKey,
     togglePoolKeyActive,
+    updatePoolKeyThresholds,
     switchUserIdentity,
+    signInWithRealGoogleFirebase,
+    signOutRealGoogleFirebase,
     claimOwnerRole,
     setUserRole,
     timeoutUser,
@@ -48,16 +46,30 @@ function GlobalModalsHost() {
     saveSubAgentTemplate,
     deleteSubAgentTemplate,
     skillEnabledOverrides,
+    skillTriggerOverrides,
     toggleYamlSkill,
+    updateSkillTriggerConfig,
+    uploadedSkillFiles,
+    addUploadedSkills,
+    updateUploadedSkillContent,
+    removeUploadedSkill,
     showSubAgentStudioModal,
     setShowSubAgentStudioModal,
+    showTutorialModal,
+    setShowTutorialModal,
   } = useApp();
-  const { currentProject } = useProject();
+  const { currentProject, createFile } = useProject();
   const { sendMessage } = useChat();
 
   const discoveredSkills = React.useMemo(
-    () => discoverYamlSkills(currentProject?.files || [], skillEnabledOverrides),
-    [currentProject?.files, skillEnabledOverrides],
+    () =>
+      discoverYamlSkills(
+        currentProject?.files || [],
+        skillEnabledOverrides,
+        uploadedSkillFiles,
+        skillTriggerOverrides,
+      ),
+    [currentProject?.files, uploadedSkillFiles, skillEnabledOverrides, skillTriggerOverrides],
   );
 
   return (
@@ -66,11 +78,16 @@ function GlobalModalsHost() {
         visible={showFreePoolModal}
         onClose={() => setShowFreePoolModal(false)}
         poolState={freePoolState}
+        settings={settings}
+        onUpdateSettings={updateSettings}
         onTogglePoolEnabled={togglePoolEnabled}
         onShareKeyToPool={shareKeyToPool}
         onRemovePoolKey={removePoolKey}
         onTogglePoolKeyActive={togglePoolKeyActive}
+        onUpdatePoolKeyThresholds={updatePoolKeyThresholds}
         onSwitchUserIdentity={switchUserIdentity}
+        onSignInWithFirebaseGoogle={signInWithRealGoogleFirebase}
+        onSignOutFirebaseGoogle={signOutRealGoogleFirebase}
         onClaimOwnerRole={claimOwnerRole}
         onSetUserRole={setUserRole}
         onTimeoutUser={timeoutUser}
@@ -86,6 +103,20 @@ function GlobalModalsHost() {
         onSaveTemplate={saveSubAgentTemplate}
         onDeleteTemplate={deleteSubAgentTemplate}
         onToggleSkill={toggleYamlSkill}
+        skillTriggerOverrides={skillTriggerOverrides}
+        onUpdateSkillTrigger={updateSkillTriggerConfig}
+        onUploadSkillFiles={addUploadedSkills}
+        onRepairSkill={skill => {
+          const uploadedEntry = uploadedSkillFiles.find(f => f.path === skill.sourcePath);
+          const rawContent = uploadedEntry ? uploadedEntry.content : skill.body || '';
+          const repaired = repairCorruptedSkillContent(skill.sourcePath, rawContent);
+          if (uploadedEntry) {
+            updateUploadedSkillContent(skill.sourcePath, repaired.content);
+          } else if (currentProject) {
+            createFile(skill.sourcePath, repaired.content);
+          }
+        }}
+        onDeleteUploadedSkill={removeUploadedSkill}
         onRunTemplateTask={(template, taskInstruction) => {
           setShowSubAgentStudioModal(false);
           router.push('/(tabs)/chat' as any);
@@ -94,6 +125,16 @@ function GlobalModalsHost() {
               `[Run Sub-Agent "${template.name}" (role: ${template.role})]\nTask: ${taskInstruction}\nUse the sub_agent tool with role="${template.role}" and task="${taskInstruction}".`,
             );
           }, 150);
+        }}
+      />
+      <TutorialModal
+        visible={showTutorialModal}
+        onClose={() => setShowTutorialModal(false)}
+        onNavigateTab={dest => {
+          if (dest === 'projects') router.push('/(tabs)/(home)' as any);
+          else if (dest === 'chat') router.push('/(tabs)/chat' as any);
+          else if (dest === 'tools') router.push('/(tabs)/tools?tab=dashboard' as any);
+          else if (dest === 'settings') router.push('/(tabs)/settings' as any);
         }}
       />
     </>

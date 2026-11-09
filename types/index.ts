@@ -49,6 +49,7 @@ export interface ChatMessage {
   todos?: InlineTodo[];
   zipArtifact?: ChatZipArtifact;
   draftPlan?: DraftedAgentPlan;
+  loadedSkills?: string[];
 }
 
 export interface InlineTodo {
@@ -84,6 +85,11 @@ export interface ToolPermissionEntry {
   permission: ToolPermission;
 }
 
+export interface SkillTriggerOverrideConfig {
+  mode: 'always' | 'keywords' | 'manual';
+  keywords: string[];
+}
+
 export interface AppSettings {
   openaiKey: string;
   anthropicKey: string;
@@ -111,6 +117,10 @@ export interface AppSettings {
   betaSuperAgent: boolean;
   agentMode: boolean;
   hideSponsor: boolean;
+  customSystemPrompt?: string;
+  customPlannerPrompt?: string;
+  customChatModePrompt?: string;
+  skillTriggerOverrides?: Record<string, SkillTriggerOverrideConfig>;
   toolPermissions: Record<string, ToolPermission>;
 }
 
@@ -359,6 +369,7 @@ export const TOOL_REGISTRY: ToolRegistryItem[] = [
   { name: 'inspect_subagent_workspace', displayName: 'inspect_subagent_workspace', description: 'Inspects the hidden .agents/<name>/ English documentation folders, Sub-Agent statuses, and active Cron jobs.', category: 'system', parameters: [{ name: 'agent_name', type: 'string', description: 'Optional Sub-Agent name filter' }], isBeta: false, defaultPermission: 'always' },
   { name: 'sub_agent', displayName: 'sub_agent', description: 'Delegates task to a specialized or user-created Sub-Agent template.', category: 'system', parameters: [{ name: 'role', type: 'string', description: 'Sub-Agent role or template name' }, { name: 'task', type: 'string', description: 'Task description' }], isBeta: false, defaultPermission: 'always' },
   { name: 'ask_user_question', displayName: 'ask_user_question', description: 'Opens a floating question window to ask the user clarifying questions (including Sub-Agent configuration questions) and relays answers back to Dev0.', category: 'planning', parameters: [{ name: 'questions', type: 'array', description: 'List of questions to ask the user' }, { name: 'is_sub_agent', type: 'boolean', description: 'Whether the question is for/from a Sub-Agent' }, { name: 'sub_agent_role', type: 'string', description: 'Sub-Agent role (developer, localizer, analyst, tester, researcher, critic)' }, { name: 'sub_agent_name', type: 'string', description: 'Suggested Sub-Agent name' }], isBeta: false, defaultPermission: 'always' },
+  { name: 'create_yaml_skill', displayName: 'create_yaml_skill', description: 'Creates and validates a reusable YAML-frontmatter Skill/Rule file (.qoder/rules/<slug>.md or .agents/skills/<slug>.md) in the active project.', category: 'system', parameters: [{ name: 'name', type: 'string', description: 'Skill name' }, { name: 'description', type: 'string', description: 'Skill description' }, { name: 'trigger', type: 'string', description: 'always_on or manual' }, { name: 'instructions', type: 'string', description: 'Markdown instructions' }], isBeta: false, defaultPermission: 'always' },
 ];
 
 export const TOOL_CATEGORIES: { id: string; label: string; icon: string }[] = [
@@ -396,11 +407,23 @@ export const PROJECT_FILESYSTEM_TOOL_NAMES = [
   'create_cron_job',
   'sleep_agent',
   'inspect_subagent_workspace',
+  'create_yaml_skill',
+] as const;
+
+export const CHAT_MODE_ONLY_TOOL_NAMES = [
+  'zip_create',
+  'zip_read',
+  'draft_agent_plan',
 ] as const;
 
 export function isProjectFilesystemOrAgentOnlyTool(toolName?: string | null): boolean {
   if (!toolName) return false;
   return (PROJECT_FILESYSTEM_TOOL_NAMES as readonly string[]).includes(toolName.trim());
+}
+
+export function isChatModeOnlyTool(toolName?: string | null): boolean {
+  if (!toolName) return false;
+  return (CHAT_MODE_ONLY_TOOL_NAMES as readonly string[]).includes(toolName.trim());
 }
 
 export const LEARNING_TOOL_NAMES = [
