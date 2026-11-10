@@ -26,11 +26,10 @@ Welcome to the central documentation directory of **Dev0 (v1.9)**. All duplicate
 
 ---
 
-## 📋 3. Active Project Tracking & Root Contracts
+## 📋 3. Repository Governance & Release History
 
 | File | Description |
 | :--- | :--- |
-| **[todo_tracking.md](todo_tracking.md)** | Live engineering request log, completed milestones, and Critic Agent verification checklist. |
-| **[../AGENTS.md](../AGENTS.md)** | Root workspace contract, v1.0 → v1.9 architectural history, and verification protocol. |
+| **[../AGENTS.md](../AGENTS.md)** | Root YAML-enabled workspace architecture contract (`v1.0` → `v1.9`) and verification protocol. |
 | **[../CHANGELOG.md](../CHANGELOG.md)** | Chronological release notes across all Dev0 versions. |
-| **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Bilingual (EN / DE) open-source contribution & commercial partnership guidelines. |
+| **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Bilingual (EN / DE) open-source contribution, CLA, and commercial licensing guidelines. |

@@ -1,85 +1,74 @@
-# 🧠 AI Mega Brain Workspace (Root DOX Contract)
+---
+name: Dev0 Root Architecture & Autonomous Engineering Contract
+description: Official open-source architecture contract and verification protocol for the Dev0 Autonomous AI Software Engineering Workspace & Multi-Agent IDE.
+trigger: always
+alwaysApply: true
+globs:
+  - "**/*"
+---
+
+# ⚡ Dev0 — Autonomous AI Software Engineering Workspace (Root Architecture Contract)
 
 ## Purpose
-This document establishes the binding DOX work contract for `d:\AI_mega_Brain_rork`. The workspace hosts a modern, cross-platform React Native / Expo SDK 54 AI application integrating multi-agent reasoning, interactive chat interfaces, edge API proxying, and cross-session Persistent Memory recall.
+This document defines the official open-source architecture and engineering contract for **Dev0** (`v1.9.0`). The repository hosts a cross-platform React Native `0.81.5` / Expo SDK `54` AI engineering IDE integrating Dual-Mode tool isolation, Forced Extended Thinking (`<think>...</think>`), Extra YAML Skill Learning, the 2D Synapse Memory & Codebase Graph, and server-side API key governance.
 
-## Ownership
-- **Scope:** Root directory and all underlying subtrees.
-- **Authority:** Controls repo-wide workflows, tool integrations, quality standards, and persistent memory directives.
-
----
-
-## Local Contracts
-
-### 1. Mandatory Persistent Memory & Inception Protocol (CRITICAL)
-Before designing plans, writing code, or answering complex user tasks, every agent MUST execute the Inception Protocol:
-1. **Load Active Rules:** Call `get_user_profile()` via the Persistent Memory MCP tool to inspect active engineering rules and user constraints.
-2. **Historical BM25 Recall:** Call `search_past_memory(query)` using precise technical keywords (e.g., `expo`, `build`, `cors`, `git`, `metro`) to identify prior solutions across conversations.
-3. **Grounding:** Explicitly ground solutions in verified historical memory rather than speculating.
-4. **Keep Memory Synchronized:** Proactively update rules and lessons via `/learn` whenever durable corrections or new patterns occur.
-
-### 2. Strict Version Control & Feature Branch Isolation
-- **NEVER push directly to the `main` branch under any circumstances.**
-- Always create an isolated feature branch (`feat/...`, `fix/...`) for each distinct user request.
-- Push the branch to remote and provide a complete, copy-pasteable Pull Request template in English:
-  - **PR Title:** Semantic title (e.g. `feat(memory): ...`)
-  - **Summary:** Clear explanation of purpose and problem solved.
-  - **Key Changes:** Bulleted breakdown of modified components and files.
-  - **Verification:** Concrete proof of automated tests (`npm test`, `tsc`, `lint`).
-  - **PR Link:** Direct clickable GitHub PR comparison link.
-
-### 3. Bilingual Communication Protocol
-- **Conversational Chat:** Exclusively in German (**Ausschließlich Deutsch**).
-- **Technical Artifacts:** All code, comments, commit messages, PR descriptions, and markdown documentation files MUST strictly be written in **English**.
-
-### 4. Security & Credential Protection
-- NEVER store access tokens, refresh tokens, passwords, or API keys in plaintext.
-- Always use OS-native secure encryption (e.g., Electron `safeStorage.encryptString()`) or environment variables.
-- Strictly sanitize external URLs (`http:` / `https:` only) and IPC channels.
-
-### 5. Localhost & Server Visibility
-- Whenever starting any local development server, API service, or preview worker, ALWAYS output the clickable localhost URL (e.g., `http://localhost:8081` or `http://localhost:55689`) immediately in the chat response.
-
-### 6. Environment & CI/CD Safety Guardrails
-- **Windows Runner Compatibility:** NEVER use `shell: bash` for GitHub Actions or Gitea workflows running on Windows (`runs-on: windows`). Always use PowerShell (`shell: pwsh`).
-- **Non-blocking CI Audits:** Use the native Actions directive `continue-on-error: true` directly on individual steps when non-blocking audits are required.
-- **Subagent Recursion Limit:** Enforce a strict depth limit of 1 (depth <= 1; no nested subagents) to save tokens and prevent recursion loops.
+## Ownership & Scope
+- **Scope:** Root directory and all underlying modules (`app/`, `components/`, `providers/`, `utils/`, `types/`, `constants/`, `scripts/`, `docs/`).
+- **Authority:** Establishes repository-wide engineering standards, security boundaries, and automated verification requirements.
 
 ---
 
-## Work Guidance
+## Core Engineering Standards
 
-### Architecture Overview
-- **Framework:** Expo SDK 54 (`expo@54.x`, `expo-router@6.x`, `react-native@0.81.x`).
-- **Web Export & Netlify Functions:** Routed via `scripts/patch-modules.js` to provide compatibility shims for internal Expo Router paths (`expo-router/internal/static`, `expo-router/internal/routing`) on CI.
-- **Multi-Agent Runtime:** Orchestrated via `providers/AgentProvider.tsx` and `providers/ChatProvider.tsx`.
+### 1. Strict Read-Before-Write & Context Grounding
+Before modifying any module or executing multi-step refactors:
+1. **Inspect Existing Modules:** Read target files completely before applying edits (`read_file` -> `edit_file` / `write_file`).
+2. **Graph & Skill Grounding:** Query the Synapse Code & Memory Graph (`localize_code_graph`, `memory_search`) and active YAML skills (`matchActiveSkillsForTurn`) to preserve architectural invariants.
+3. **Dual Git Restore Points:** Create a snapshot restore point (`git_create_restore_point`) prior to structural changes.
 
-### Persistent Memory Plugin Architecture
-- **Database Engine:** SQLite database located at `~/.gemini/config/plugins/persistent-memory-plugin/memory.db`.
-- **FTS5 Full-Text Search:** Uses BM25 ranking across 21,600+ indexed messages with real-time database triggers (`AFTER INSERT`, `AFTER DELETE`, `AFTER UPDATE`).
-- **Concurrency & Resilience:** Configured with `PRAGMA journal_mode = WAL;` and `PRAGMA busy_timeout = 5000;` to ensure non-blocking concurrent reads and writes across background hooks, MCP servers, and sidecars.
-- **Lifecycle Hooks:**
-  - `PreInvocation`: Runs `scripts/proactive_memory.py` to inject subconscious past context before prompt evaluation.
-  - `Stop`: Runs `scripts/harness.py update` to incrementally ingest new conversation transcripts into the SQLite FTS5 database.
-- **Sidecar Dashboard:** Accessible locally via `sidecars/memory-dashboard/dashboard_server.py` on port `55689` or `ANTIGRAVITY_SIDECAR_WEB_PORT` with real-time search, stats, and rule management.
+### 2. Version Control & Pull Request Discipline
+- **Never push untested breaking changes directly to `main`.**
+- Create dedicated feature or fix branches (`feat/...`, `fix/...`) and verify all checks before submitting a Pull Request.
+- Every Pull Request should include:
+  - **PR Title:** Semantic conventional commit title (e.g., `feat(graph): ...`).
+  - **Summary & Key Changes:** Concise overview of architectural updates.
+  - **Verification:** Output of `npm run typecheck` (`0` errors) and `npm test` (`92+` tests passing).
+
+### 3. Security & Zero-PII Credential Governance
+- Never hardcode or commit plaintext API keys, tokens, or personal data (`PII`) into the repository.
+- Route shared pool keys exclusively through the server-side vault (`/api/pool`) with anti-jailbreak inspection (`inspectPromptForKeyJailbreak`), `40%` warning notifications, and `50%` Emergency Auto-Cutoff (`status: 'emergency_stop'`) without deleting keys.
+- Sanitize external URLs (`http:` / `https:` only) and enforce strict mode-based tool isolation (`isChatModeOnlyTool` vs. `isProjectFilesystemOrAgentOnlyTool`).
+
+### 4. CI/CD & Cross-Platform Guardrails
+- **Cross-Platform Compatibility:** Maintain full compatibility across Web (Port `3000`), Android, and iOS.
+- **Sub-Agent Recursion Limit:** Enforce a strict Sub-Agent delegation depth limit (`depth <= 1`; no nested sub-agents) to prevent runaway token loops.
 
 ---
 
-## Verification
-Every code or rule change must be validated against the following checks:
-1. **Type Checking:** `npx tsc --noEmit` (must exit with 0 errors).
-2. **Automated Tests:** `npm test` (all unit and integration tests must pass).
-3. **Memory Integrity:** Query `get_user_profile()` via MCP to verify active rule alignment.
-4. **Build Integrity:** `npm run export-web` (must successfully bundle static and API routes).
+## Architecture Overview
+- **Framework:** Expo SDK `~54.0.37` (`expo-router@~6.0.27`, `react-native@0.81.5`, `react@19.1.0`, `typescript@~5.9.2`).
+- **Web Export & Edge API Routes:** Bundled via `scripts/patch-modules.js` and `expo export -p web`.
+- **Multi-Agent & Dual-Mode Runtime:** Orchestrated via `providers/AppProvider.tsx`, `providers/ChatProvider.tsx`, `providers/AgentProvider.tsx`, and `providers/ProjectProvider.tsx`.
 
 ---
 
-## Child DOX Index
-- [`.agent/rules/`](file:///d:/AI_mega_Brain_rork/.agent/rules/RULES.md) - Project-level rules, user profile preferences, and error memory log.
-- [`app/`](file:///d:/AI_mega_Brain_rork/app) - File-based routing, screen containers, and layout wrappers.
-- [`components/`](file:///d:/AI_mega_Brain_rork/components) - Reusable UI widgets, animated Task cards, and Thinking blocks.
-- [`providers/`](file:///d:/AI_mega_Brain_rork/providers) - State providers, AI service bridges, and multi-agent coordination.
-- [`scripts/`](file:///d:/AI_mega_Brain_rork/scripts) - Build patching, CI export shims, and postinstall hooks.
+## Verification Protocol
+Every pull request or architectural change must pass:
+1. **Type Checking:** `npm run typecheck` (`npx tsc --noEmit` must exit with `0` errors).
+2. **Automated Tests:** `npm test` (all `92+` unit and integration tests must pass).
+3. **Static Analysis:** `npm run lint` / `npm run lint:biome`.
+4. **Web Bundle Integrity:** `npm run export-web`.
+
+---
+
+## Repository Directory Index
+- [`docs/MASTER_CONCEPT.md`](docs/MASTER_CONCEPT.md) | [`docs/MASTER_CONCEPT.de.md`](docs/MASTER_CONCEPT.de.md) — Flagship Master Concept & Vision (EN / DE).
+- [`docs/README.md`](docs/README.md) | [`docs/README.de.md`](docs/README.de.md) — Bilingual Documentation Hub.
+- [`app/`](app/README.md) — Expo Router screens and server-side API routes (`app/api/`).
+- [`components/`](components/README.md) — Reusable UI components, Synapse Graph, Reasoning Orb, and Studio modals.
+- [`providers/`](providers/README.md) — Application state, chat orchestration, multi-agent runtime, and sandbox providers.
+- [`utils/`](utils/README.md) — Core AI service, YAML skill loader, Synapse Graph indexer, Key Pool vault, and Dual Git engine.
+- [`scripts/`](scripts/README.md) — Metro/Expo build patches and test runner utilities.
 
 ---
 

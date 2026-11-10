@@ -22,13 +22,14 @@
 ## 🧠 2. Zentrale State- & Runtime-Provider (`providers/`)
 
 ### 2.1 `AppProvider.tsx` — Globale Einstellungen, YAML-Skill-Speicher, Key-Pool & Modals
-- Verwaltet `AppSettings`, `todos`, `memos` (Synapse Memory Graph Knoten), `customSubAgents`, `uploadedSkillFiles` und `skillTriggerOverrides`.
+- Verwaltet `AppSettings`, `todos`, `memos` (Synapse Memory Graph Knoten), `customSubAgents`, `uploadedSkillFiles`, `skillEnabledOverrides`, `skillTriggerOverrides` (`mode: 'always' | 'keywords' | 'manual'`, `keywords: string[]`) und `subAgentWorkflow`.
 - Speichert den Zustand persistent über `AsyncStorage` und `IndexedDB`.
 - Steuert die globalen System-Modals:
-  - `showSubAgentStudio` (`SubAgentStudioModal`)
+  - `showSubAgentStudioModal` (`SubAgentStudioModal`)
   - `showFreePoolModal` (`FreeAIPoolModal`)
   - `showTutorialModal` (`TutorialModal`)
   - `showMasterConceptModal` (`MasterConceptModal`)
+  - `showSponsorModal` (`SponsorModal`)
 
 ### 2.2 `ChatProvider.tsx` — Dual-Mode KI-Orchestrierung, Streaming & Skill-Matching
 - **Dynamisches Skill-Matching (`matchActiveSkillsForTurn`):** Prüft bei jeder Nachricht alle Projekt- und hochgeladenen YAML-Skills / `AGENTS.md`-Regeln, injiziert passende Anweisungen in den System-Prompt und speichert die aktiven Namen in `loadedSkills` für das `Loaded:`-Badge unten rechts.

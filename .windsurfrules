@@ -1,10 +1,9 @@
-# 🤖 Windsurf / Cascade AI Rules
+# 🤖 Windsurf / Cascade AI Rules — Dev0 (v1.9)
 
-This project enforces a universal AI agent contract. Refer to:
+This repository enforces the **Dev0** open-source engineering contract. Refer to:
 
-- [`AGENTS.md`](AGENTS.md) for master directives and multi-agent workflows.
-- [`.agent/rules/RULES.md`](.agent/rules/RULES.md) for coding and safety standards.
-- [`.agent/rules/LEARNING.md`](.agent/rules/LEARNING.md) for long-term error memory.
-- [`.agent/rules/USER.md`](.agent/rules/USER.md) for user preferences.
+- [`AGENTS.md`](AGENTS.md) and [`.qoder/rules/Agent.md`](.qoder/rules/Agent.md) for master directives and multi-agent workflows.
+- [`docs/MASTER_CONCEPT.md`](docs/MASTER_CONCEPT.md) for core system architecture and the 6 technological pillars.
+- [`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md) for provider, tool isolation, and security standards.
 
-Follow strict Read-Before-Write execution and zero-error-tolerance protocols.
+Follow strict Read-Before-Write execution and zero-error-tolerance verification (`npm run typecheck && npm test`).

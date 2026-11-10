@@ -1,7 +1,7 @@
 {
   "name": "expo-app",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.9.0",
   "scripts": {
     "dev": "expo start --web --port 3000",
     "start": "expo start --web --port 3000",

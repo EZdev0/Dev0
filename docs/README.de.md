@@ -26,11 +26,10 @@ Willkommen im zentralen Dokumentationsverzeichnis von **Dev0 (v1.9)**. Sämtlich
 
 ---
 
-## 📋 3. Projekt-Tracking & Hauptverträge
+## 📋 3. Repository-Governance & Versionshistorie
 
 | Datei | Beschreibung |
 | :--- | :--- |
-| **[todo_tracking.md](todo_tracking.md)** | Aktives Engineering-Protokoll, erledigte Meilensteine und Critic-Agent-Abnahmebericht. |
-| **[../AGENTS.md](../AGENTS.md)** | Zentraler Workspace-Vertrag, Architektur-Historie (v1.0 → v1.9) und Verifizierungsprotokoll. |
+| **[../AGENTS.md](../AGENTS.md)** | Zentraler YAML-fähiger Workspace-Architekturvertrag (`v1.0` → `v1.9`) und Verifizierungsprotokoll. |
 | **[../CHANGELOG.md](../CHANGELOG.md)** | Chronologische Release-Historie aller Dev0-Versionen. |
-| **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Zweisprachige (EN / DE) Open-Source- und Partnerschafts-Richtlinien. |
+| **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Zweisprachige (EN / DE) Open-Source-, CLA- und Lizenz-Richtlinien. |

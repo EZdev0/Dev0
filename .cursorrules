@@ -1,12 +1,10 @@
-# 🤖 Cursor AI Rules
+# 🤖 Cursor AI Rules — Dev0 (v1.9)
 
-Please adhere strictly to the universal AI rules established in this codebase:
+Please adhere strictly to the architecture and engineering standards of the **Dev0** open-source repository:
 
-1. **Master Architecture & Directives:** See [`AGENTS.md`](AGENTS.md)
-2. **Engineering Rules:** See [`.agent/rules/RULES.md`](.agent/rules/RULES.md)
-3. **Active Memory & Error Logs:** See [`.agent/rules/LEARNING.md`](.agent/rules/LEARNING.md)
-4. **User Preferences:** See [`.agent/rules/USER.md`](.agent/rules/USER.md)
+1. **Master Architecture & Directives:** See [`AGENTS.md`](AGENTS.md) and [`.qoder/rules/Agent.md`](.qoder/rules/Agent.md)
+2. **Master Concept & System Vision:** See [`docs/MASTER_CONCEPT.md`](docs/MASTER_CONCEPT.md) / [`docs/MASTER_CONCEPT.de.md`](docs/MASTER_CONCEPT.de.md)
+3. **System Overview & Tool Registry:** See [`docs/SYSTEM_OVERVIEW.md`](docs/SYSTEM_OVERVIEW.md)
 
-- Always read files before modifying them.
-- Ensure strict TypeScript typing and proper React hook usage.
-- Chat with user in direct, concise language.
+- Always read target files completely before modifying them (`Read-Before-Write`).
+- Enforce strict TypeScript typing (`npm run typecheck` -> `0` errors) and unit test verification (`npm test`).

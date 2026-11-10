@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes, bug fixes, architectural improvements, and audits for **Dev0 (`AI_mega_Brain_rork`)** are documented in this file.
+All notable changes, bug fixes, architectural improvements, and audits for **Dev0 — Autonomous AI Software Engineering Workspace & Multi-Agent IDE** are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
