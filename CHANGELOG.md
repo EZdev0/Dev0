@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.9.0] - 2026-11-10
+
+### Added
+- **Bilingual Master Concept & Architecture System (`docs/MASTER_CONCEPT.md`, `docs/MASTER_CONCEPT.de.md`, `components/MasterConceptModal.tsx`)**:
+  - Authored complete English and German Master Concept whitepapers explaining Dev0's core philosophy, target audiences, and 6 technological pillars.
+  - Added the interactive bilingual (`DE` / `EN`) **Master Concept & System Architecture Modal** (`MasterConceptModal.tsx`) accessible from the Projects toolbar and Settings.
+- **Complete Bilingual (EN / DE) Documentation Suite (`docs/*.md`, `docs/*.de.md`, `README.md`, `README.de.md`, module `README.md`s)**:
+  - Provided parallel English (`.md`) and German (`.de.md`) editions for `README`, `MASTER_CONCEPT`, `SYSTEM_OVERVIEW`, `MULTI_AGENT_IMPLEMENTATION`, `SYSTEM_START`, `AUDIT_REPORT`, and `IMPLEMENTATION_REPORT`, and updated all 11 module `README.md` files with bilingual EN/DE documentation.
+
+### Removed
+- **Duplicate & Obsolete Documentation Fragments**:
+  - Removed 12 duplicate/fragment `.md` files in `docs/` (`FIXES_*.md`, `NULL_SAFETY_COMPLETE.md`, `QUESTIONS_PHASE_UI_COMPLETE.md`, `docs/AGENTS.md`, `docs/CLAUDE.md`, `docs/copilot-instructions.md`, `docs/README_changes.md`, `docs/info.md`), legacy `.qoder/rules/lessons_learned.md` and `user.md`, and root dummy files (`Update`, `Update2`).
+
+---
+
+## [1.8.0] - 2026-11-09
+
+### Added
+- **Extra YAML Learning Engine, `.ZIP` Skill Pack Importer & 1-Click AI Repair (`utils/skill-loader.ts`, `components/SubAgentStudioModal.tsx`, `providers/AppProvider.tsx`, `providers/ChatProvider.tsx`, `components/ChatBubble.tsx`)**:
+  - Replaced the legacy 5 Identity Files (`SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`) with `.md`/`.yml`/`AGENTS.md`/`.zip` skill pack importing (`importSkillsFromZipOrFiles`), `.qoder/` prefix stripping (`formatSkillSourceForDisplay`), `! CORRUPTED YAML` flagging + 1-click **"Fix with AI"** repair (`repairCorruptedSkillContent`), **Always (Background)** vs. **Custom Trigger Words / Phrases / Letters** (`matchActiveSkillsForTurn`), and bottom-right `Loaded: <Skills / AGENTS.md>` badges in Chat.
+- **Animated Reasoning Orb -> Single Text-Streaming Box (`components/ThinkingBlock.tsx`, `app/(tabs)/chat/index.tsx`, `utils/ai-service.ts`)**:
+  - Enforced `<think>...</think>` extended thinking, rendered **only** the **Animated Reasoning Orb** when `isLive && !hasRealReasoning`, and transitioned into **one single text-streaming box** once reasoning tokens arrive.
+- **Classic Projects View, 1-Click Project Deletion, Dashboard in Slot 1, Interactive Drag-and-Drop Synapse Graph & English Tutorial (`app/(tabs)/(home)/index.tsx`, `providers/ProjectProvider.tsx`, `app/(tabs)/tools/index.tsx`, `components/SynapseGraphView.tsx`, `components/TutorialModal.tsx`)**:
+  - Restored classic File Tree default view (`viewMode = 'tree'`), fixed 1-click project deletion (`deleteProject`), placed `Dashboard` in Slot 1 of Tools (`[Dashboard, Tools, Plans, Graph, Search, Chat]`), added Node Drag-and-Drop and Left/Right-Click menus to `SynapseGraphView`, added Codebase & Graph Node search, and added the 5-step English System Tutorial.
+
+---
+
 ## [1.7.0] - 2026-11-09
 
 ### Added

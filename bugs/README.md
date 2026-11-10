@@ -11,7 +11,9 @@ This directory documents all diagnosed bugs, token-consumption bottlenecks, depr
 | **BUG-01** | [Excessive Token Consumption & Local LLM Tool Parsing Failures](./BUG_01_TOKEN_BURN_AND_LOCAL_LLM_PARSING.md) | Critical | Resolved | `utils/ai-service.ts`, `utils/synapse-graph.ts`, `utils/chat-compression.ts` |
 | **BUG-02** | [Rork Toolkit SDK Deprecation Warnings & Metro Disconnect (1006)](./BUG_02_RORK_DEPRECATION_AND_METRO_1006.md) | High | Resolved | `providers/ChatProvider.tsx`, `scripts/patch-modules.js` |
 | **BUG-03** | [Custom Models CORS NetworkError & Cross-Platform WebView/Wasm Preview](./BUG_03_CUSTOM_MODELS_CORS_AND_WEBVIEW_WASM.md) | High | Resolved | `app/api/models+api.ts`, `app/(tabs)/settings/index.tsx`, `components/HTMLPreview.tsx` |
-| **BUG-04** | [Gemini 2.5/3 `thoughtSignature` HTTP 400 & Sub-Tab Lock Loop](./BUG_04_THOUGHT_SIGNATURE_AND_NAVIGATION.md) | Critical | Resolved | `utils/ai-service.ts`, `app/(tabs)/tools/index.tsx`, `components/MultiAgentUI.tsx` |
+| **BUG-04** | [Question Tool Guard, Sub-Agent Relay & Netlify Build Hardening](./BUG_04_QUESTION_TOOL_AND_NETLIFY_BUILD.md) | Critical | Resolved | `utils/subagent-question-relay.ts`, `providers/ChatProvider.tsx`, `netlify.toml` |
+
+> 📖 For the complete v1.9 Security & Architecture Audit in English and German, see **[docs/AUDIT_REPORT.md](../docs/AUDIT_REPORT.md)** (EN) and **[docs/AUDIT_REPORT.de.md](../docs/AUDIT_REPORT.de.md)** (DE).
 
 ---
 

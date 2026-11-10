@@ -41,6 +41,7 @@ export default function ProjectsScreen() {
     skillTriggerOverrides,
     uploadedSkillFiles,
     setShowTutorialModal,
+    setShowMasterConceptModal,
   } = useApp();
   const [viewMode, setViewMode] = useState<'synapse' | 'tree'>('tree');
 
@@ -506,6 +507,14 @@ export default function ProjectsScreen() {
           <Text style={[styles.actionBarBtnText, { color: IDE.primary }]}>
             Synapse Graph
           </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.actionBarBtn}
+          onPress={() => setShowMasterConceptModal(true)}
+          activeOpacity={0.7}
+        >
+          <FileText size={14} color={IDE.primary} />
+          <Text style={[styles.actionBarBtnText, { color: IDE.primary }]}>Concept (DE/EN)</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionBarBtn}

@@ -187,3 +187,13 @@ Every code or rule change must be validated against the following checks:
 - **Classic Projects View, Working 1-Click Project Deletion, Dashboard in Slot 1, Interactive Drag-and-Drop Synapse Graph & English Tutorial (`app/(tabs)/(home)/index.tsx`, `providers/ProjectProvider.tsx`, `app/(tabs)/tools/index.tsx`, `components/SynapseGraphView.tsx`, `components/TutorialModal.tsx`):**
   - Restores the classic File Tree view in Projects (`viewMode = 'tree'`), fixes persistent project deletion in `ProjectProvider.tsx` (`deleteProject`), places **Dashboard in Slot 1** of Tools (`[Dashboard, Tools, Plans, Graph, Search, Chat]`), upgrades `SynapseGraphView` with **Node Drag-and-Drop**, **Left-Click Inspector**, and **Right-Click / Long-Press Context Menu**, adds Codebase & Graph Node results to `Tools -> Search`, and includes an interactive 5-step **English System Tutorial** (`TutorialModal.tsx`).
 
+---
+
+## Bilingual Master Concept System (`MASTER_CONCEPT.md` / `.de.md`), In-App Concept Explorer & Deduplicated Documentation Suite (v1.9.0)
+- **Flagship Bilingual Master Concept & Vision (`docs/MASTER_CONCEPT.md`, `docs/MASTER_CONCEPT.de.md`, `components/MasterConceptModal.tsx`):**
+  - Establishes a persuasive, capability-driven Master Concept in both **English** and **German** detailing what Dev0 stands for (Zero Context Loss, Zero Unintended Mutation, Zero Credential Exposure, Zero Platform Lock-In), target personas (Indie Builders / Vibecoders, Senior Systems Architects, Privacy/Local-LLM Engineers, Teams/Educators), and the 6 core technological pillars.
+  - Adds the interactive bilingual (`DE` / `EN`) **Master Concept & System Architecture Modal** (`components/MasterConceptModal.tsx`) accessible from the Projects toolbar (`Concept (DE/EN)`) and Settings (`Master Concept & Vision (DE / EN)`).
+- **Complete Documentation Modernization, Bilingual Translation & Duplicate Removal (`docs/*.md`, `docs/*.de.md`, `README.md`, `README.de.md`, module `README.md`s):**
+  - Removed all 12 duplicate/fragment March 2026 `.md` files from `docs/` (`FIXES_*.md`, `NULL_SAFETY_COMPLETE.md`, `QUESTIONS_PHASE_UI_COMPLETE.md`, duplicate `docs/AGENTS.md`, `docs/CLAUDE.md`, `docs/copilot-instructions.md`, `docs/README_changes.md`, `docs/info.md`), legacy `.qoder/rules/lessons_learned.md` & `user.md`, and root dummy files (`Update`, `Update2`).
+  - Consolidated and translated all core documentation pairs in `docs/` (`README`, `MASTER_CONCEPT`, `SYSTEM_OVERVIEW`, `MULTI_AGENT_IMPLEMENTATION`, `SYSTEM_START`, `AUDIT_REPORT`, `IMPLEMENTATION_REPORT` in both `.md` [EN] and `.de.md` [DE]) plus all 11 module `README.md` files.
+

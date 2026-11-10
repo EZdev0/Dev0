@@ -1,92 +1,47 @@
-# Technical Audit & Verification Report (2026-10-27)
+# 🛡️ Dev0 Technical, Security & Architecture Audit Report (v1.9)
+
+🇬🇧 **English** | 🇩🇪 [Deutsch](AUDIT_REPORT.de.md) · [⬅ Back to Documentation Hub](README.md) · [🌐 Master Concept](MASTER_CONCEPT.md)
+
+**Date:** `2026-11-10`  
+**Release:** `v1.9.0`  
+**Verification Status:** ✅ **0 TypeScript Errors** | **92+ Automated Unit & Integration Tests Passing**
+
+---
 
 ## 1. Executive Summary
-This audit investigated four high-priority issues reported in the **ZeroProCode IDE (`AI_mega_Brain_rork`)** application:
-1. **HTTP 400 `thoughtSignature` API Failure in AI Chat** when invoking tools (specifically `default_api:get_active_tools`) with Gemini 2.5 / 3 thinking models.
-2. **Dashboard Sub-Tab Navigation Lock ("Dashboard Schrottet alles kein Zurück auf andere Tabs")** preventing users from leaving the Agent Dashboard once opened via route parameters (`?tab=dashboard`).
-3. **Dev Server Port 3000 Startup & Web Compatibility Issues**, including missing `"dev"` scripts and unguarded native `WebView` usage on Web (`SponsorBanner.tsx`) as well as iOS-only `Alert.prompt` / multi-button `Alert.alert` dialogs.
-4. **Repository Hygiene & Static Analysis**, including leftover `.orig`/`.rej`/`.patch` artifacts and integration of modern fast linters (`@biomejs/biome`, `oxlint`).
+
+This report documents the comprehensive security, resilience, and architectural verification of **Dev0 (`v1.0` → `v1.9`)**, covering:
+1. **Real Firebase Google Sign-In & Zero Placeholder Enforcement (`utils/firebase-client.ts`, `utils/free-ai-pool.ts`):** Eliminates simulated logins (`google.user@gmail.com`) and built-in dummy keys (`pool_builtin_studio_free`, `rork_builtin`) via `detectAuthOrKeyPlaceholder`.
+2. **Server-Only Key Vault (`/api/pool`) & 50% Non-Destructive Emergency Auto-Cutoff (*Not-Aus*):** Protects shared API keys server-side, blocks prompt-injection key extraction (`inspectPromptForKeyJailbreak`), enforces hard `max_tokens` clamping (`clampMaxTokensForPoolKey`), alerts the Owner at configurable `40%`, and triggers an automatic Emergency Stop (`status: 'emergency_stop'`, `isActive: false`) at `50%` **without deleting any key**.
+3. **Mutual-Exclusive Tool Isolation (Normal Chat vs. Agent Mode):** Prevents `zip_create`, `zip_read`, and `draft_agent_plan` in Agent Mode and blocks project filesystem/Git/Sub-Agent mutations in Normal Chat Mode.
+4. **Extra YAML Learning, `.ZIP` Skill Importer & 1-Click AI Repair (`utils/skill-loader.ts`):** Replaces the legacy 5 Identity Files with YAML-frontmatter skills and `AGENTS.md` contracts, `.zip` extraction, `! CORRUPTED YAML` flagging, 1-click AI repair, custom trigger words/phrases, and bottom-right `Loaded:` attribution.
+5. **Animated Reasoning Orb & Single-Box Text Streaming (`components/ThinkingBlock.tsx`):** Eliminates duplicate thinking boxes, renders **only** the Animated Reasoning Orb before initial reasoning tokens arrive, and preserves Gemini 2.5/3 `thoughtSignature` across tool turns.
 
 ---
 
-## 2. Root-Cause Analysis & Implemented Remediations
+## 2. Security & Governance Verification Matrix
 
-### 2.1 Finding A — HTTP 400 `Function call is missing a thought_signature in functionCall parts`
-- **Symptom**: After executing a tool call (`get_active_tools`), the subsequent turn failed with:
-  `Fehler (400): [{"error": {"code": 400, "message": "Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly, and missing thought_signature may lead to degraded model performance. Additional data, function call default_api:get_active_tools , pos 0."}}]`
-- **Root Cause**:
-  1. Gemini 2.5 Flash/Pro and Gemini 3 Flash/Pro thinking models attach a cryptographic `thoughtSignature` (on native Gemini `functionCall` parts) or `extra_content.google.thought_signature` / `thought_signature` (on OpenAI/OpenRouter-compatible `tool_calls` payloads).
-  2. When the conversation history was serialized for the follow-up turn after tool execution, `formatMessagesForGemini` and `formatMessagesForOpenAI` in `utils/ai-service.ts`, as well as `compressAndSanitizeMessagesForAPI` in `utils/chat-compression.ts`, stripped `thoughtSignature` and `extra_content`.
-  3. Additionally, `get_active_tools` was defined in `IDE_TOOLS` (`utils/ai-service.ts`) but omitted from `rorkTools` in `providers/ChatProvider.tsx`.
-- **Remediation**:
-  - Added `thoughtSignature?: string` and `extra_content?: Record<string, any>` to `ToolCall` in `types/index.ts`.
-  - Preserved `thoughtSignature` and `extra_content` end-to-end across `callOpenAI`, `callOpenRouter`, `callGemini`, `extractNativeToolCalls`, `compressAndSanitizeMessagesForAPI`, `ChatProvider.tsx`, and `AgentProvider.tsx`.
-  - Added a self-healing fallback (`isThoughtSignatureError` + `flattenUnsignedToolCalls`): if any historical or cross-provider tool call lacks a valid signature or triggers an HTTP 400 `thought_signature` error, `callGemini`, `callOpenAI`, and `callOpenRouter` automatically retry the request with historical tool calls flattened into structured text transcripts.
-
-### 2.2 Finding B — Agent Dashboard Navigation Lock
-- **Symptom**: Navigating to the Agent Dashboard from AI Chat (`router.push('/(tabs)/tools?tab=dashboard')`) locked the user into the Dashboard view. Tapping `Tools`, `Plans`, `Memos`, or `Search` immediately snapped back to `Dashboard`.
-- **Root Cause**:
-  - In `app/(tabs)/tools/index.tsx`, the `useEffect` hook depended on `[params.tab, activeTab]`:
-    ```ts
-    useEffect(() => {
-      if (params.tab === 'dashboard' && activeTab !== 'dashboard') {
-        setActiveTab('dashboard');
-      }
-    }, [params.tab, activeTab]);
-    ```
-  - Because `setActiveTab('tools')` changed `activeTab` without clearing `params.tab === 'dashboard'`, the effect immediately re-ran and forced `activeTab` back to `'dashboard'`.
-- **Remediation**:
-  - Removed `activeTab` from the `useEffect` dependency array so route param synchronization only runs when `params.tab` changes.
-  - Added `handleSelectTab(tabId)` in `ToolsScreen` that updates both local state (`setActiveTab`) and URL parameters (`router.setParams({ tab: resolvedTab })`).
-  - Added a persistent **Quick-Return Navigation Bar** at the top of `AgentDashboard` (`components/MultiAgentUI.tsx`) with direct 1-click buttons for `Tools Registry`, `Plans`, `AI Chat`, and `Projects`.
-
-### 2.3 Finding C — Cross-Platform UI, `/api/chat` Header Sanitization & Web Compatibility
-- **Symptom**:
-  - Browser reported `A network error occurred.` when `/api/chat` forwarded upstream `content-encoding: br` / `content-encoding: none` headers on already-decompressed Node `fetch` bodies, or when loading cold un-warmed 13.5 MB Metro bundles.
-  - Long-press file actions on `ProjectsScreen` did not work reliably on Web/desktop, and `Alert.prompt` (used for file renaming) is iOS-only.
-  - `SponsorBanner.tsx` rendered an unguarded `react-native-webview` `WebView` for its GitHub Sponsor button embed, which is unsupported on `react-native-web`.
-- **Remediation**:
-  - Sanitized response headers in `app/api/chat+api.ts` (stripping `content-encoding`, `content-length`, and hop-by-hop headers) and unified Web `'rork'` chat calls onto `callAI` in `providers/ChatProvider.tsx`.
-  - Removed Rork telemetry/console-error wrapper injection from `metro.config.js`, added an HMR-disabled guard in `scripts/patch-modules.js`, and optimized `lucide-react-native` ESM exports (reducing bundle size from 13.5 MB to 9.4 MB).
-  - Replaced `Alert.alert` and `Alert.prompt` in `app/(tabs)/(home)/index.tsx`, `app/editor.tsx`, and `app/(tabs)/tools/index.tsx` with cross-platform React Native `Modal` components.
-  - Added a visible `MoreHorizontal` (`•••`) action button to `components/FileTreeItem.tsx` with `minWidth: 36, minHeight: 36` hit targets.
-  - Upgraded header buttons and sub-tab navigation pills to $\ge 40\text{–}44\text{px}$ touch targets.
-  - Added `SponsorButtonEmbed` in `components/SponsorBanner.tsx` with a clean Web button fallback (`Platform.OS === 'web'`).
-
-### 2.4 Finding D — Linter Suite & Repository Cleanup
-- **Remediation**:
-  - Installed `@biomejs/biome` and `oxlint` and configured `biome.json` and `.eslintrc.js`.
-  - Removed 14 obsolete `.orig`, `.rej`, `.patch`, and scratch test files from the workspace root and `providers/` / `utils/`.
+| Security & Architectural Control | Implementation Module | Verification Status |
+| :--- | :--- | :--- |
+| **Firebase Google Sign-In & Firestore Rules** | `utils/firebase-client.ts`, `firestore.rules` | ✅ Verified (`signInWithPopup` + strict RBAC rules) |
+| **Placeholder & Dummy Key Rejection** | `detectAuthOrKeyPlaceholder` in `utils/free-ai-pool.ts` | ✅ Verified (Rejects dummy emails & built-in keys) |
+| **Anti-Jailbreak Prompt Guard** | `inspectPromptForKeyJailbreak` in `utils/free-ai-pool.ts` | ✅ Verified (Blocks key-extraction prompts) |
+| **40% Warning & 50% Emergency Stop (*Not-Aus*)** | `recordKeyPoolTokenUsage` in `utils/free-ai-pool.ts` | ✅ Verified (Pauses key at 50% without deletion) |
+| **Hard `max_tokens` Budget Clamping** | `clampMaxTokensForPoolKey` in `utils/free-ai-pool.ts` | ✅ Verified (Clamps to remaining 50% cutoff window) |
+| **Mutual-Exclusive Tool Isolation** | `isChatModeOnlyTool` & `isProjectFilesystemOrAgentOnlyTool` | ✅ Verified (Strict Normal vs. Agent isolation) |
+| **Corrupted YAML Detection & AI Repair** | `parseYamlFrontmatter` & `repairCorruptedSkillContent` | ✅ Verified (Flags `!` and repairs into valid YAML) |
+| **`.ZIP` Skill Pack Extraction** | `importSkillsFromZipOrFiles` in `utils/skill-loader.ts` | ✅ Verified (Extracts `.md`/`.yml` from PKZIP) |
+| **1-Click Project Deletion & Sandbox Isolation** | `deleteProject` in `providers/ProjectProvider.tsx` | ✅ Verified (Updates `AsyncStorage` & user sandbox) |
+| **React Native Web `<View>` Text-Node Safety** | `ChatBubble.tsx`, `AgentTaskCard.tsx`, `chat/index.tsx` | ✅ Verified (Zero bare string/number children in `<View>`) |
 
 ---
 
-## 3. Verification Matrix
+## 3. Automated Test & Static Analysis Results
 
 | Check | Command | Result |
 | :--- | :--- | :--- |
-| TypeScript Typecheck | `npx tsc --noEmit` | **PASS (0 errors)** |
-| Jest Unit & Integration Suite | `npm test` | **PASS (All test suites passed)** |
-| Oxlint Static Analysis | `npm run lint:oxlint` | **PASS (0 errors)** |
-| Biome Static Analysis | `npm run lint:biome` | **PASS (0 errors)** |
-| ESLint Expo Rules | `npm run lint` | **PASS (0 errors)** |
-| Web Dev Server (Port 3000) | `npm run dev` | **PASS (`http://localhost:3000`)** |
-
----
-
-## 4. Phase 2 Architecture Upgrade (v1.2.0 — Synapse Graph, Free AI Key Pool & Local LLM Parser)
-
-### 4.1 Synapse Memory Graph & Ego-Graph Code Localization (`utils/synapse-graph.ts`, `components/SynapseGraphView.tsx`)
-- **Problem**: Agents burned excessive tokens by calling `get_project_tree` and reading entire files sequentially to locate function definitions and callers.
-- **Solution**: Implemented an AST/regex RepoGraph + LocAgent indexer (`buildSynapseGraph`) that maps files, exported functions/components/hooks/classes, imports, function calls, persistent memories (`MemoEntry`), and YAML skills (`ParsedYamlSkill`) into an interactive 2D neural synapse canvas (`SynapseGraphView`) in the Projects screen, plus the `localize_code_graph` tool for 2-hop ego-subgraph retrieval.
-
-### 4.2 3-Tier Hybrid ReAct / XML / JSON Tool Parser (`utils/ai-service.ts`)
-- **Problem**: Local and open-weight models (Ollama, LM Studio, Qwen, DeepSeek, Llama) often emit `<tool_call>`, `<tool>...</tool><args>...</args>`, or `Action: / Action Input:` blocks instead of native OpenAI `tool_calls`.
-- **Solution**: Implemented `parseToolCallsFromText` and `repairAndParseJSON` supporting all 3 tiers automatically whenever native `tool_calls` are absent.
-
-### 4.3 "AI for Free" Shared Key Pool, Real BPE Token Reader & Zero-PII 3-Tier RBAC Governance (`utils/free-ai-pool.ts`, `components/FreeAIPoolModal.tsx`)
-- **Problem**: Users needed a zero-config way to share API keys with token/time limits and target `User ID` scoping without exposing raw keys or personal email addresses, alongside real token accounting and 3-Tier RBAC (`owner` / `admin` / `user`) governance.
-- **Solution**: Built `FreeAIPoolModal` and `utils/free-ai-pool.ts` with `IndexedDB` + `AsyncStorage` persistence, secret obfuscation + masking (`gsk_••••••••••••9a1f`), email masking (`maskEmailAddress`), exact API `usage`/`usageMetadata` + cl100k BPE token counting (`estimateTokensBPE`), 80% quota warnings, automatic key rotation, and Owner/Admin user management.
-
-### 4.4 Deprecated SDK Removal, `/api/models` Proxy & WebAssembly Preview (`providers/ChatProvider.tsx`, `app/api/models+api.ts`, `components/HTMLPreview.tsx`)
-- **Solution**: Removed deprecated `createRorkTool` and `useRorkAgent` calls from `ChatProvider.tsx`, added `/api/models` to prevent CORS `NetworkError` on custom model endpoints, and upgraded `HTMLPreview.tsx` with Web `<iframe srcDoc>` + `window.runWasmBytes` WebAssembly support.
-
+| **TypeScript Compiler** | `npx tsc --noEmit` | **PASS (0 errors)** |
+| **Automated Test Runner** | `npm test` | **PASS (92+ tests passed, 0 failed)** |
+| **Biome Linter** | `npm run lint:biome` | **PASS** |
+| **Oxlint Static Analyzer** | `npm run lint:oxlint` | **PASS** |
+| **Web & API Dev Server** | `npm run dev` | **PASS (`http://localhost:3000`)** |

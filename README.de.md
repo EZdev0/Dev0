@@ -1,99 +1,61 @@
-# Dev0
+# ⚡ Dev0 — Autonomous AI Software Engineering Workspace & Multi-Agent IDE (v1.9)
 
-🇬🇧 [English](README.md) | 🇩🇪 [Deutsch](README.de.md)
+🇬🇧 [English](README.md) | 🇩🇪 **Deutsch** · 📖 **[Master-Konzept & Vision (DE)](docs/MASTER_CONCEPT.de.md)** · 📖 **[Master Concept & Vision (EN)](docs/MASTER_CONCEPT.md)** · 📚 **[Vollständiges Dokumentations-Zentrum](docs/README.de.md)**
 
-Willkommen bei der **Dev0**, einer leistungsstarken, plattformübergreifenden nativen mobilen IDE-Anwendung, die mit React Native und Expo entwickelt wurde. Dev0 bietet eine integrierte KI-gesteuerte Entwicklungsumgebung und unterstützt nativ eine Vielzahl von KI-Anbietern.
+Willkommen bei **Dev0**, einer plattformübergreifenden, selbstlernenden **Autonomous AI Software Engineering Workspace und Multi-Agent IDE**, entwickelt mit **Expo SDK 54, React Native 0.81, React 19, TypeScript 5.9 sowie isolierten Docker- und IndexedDB-Sandboxes**.
 
-## Projektinformationen
+---
 
-- **Plattform**: Native iOS, Android und Web
-- **Framework**: Expo Router + React Native
-- **Paketmanager**: Bun
-- **Sprache**: TypeScript
+## 🌟 Warum Dev0? (Die 6 technologischen Kernpfeiler)
 
-## Hauptfunktionen
+1. **Strikte wechselseitige Tool-Isolation (Normal Chat Mode vs. Agent Mode):**
+   - **Normal Chat Mode (`agentMode: false`):** Dateisystem-Schreibzugriffe und Hintergrund-Sub-Agenten sind strikt isoliert. Generierte Dateien werden als herunterladbare **PKZIP-Grafikkarten** (`zip_create` / `zip_read`) bereitgestellt, komplexe Vorhaben als interaktive **Execution Plan Cards** (`draft_agent_plan`) entworfen, und Sub-Agent-Anfragen öffnen gezielt das **Sub-Agent Floating Konfigurations-Menü**.
+   - **Agent Mode (`agentMode: true`):** Voller Zugriff auf **46+ Engineering-Tools**, Read-Before-Write-Dateibearbeitung, Scoped Sub-Agenten, automatische Cron-Jobs und Dual-Git-Wiederherstellungspunkte.
+2. **Erzwungenes Extended Thinking (`<think>...</think>`) & Animierter Reasoning-Orb:**
+   - Zeigt während des Wartens auf die ersten Denk-Tokens (`isLive && !hasRealReasoning`) **ausschließlich** den pulsierenden **Animated Reasoning Orb** und geht beim Eintreffen des Denktextes nahtlos in **genau eine Text-Streaming-Box (`ThinkingBlock`)** über – inklusive Gemini 2.5/3 `thoughtSignature`-Erhaltung und automatischem HTTP-400-Self-Healing.
+3. **Extra YAML Learning Engine, `.ZIP`-Skill-Pack-Importer & 1-Klick-KI-Reparatur:**
+   - Direktes Hochladen von `.md`-, `.yml`-, `AGENTS.md`-Dateien oder ganzen `.zip`-Skill-Archiven (`importSkillsFromZipOrFiles`).
+   - Automatische Erkennung fehlerhafter oder fehlender YAML-Header (`! CORRUPTED YAML`) mit **1-Klick „Fix with AI“-Reparatur** (`repairCorruptedSkillContent`).
+   - Pro Skill / `AGENTS.md` frei wählbar zwischen **Always (Background)**, **Custom Trigger Words / Phrases / Letters** oder **Manual (`@skill`)** – inklusive dezenter **`Loaded: <Skills / AGENTS.md>`**-Anzeige unten rechts in jeder Chat-Blase.
+4. **Interaktiver 2D Synapse Memory & Codebase Graph (`Tools -> Graph`):**
+   - Getrennte Tabs für **Memory Graph** (auch ohne Projekt nutzbar) und **Project Code Graph** mit **Node Drag & Drop**, **Linksklick-Inspektor**, **Rechtsklick- / Long-Press-Kontextmenü** und **2-Hop Ego-Subgraph Code-Lokalisierung (`localize_code_graph`)**.
+5. **Scoped Multi-Agenten-Schwarm, Live Read-Only Stream & `.agents/<slug>/`-Cron-Workflows:**
+   - Konfiguration eigener Sub-Agenten mit **„AI Generate All“**-Sperr-Overlay, Echtzeit-Beobachtung im **Live Read-Only Stream Modal** sowie automatisierte Hintergrund-Abläufe über versteckte `.agents/<slug>/`-Workspaces und `finish_task`-Cron-Trigger.
+6. **Zero-PII Server-Key-Tresor (`/api/pool`), 50-%-Not-Aus & Dual-Git-Restore:**
+   - Serverseitiger API-Key-Tresor mit Anti-Jailbreak-Schutz, echtem Firebase Google Sign-In, 3-Tier RBAC (`owner` / `admin` / `user`), einstellbarer `40-%`-Warnung und automatischem **`50-%`-Not-Aus (*Emergency Stop*) ohne Löschen von Schlüsseln** – kombiniert mit Browser- und Docker-Git-Wiederherstellungspunkten.
 
-- **Multi-Provider KI-Integration**: Unterstützt nativ OpenAI, Anthropic, Gemini, Groq, OpenRouter, NVIDIA NIM und Custom/Local-Modelle.
-- **Rork Integration**: Nutzt das `@rork-ai/toolkit-sdk` für den robusten Rork-Anbieter (Studio KI).
-- **Benutzerdefiniertes natives Markdown-Rendering**: Verwendet einen hochoptimierten, benutzerdefinierten Regex-basierten Markdown-Parser (`utils/syntax.ts`) in `ChatBubble.tsx`. Dieser unterstützt GitHub Flavored Markdown (GFM) Tabellen und eingebettete `<iframe>` Tags, die nahtlos auf React Native WebViews abgebildet werden, ohne auf aufgeblähte externe Markdown-Bibliotheken angewiesen zu sein.
-- **Plattformübergreifendes Proxying (Web CORS)**:
-  - Im Web werden KI-Anfragen an das Rork-Toolkit reibungslos über eine lokale Expo-API-Route (`app/api/chat+api.ts`) weitergeleitet. Dadurch wird sichergestellt, dass Server-Sent Events (SSE) Streaming durch direkte Weitergabe von `response.body` perfekt funktioniert.
-  - Anfragen an NVIDIA NIM werden über Netlify-Redirects (`/api/nvidia/*` zu `https://integrate.api.nvidia.com/:splat`), die in `netlify.toml` konfiguriert sind, abgewickelt.
-  - Native Apps umgehen diese Proxys effizient und rufen die Endpunkte direkt auf.
-- **Sponsoren-Integration**: Beinhaltet eine GitHub Sponsors Integration für [EZdev0](https://github.com/EZdev0) (Kontakt: EZdev-info@proton.me). Bietet ein globales Overlay (`SponsorOverlay`) mit einem strikten 5-sekündigen, nicht überspringbaren Countdown, das dynamisch basierend auf der Anzahl von Benutzerinteraktionen ausgelöst wird.
+---
 
-## Verzeichnisstruktur
+## 🗂️ Repository- & Modul-Dokumentation (DE / EN)
 
-Hier ist ein kurzer Überblick über die Projektstruktur. Jeder Ordner enthält eine eigene `README.md` mit weiteren Details (auf Englisch):
+Jedes Verzeichnis verfügt über zweisprachige (**Deutsch & Englisch**) Dokumentationen:
 
-- [components/](components/README.md) - Wiederverwendbare UI-Komponenten
-- [app/](app/README.md) - Expo Router Screens und Layouts
-- [app/api/](app/api/README.md) - Serverseitige API-Routen
-- [netlify/](netlify/README.md) - Netlify Funktionen und Konfigurationen
-- [utils/](utils/README.md) - Hilfsfunktionen und Utilities
-- [docs/](docs/README.md) - Zusätzliche Dokumentation
-- [providers/](providers/README.md) - React Context Provider
-- [scripts/](scripts/README.md) - Automatisierungs- und Build-Skripte
-- [assets/](assets/README.md) - Statische Dateien wie Bilder und Schriftarten
-- [\_\_tests\_\_/](__tests__/README.md) - Jest Unit-Tests
-- [constants/](constants/README.md) - Globale Konfigurationen und Konstanten
-- [types/](types/README.md) - TypeScript Interfaces und Typen
+- 📖 **[docs/MASTER_CONCEPT.de.md](docs/MASTER_CONCEPT.de.md)** | **[docs/MASTER_CONCEPT.md](docs/MASTER_CONCEPT.md)** — Das vollständige Master-Konzept, Zielgruppen & die 6 Architektur-Kernpfeiler
+- 📚 **[docs/README.de.md](docs/README.de.md)** | **[docs/README.md](docs/README.md)** — Dokumentations-Zentrum (Systemübersicht, Multi-Agenten-Handbuch, Sicherheits-Audits)
+- 🧩 **[components/README.md](components/README.md)** — UI-Komponenten (`SynapseGraphView`, `ThinkingBlock`, `SubAgentStudioModal`, `MasterConceptModal`, `TutorialModal`)
+- 🧠 **[providers/README.md](providers/README.md)** — State- & Runtime-Provider (`AppProvider`, `ChatProvider`, `AgentProvider`, `ProjectProvider`)
+- 🛠️ **[utils/README.md](utils/README.md)** — Kern-Engines (`ai-service`, `skill-loader`, `synapse-graph`, `free-ai-pool`, `git-restore`, `chat-zip`)
+- 📱 **[app/README.md](app/README.md)** & **[app/api/README.md](app/api/README.md)** — Expo Router Screens & Server-API-Routen (`/api/chat`, `/api/pool`, `/api/sandbox`, `/api/models`, `/api/search`, `/api/fetch`)
+- 📐 **[types/README.md](types/README.md)** & **[constants/README.md](constants/README.md)** — TypeScript-Typen, 46+ Tool-Definitionen & IDE-Farbschema
+- 🧪 **[__tests__/README.md](__tests__/README.md)** & **[scripts/README.md](scripts/README.md)** — 92+ automatisierte Unit-/Integrationstests & Build-Skripte
 
-## Erste Schritte
+---
 
-### Voraussetzungen
-- [Node.js](https://nodejs.org/) & [Bun](https://bun.sh/)
-
-### Installation
+## 🚀 Schnellstart & Verifizierung
 
 ```bash
-# 1. Repository klonen
-git clone <YOUR_GIT_URL>
-cd studio-ide
+# 1. Abhängigkeiten installieren
+npm install
 
-# 2. Abhängigkeiten mit Bun installieren
-bun i
-```
+# 2. Web- & API-Entwicklungsserver starten (Port 3000)
+npm run dev
 
-### Lokale Entwicklung (Immer erst lokal testen, bevor bereitgestellt wird!)
+# 3. Strikte TypeScript-Prüfung (0 Fehler)
+npm run typecheck
 
-```bash
-# Web-Vorschau starten
-bun run start web
-
-# iOS Simulator starten
-bun run start -- --ios
-
-# Android Emulator starten
-bun run start -- --android
-```
-
-## Testen
-
-Das Projekt verwendet **Jest** für Unit-Tests, mit einem starken Fokus auf robuste Null-Fehler-Behandlung.
-
-```bash
-# Tests ausführen
-npm run test
-# oder
-npx jest
-```
-
-## Build & Deployment
-
-Wir verwenden GitHub Actions (`eas-build.yml`) für Continuous Integration.
-
-### Web Deployment (Netlify)
-Web-Builds werden über Expo exportiert und auf Netlify bereitgestellt. Dabei wird der Adapter `expo-server/adapter/netlify` verwendet, um serverseitige Expo API-Routen zu unterstützen.
-```bash
-bun x expo export -p web
-```
-
-### Android Deployment
-Android-Builds nutzen EAS (Expo Application Services) unter dem EAS-Projektbesitzer `ezdev2`, um die Zertifikatsanforderungen für iOS Apple Developer zu umgehen.
-```bash
-eas build --platform android
+# 4. Automatisierte Test-Suite ausführen (92+ Tests)
+npm test
 ```
 
 ---
-*Mit ❤️ vom Dev0 Team gepflegt. Diese Dokumentationen bei Strukturänderungen immer aktualisieren!*
+*Entwickelt und gepflegt vom Dev0 Engineering Team. Lies das [Master-Konzept (DE)](docs/MASTER_CONCEPT.de.md) / [Master Concept (EN)](docs/MASTER_CONCEPT.md) für die gesamte Systemvision.*

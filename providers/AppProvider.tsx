@@ -83,6 +83,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const [showFreePoolModal, setShowFreePoolModal] = useState<boolean>(false);
   const [showSubAgentStudioModal, setShowSubAgentStudioModal] = useState<boolean>(false);
   const [showTutorialModal, setShowTutorialModal] = useState<boolean>(false);
+  const [showMasterConceptModal, setShowMasterConceptModal] = useState<boolean>(false);
   const sponsorInteractionCountRef = useRef<number>(0);
 
   // "AI for Free" Pool & Zero-PII 3-Tier RBAC Governance State
@@ -1133,6 +1134,8 @@ export const [AppProvider, useApp] = createContextHook(() => {
     setShowSubAgentStudioModal,
     showTutorialModal,
     setShowTutorialModal,
+    showMasterConceptModal,
+    setShowMasterConceptModal,
     subAgentWorkflow,
     updateSubAgentWorkflow,
     togglePauseSubAgent,

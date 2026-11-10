@@ -14,6 +14,7 @@ import { SponsorOverlay } from '@/components/SponsorBanner';
 import { FreeAIPoolModal } from '@/components/FreeAIPoolModal';
 import { SubAgentStudioModal } from '@/components/SubAgentStudioModal';
 import TutorialModal from '@/components/TutorialModal';
+import MasterConceptModal from '@/components/MasterConceptModal';
 import { discoverYamlSkills, repairCorruptedSkillContent } from '@/utils/skill-loader';
 
 SplashScreen.preventAutoHideAsync();
@@ -57,6 +58,8 @@ function GlobalModalsHost() {
     setShowSubAgentStudioModal,
     showTutorialModal,
     setShowTutorialModal,
+    showMasterConceptModal,
+    setShowMasterConceptModal,
   } = useApp();
   const { currentProject, createFile } = useProject();
   const { sendMessage } = useChat();
@@ -134,6 +137,20 @@ function GlobalModalsHost() {
           if (dest === 'projects') router.push('/(tabs)/(home)' as any);
           else if (dest === 'chat') router.push('/(tabs)/chat' as any);
           else if (dest === 'tools') router.push('/(tabs)/tools?tab=dashboard' as any);
+          else if (dest === 'settings') router.push('/(tabs)/settings' as any);
+        }}
+      />
+      <MasterConceptModal
+        visible={showMasterConceptModal}
+        onClose={() => setShowMasterConceptModal(false)}
+        onOpenSkillStudio={() => setShowSubAgentStudioModal(true)}
+        onOpenFreePool={() => setShowFreePoolModal(true)}
+        onOpenTutorial={() => setShowTutorialModal(true)}
+        onNavigateTab={dest => {
+          if (dest === 'projects') router.push('/(tabs)/(home)' as any);
+          else if (dest === 'chat') router.push('/(tabs)/chat' as any);
+          else if (dest === 'tools') router.push('/(tabs)/tools?tab=dashboard' as any);
+          else if (dest === 'graph') router.push('/(tabs)/tools?tab=graph' as any);
           else if (dest === 'settings') router.push('/(tabs)/settings' as any);
         }}
       />

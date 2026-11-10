@@ -98,6 +98,7 @@ export default function SettingsScreen() {
     customSubAgents,
     setShowSubAgentStudioModal,
     setShowTutorialModal,
+    setShowMasterConceptModal,
   } = useApp();
 
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -1042,6 +1043,23 @@ export default function SettingsScreen() {
 
             <View style={styles.settingRow}>
               <View style={styles.settingLabelRow}>
+                <Globe size={14} color={IDE.primary} />
+                <Text style={styles.settingLabel}>Master Concept & Vision (DE / EN)</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.openDashboardButton}
+                onPress={() => setShowMasterConceptModal(true)}
+                activeOpacity={0.75}
+              >
+                <Text style={styles.openDashboardButtonText}>Open Concept</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.settingHint}>
+              Bilingual (German & English) Master Concept showcasing what Dev0 stands for, who it serves, and all 6 architectural pillars.
+            </Text>
+
+            <View style={styles.settingRow}>
+              <View style={styles.settingLabelRow}>
                 <FileText size={14} color={IDE.accent} />
                 <Text style={styles.settingLabel}>Interactive English System Tutorial</Text>
               </View>
@@ -1125,8 +1143,8 @@ export default function SettingsScreen() {
       )}
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Dev0 v1.4</Text>
-        <Text style={styles.footerSubtext}>Mobile Code Editor with AI Assistant</Text>
+        <Text style={styles.footerText}>Dev0 v1.9</Text>
+        <Text style={styles.footerSubtext}>Autonomous AI Software Engineering Workspace & Multi-Agent IDE</Text>
       </View>
     </ScrollView>
     </View>

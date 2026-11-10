@@ -1,131 +1,124 @@
-# Dev0 v1.8 — Extra YAML Skill & AGENTS.md Learning Engine, Interactive Drag-and-Drop Synapse Graph, Animated Reasoning Orb + Single Streaming Box, Classic Projects View & Interactive English Tutorial
+# Dev0 v1.9 — Bilingual Master Concept System & Complete Documentation Overhaul (EN / DE)
 
-This plan restructures **Dev0** into a cleanly separated, responsive desktop-and-Android IDE experience: removing legacy Beta Memory (`SOUL.md`, `AGENTS.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md` and the old `Memos` tab), introducing the **Extra YAML Learning & Skill Engine** (with `.zip` skill pack import, corrupted-file `!` detection, 1-click **AI Fix**, and custom keyword/phrase triggers), restoring the classic **Projects** file-tree view with working project deletion, placing **Dashboard** in the first slot of **Tools** (`[Dashboard, Tools, Plans, Graph, Search, Chat]`), upgrading the **Synapse Graph** with drag-and-drop and left/right-click menus, replacing duplicate thinking boxes with a **Pulsing Reasoning Orb → Single Text-Streaming Extended Thinking Box**, and adding an **Interactive English Tutorial & Architecture Guide**.
+Establish a persuasive, visionary **Master Concept & System Architecture** (in both **English** and **German**) that demonstrates everything Dev0 can do—its philosophy, target audiences, autonomous multi-agent capabilities, Synapse Memory Graph, Extra YAML Learning Engine, Dual Git Restore Points, and Zero-PII Server Key Vault—while completely modernizing and translating the entire project documentation ecosystem to reflect the current v1.8/v1.9 architecture.
 
 ---
 
-## User Review & Confirmed Decisions
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> All three core UX and architectural decisions were confirmed in Phase 1 and take highest precedence:
+> The following core product and editorial decisions are aligned with your requirements from Phase 1:
 
-- **Confirmed Decision 1 — Animated Reasoning Orb → Single Text-Streaming Thinking Box**:
-  - While the AI initiates forced extended reasoning, display **only** a sleek animated **Reasoning Orb** (no duplicate boxes). As reasoning tokens/text stream in, render **only one** unified text-streaming Extended Thinking box (`<think>...</think>` forced in system prompt).
-- **Confirmed Decision 2 — Auto-Extract Skills from `.zip` & Flag Corrupted YAML with 1-Click AI Fix**:
-  - Users can upload `.md` / `.yml` / `AGENTS.md` files or `.zip` skill bundles directly on-site. All valid YAML skills are auto-extracted and registered; any file with missing or corrupted YAML frontmatter is listed with an **Exclamation Warning (`!`)** and a **"Fix with AI"** button that automatically repairs and formats the file into valid YAML frontmatter.
-- **Confirmed Decision 3 — Classic Projects View + Graphs & Interactive English Tutorial in Tools**:
-  - The **Projects** tab returns to the clean classic File Tree & Project Switcher (with an explicit **Delete Project** button and fixed per-user storage cleanup) plus a quick launcher to the **Git & Restore Points** modal.
-  - The **Tools** tab places **Dashboard** in **Slot 1** (`Dashboard` → `Tools` → `Plans` → `Graph` (replaces `Memos`) → `Search` → `Chat`), hosts the interactive **Synapse Memory & Code Graph**, and includes a comprehensive **English Interactive Tutorial** explaining every workflow.
+- **Confirmed Decision 1 — Persuasive Master Concept First (Not Sponsor-Heavy Pitching)**: Instead of leading with direct sponsorship requests, the new **Master Concept System** presents Dev0 as a flagship, next-generation Autonomous AI Engineering & Multi-Agent IDE. It convinces technical decision-makers, open-source contributors, enterprise evaluators, and strategic partners through architectural depth, tangible capabilities, and clear value propositions.
+- **Confirmed Decision 2 — Full Bilingual Coverage (English & Deutsch)**: Every core documentation guide, architecture overview, and the Master Concept whitepaper is provided in both **English** and **German** (`EN` / `DE`), with seamless language switching and cross-links.
+- **Confirmed Decision 3 — Complete Documentation Modernization**: Outdated references from early prototypes (such as the retired 5 identity files, legacy `.qcoder/` paths, outdated 15-tool counts, and broken local file links) are replaced across all documentation and module guides with accurate, up-to-date explanations of the 46+ tools, Extra YAML Learning Engine, Synapse Graph, Server Key Vault, and Dual Git Restore Engine.
+- **Confirmed Decision 4 — Interactive In-App Master Concept & System Showcase (EN / DE)**: In addition to the comprehensive Markdown documentation suite, Dev0 includes an interactive, bilingual (**EN / DE**) **Master Concept & Architecture Explorer** inside the app (accessible from the Projects header, Tutorial, and Settings) so any visitor, evaluator, or partner testing the live app can immediately explore what Dev0 stands for, who it serves, and everything it can do.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**:
-  1. **Complete Removal of Legacy Beta Memory & 5 Identity Files**: Strips `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, legacy non-YAML `AGENTS.md`, `betaAgentLearning`, and the old `Memos` list from Settings, Tools, and all AI System/Planner prompts.
-  2. **Extra YAML Learning & Skill System (`.qoder` Hidden from Display)**:
-     - Recognizes `AGENTS.md` and Skill `.md`/`.yml` files strictly via structured YAML frontmatter (`name`, `description`, `trigger`, `keywords`, `alwaysApply`).
-     - Hides internal `.qoder/` path prefixes in the UI so skills display clean human titles and source badges.
-     - Supports **3 Trigger Modes** per skill / `AGENTS.md`:
-       - **Always Load (Background)** (`always_on`)
-       - **Custom Trigger Words / Phrases / Letters** (`keywords: ["auth", " refactor ", "fix bug"]`)
-       - **Manual / On-Demand** (`manual`)
-     - Supports uploading individual `.md`/`.yml` files or `.zip` archives containing multiple skills/rules. Files with missing or broken YAML frontmatter are flagged as **Corrupted / Invalid YAML (`!`)** with a 1-click **"Fix with AI"** button and explicit AI formatting instructions so the AI repairs them in-place.
-  3. **Subtle Bottom-Right Active Skills & `AGENTS.md` Indicator in Chat**:
-     - Whenever a message is sent and processed, the chat turn records and displays a compact, unboxed typographic caption at the bottom-right of the message showing exactly which Skills and/or `AGENTS.md` rules the system loaded and used for that turn (not just user-typed triggers, but all background + keyword-matched skills actually injected).
-  4. **Normal Chatbot Sub-Agent Menu Enforcement**:
-     - In Normal Chat Mode, the chatbot can **never** directly spawn or run a Sub-Agent on its own. If the user asks to create or use a Sub-Agent, the chatbot opens the **Sub-Agent Configuration Floating Modal** (`SubAgentFloatingQuestionModal`). If a Sub-Agent template/definition is already configured or completed in that modal, it is then created and saved to the Sub-Agents list.
-  5. **Forced Extended Thinking + Animated Orb → Single Streaming Box**:
-     - Enforces `<think>...</think>` extended reasoning across AI turns so the model always reasons thoroughly before acting.
-     - Eliminates duplicate thinking boxes: shows a **Pulsing Reasoning Orb** while waiting/initializing, and transitions into **one** clean text-streaming reasoning box once reasoning text streams in.
-  6. **Classic Projects View, Working Project Deletion & Tools Re-Ordering (`Dashboard` First)**:
-     - Restores the classic **Projects** screen (file tree, file actions, project tabs with an explicit trash/delete button that properly deletes from both `AsyncStorage` and `IndexedDB`,even when deleting the last project).
-     - Re-orders the **Tools** sub-tabs to: **`1. Dashboard` | `2. Tools` | `3. Plans` | `4. Graph` | `5. Search` | `6. Chat`**.
-     - Replaces `Memos` with **`Graph`** (Interactive Synapse Memory & Code Graph supporting **Drag & Drop** node positioning, **Left-Click** Node Inspector, and **Right-Click** Context Menu for Pin, Edit, Link, and Delete).
-     - Upgrades **`Search`** in Tools to display the **Codebase Structure Tree & Interactive Graph Nodes** alongside text/symbol search matches.
-     - Adds an **Interactive English Tutorial** modal accessible from Tools and Projects that walks through Chat vs. Agent Mode, YAML Skills & `.zip` Upload/AI-Fix, the Synapse Graph, Sub-Agents & Cron Jobs, and Git Restore Points.
-  7. **Fix `Unexpected text node: . A text node cannot be a child of a <View>` & Responsive Window Scaling**:
-     - Sanitizes all JSX `<View>` children across the entire app so stray dots (`.`), whitespace text nodes, or boolean/string short-circuits never render raw strings inside `<View>`.
-     - Uses wrapping flex rows (`flexWrap: 'wrap'`), horizontal scroll containers with `flexShrink: 0`, and responsive breakpoints so shrinking the browser window on PC or running on Android never hides or clips action buttons or custom tool cards.
+### What Dev0 Stands For (The Core Identity)
+**Dev0** (*Zero Friction, Zero Hallucination, Infinite Autonomous Engineering*) is a cross-platform, self-evolving AI Software Engineering Workspace and Multi-Agent IDE built for Web, Android, iOS, and Docker sandboxes. It bridges the gap between conversational AI assistants and a full-scale autonomous development environment by combining:
+1. **Strict Mode Isolation**: A safe, artifact-generating **Normal Chat Mode** (instant PKZIP downloads, execution plan drafting, cross-chat BM25 search) alongside a full-power **Autonomous Agent Mode** (read-before-write file operations, scoped sub-agent swarms, cron workflows, and dual Git restore points).
+2. **Visual & Structural Memory (Synapse Graph)**: Replaces fragile text logs with an interactive 2D **Synapse Memory & Codebase Graph** supporting drag-and-drop node arrangement, 2-hop ego-subgraph code localization, and non-destructive link self-healing.
+3. **Extra YAML Learning & Self-Repairing Rules**: Learns continuously via modular YAML frontmatter skills and `AGENTS.md` contracts—complete with `.zip` skill-pack extraction, automatic corruption detection (`!`), 1-click AI YAML repair, and background vs. custom keyword/phrase triggers.
+4. **Enterprise-Grade Safety & Democratized AI Access**: Features a server-side API Key Vault proxy (`/api/pool`) with anti-jailbreak inspection, configurable owner notifications (`40%`), and a non-destructive `50%` Emergency Auto-Cutoff (*Not-Aus*), paired with a 4-stage keyless fallback cascade so the system remains operational even without paid API keys.
+
+### Target Audiences & Personas (Who Dev0 Is Built For)
+- **Solo Founders & Indie Builders ("Vibecoders")**: Turn complex product visions into tested, multi-file applications rapidly on desktop or mobile, backed by automatic Git restore points and visual execution plans.
+- **Senior Software Engineers & Systems Architects**: Orchestrate scoped Sub-Agents (`Analyst`, `Developer`, `Tester`, `Researcher`, plus custom YAML-scoped templates) with live read-only telemetry streams, `.agents/` audit trails, and zero-PII token governance.
+- **AI Researchers & Local-First Privacy Advocates**: Run local open-weight models via 1-tap presets for **Ollama (`11434`)**, **LM Studio (`1234`)**, and custom OpenAI-compatible servers, powered by a 3-Tier Hybrid Tool Parser (JSON, XML `<tool_call>`, and ReAct `Action:` blocks).
+- **Teams, Educators & Open-Source Communities**: Share API quotas safely through the Zero-PII 3-Tier RBAC (`Owner` / `Admin` / `User`) Key Pool without ever exposing raw credentials or overspending budgets.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Aesthetic Direction & Color Palette**:
-  - **60% Dominant Canvas**: Deep Slate (`#0B0F19`) workspace background.
-  - **30% Structural Surfaces**: Elevated Slate (`#111827`) panels and modals with `1px` hairline borders (`#1E293B`).
-  - **10% Semantic Accents**: Electric Blue (`#3B82F6`) for primary actions, Emerald (`#10B981`) for active Memory/Skill synapses, Amber (`#F59E0B`) for corrupted YAML warnings (`!`) and Git restore points, and Violet (`#8B5CF6`) for the Animated Reasoning Orb.
-- **Typography & Tabular Discipline**:
-  - Crisp geometric sans headings paired with monospace tabular numerals (`tabular-nums`) for all node counts, token telemetry, and line numbers.
-  - Unboxed bottom-right metadata in Chat (`Loaded: Master Agent Rules · API Security Skill`) using `·` separators in `11px` muted text.
-- **Interactive Feedback & Motion**:
-  - **Animated Reasoning Orb**: Smooth compositor-friendly pulsing/scaling energy sphere (`Animated.Value` scale + glow opacity) shown before text arrives, seamlessly morphing into a single live text-streaming reasoning box.
-  - **Interactive Graph Canvas**: Pan/drag nodes directly on the canvas, left-click any node to inspect code/memory details, and right-click (or long-press on Android) any node or canvas area to open a contextual action menu (`Create Linked Node`, `Edit Content`, `Pin Position`, `Open File`, `Delete Node`).
+### Key User Flows
+1. **Bilingual Documentation Navigation (EN ⇄ DE)**:
+   - Every major document features a clean top language switcher (`🇬🇧 English | 🇩🇪 Deutsch`) and a structured table of contents linking the Master Concept, System Overview, Multi-Agent Architecture, YAML Learning Guide, Security & Key Vault Audit, and Quick-Start Guide.
+2. **In-App Master Concept & Capability Explorer (EN ⇄ DE)**:
+   - Users, evaluators, or prospective partners clicking the **Master Concept** button in the Projects toolbar or Settings open a high-contrast, bilingual (`EN` / `DE`) interactive showcase modal.
+   - Features 6 structured capability pillars (*Vision & Target Audience*, *Dual-Mode Intelligence*, *Multi-Agent Swarm & `.agents/` Cron*, *Synapse Memory & Code Graph*, *Extra YAML Learning & `.zip` Engine*, and *Zero-PII Security & Key Vault*) with live interactive metrics and architecture diagrams.
+
+### Visual Identity & Theme
+- **Aesthetic Direction**: High-precision dark technical editorial aesthetic (`#090D16` deep slate canvas, `#111827` single-elevation surfaces, crisp `1px` `#1E293B` structural borders).
+- **Color Palette & Semantic Tokens**:
+  - Primary Accent: `#3B82F6` (Electric Cobalt for interactive navigation and architecture links)
+  - Secondary Accent: `#10B981` (Emerald for verified capabilities, active safeguards, and 92/92 passing test states)
+  - Reasoning & Synapse Accent: `#8B5CF6` (Violet for Extended Thinking Orb and Synapse Graph intelligence)
+  - Warning / Safety Cutoff: `#F59E0B` (Amber for 40% quota alerts and YAML corruption repair indicators)
+- **Typography & Hierarchy**: Clean display headings paired with `tabular-nums` monospace (`JetBrains Mono` / platform monospace) for architectural diagrams, token budgets, and verification matrices.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1 — Replacing Legacy 5 Identity Files with Validated YAML Skills & `AGENTS.md`**:
-  - *Chosen Approach*: Unify all agent learning and rules around YAML-frontmatter files (`AGENTS.md`, `SKILL.md`, `.yml`/`.md`), with automatic corruption detection (`!`) and 1-click AI repair.
-  - *Why*: Eliminates prompt bloat and unvalidated free-form identity files while giving the user full control over **when** each rule loads (`Always in Background` vs. `Custom Trigger Words/Phrases` vs. `Manual`).
-- **Decision 2 — Classic Projects File Tree vs. Dedicated Graph Tab in Tools**:
-  - *Chosen Approach*: Keep the **Projects** screen focused on fast file-tree navigation, editing, and project management, and place the **Synapse Graph** (`Graph` tab) and **Codebase Structure + Node Search** (`Search` tab) inside **Tools** (with `Dashboard` in Slot 1).
-  - *Why*: Prevents overcrowding the Projects screen while making the Graph and Dashboard immediately accessible in a logical order.
+- **Decision 1 — Capability-Driven Narrative Over Direct Sponsorship Pleas**
+  - *Chosen Approach*: Frame the Master Concept around **problem-to-architecture-to-outcome** proof points (how Dev0 eliminates context loss, prevents API key leaks, and scales across Web/Mobile/Docker), reserving ecosystem partnership and support pathways for a dedicated, dignified concluding section.
+  - *Why*: Serious partners, sponsors, and technical adopters are convinced by engineering excellence, clear differentiation, and verifiable architecture rather than sales pitches.
+- **Decision 2 — Synchronized Bilingual Documentation Architecture (EN + DE)**
+  - *Chosen Approach*: Maintain parallel, complete English and German documentation documents and an in-app EN/DE toggle in the Master Concept Modal.
+  - *Why*: Serves both the international open-source/developer ecosystem in English and DACH-region stakeholders in fluent German without mixing languages inside a single document.
+- **Decision 3 — Consolidating & Updating Legacy Fix Logs**
+  - *Chosen Approach*: Update all historical मार्च 2026 (`2026-03-02`) reports and module READMEs so they accurately document the current v1.8/v1.9 architecture, removing obsolete references to deleted identity files or broken local paths while preserving historical audit traceability.
 
 ---
 
 ## 4. Technical Architecture & Data Strategy
 
-### Architecture & Component Diagram
+### Master Concept & Documentation Ecosystem Diagram
 
 ```text
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│                                 Dev0 IDE (v1.8)                                   │
-├─────────────────────────┬────────────────────────────┬────────────────────────────┤
-│   Projects Tab (Home)   │      AI Chat Tab           │     Tools Tab (Reordered)  │
-│  ┌───────────────────┐  │  ┌──────────────────────┐  │  1. [Dashboard] (Slot 1)   │
-│  │ Classic File Tree │  │  │ Single Reasoning Orb │  │  2. [Tools Registry]       │
-│  │ + Project Tabs    │  │  │  ↓ (Text Streams)    │  │  3. [Plans]                │
-│  │ + Explicit Delete │  │  │ Single Thinking Box  │  │  4. [Graph] (Replaces Memo)│
-│  │ + Git Restore Btn │  │  ├──────────────────────┤  │     • Drag & Drop Nodes    │
-│  └───────────────────┘  │  │ Custom Tool Cards    │  │     • Left/Right Click Menu│
-│                         │  │ (ZIP / Plan / Diff)  │  │  5. [Search]               │
-│                         │  ├──────────────────────┤  │     • Codebase Tree + Nodes│
-│                         │  │ Bottom-Right Caption:│  │  6. [Chat Actions]         │
-│                         │  │ "Loaded: AGENTS.md…" │  │  + [English Tutorial Modal]│
-│                         │  └──────────────────────┘  │                            │
-└─────────────────────────┴──────────────┬─────────────┴────────────────────────────┘
-                                         │
-                                         ▼
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│                Extra YAML Skill & AGENTS.md Learning Engine                       │
-│  • Single File (.md/.yml/AGENTS.md) & .zip Skill Pack Importer                    │
-│  • Corrupted / Missing YAML Detector (!) + 1-Click "Fix with AI" Auto-Formatter   │
-│  • Trigger Modes: Always (Background) | Custom Keywords/Phrases/Letters | Manual  │
-│  • Strips ".qoder/" from UI Display · Injects Active Skills + Formatting Rules    │
-└───────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                DEV0 BILINGUAL MASTER CONCEPT & DOCS SYSTEM                   │
+├──────────────────────────────────────┬───────────────────────────────────────┤
+│   ENGLISH DOCUMENTATION SUITE (EN)   │   GERMAN DOCUMENTATION SUITE (DE)     │
+│  ┌────────────────────────────────┐  │  ┌─────────────────────────────────┐  │
+│  │ Master Concept & Vision (EN)   │◄─┼─►│ Master-Konzept & Vision (DE)    │  │
+│  │ • Identity, Mission & Personas │  │  │ • Leitbild, Mission & Zielgruppe│  │
+│  │ • 6 Core Architectural Pillars │  │  │ • 6 Architektur-Kernpfeiler     │  │
+│  │ • Ecosystem & Partner Value    │  │  │ • Mehrwert für Partner & Teams  │  │
+│  └──────────────┬─────────────────┘  │  └───────────────┬─────────────────┘  │
+│                 ▼                    │                  ▼                    │
+│  ┌────────────────────────────────┐  │  ┌─────────────────────────────────┐  │
+│  │ Technical Architecture Docs    │◄─┼─►│ Technische Systemdokumentation  │  │
+│  │ • System Overview & 46+ Tools  │  │  │ • Systemübersicht & 46+ Tools   │  │
+│  │ • Multi-Agent & .agents/ Cron  │  │  │ • Multi-Agenten & .agents/ Cron │  │
+│  │ • Extra YAML Learning & .ZIP   │  │  │ • Extra YAML Learning & .ZIP    │  │
+│  │ • Synapse Graph & Dual Git     │  │  │ • Synapse-Graph & Dual-Git      │  │
+│  │ • Security, RBAC & Key Vault   │  │  │ • Sicherheit, RBAC & Key-Tresor │  │
+│  └────────────────────────────────┘  │  └─────────────────────────────────┘  │
+└──────────────────────────────────────┴───────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│           IN-APP INTERACTIVE MASTER CONCEPT MODAL (EN / DE TOGGLE)           │
+│  ┌────────────────────┐  ┌────────────────────────┐  ┌────────────────────┐  │
+│  │ Language Switcher  │  │ 6 Interactive Pillars  │  │ Live Architecture  │  │
+│  │ [ English | DE ]   │  │ • Vision & Who It's For│  │ • Mode Comparison  │  │
+│  │ Accessible via:    │  │ • Normal vs Agent Mode │  │ • Security Matrix  │  │
+│  │ • Projects Header  │  │ • Synapse & YAML Engine│  │ • Quick Actions to │  │
+│  │ • Settings & Guide │  │ • Key Vault & Partner  │  │   Graph/Pool/Studio│  │
+│  └────────────────────┘  └────────────────────────┘  └────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Interactive Component & State Mapping
-
-1. **Extra YAML Learning & `.zip` Skill Importer (`utils/skill-loader.ts`, `components/SubAgentStudioModal.tsx`, `app/(tabs)/settings/index.tsx`)**:
-   - Extends `ParsedYamlSkill` with `triggerMode: 'always' | 'keywords' | 'manual'`, `triggerKeywords: string[]`, `isCorrupted: boolean`, and `corruptionReason?: string`.
-   - Adds `importSkillsFromZipOrFiles`: unpacks `.zip` archives via `JSZip`, inspects every `.md` / `.yml` / `AGENTS.md` file, validates YAML frontmatter, imports valid skills, and flags corrupted/unformatted files with `!` so the user can click **"Fix with AI"** (`repairCorruptedSkillWithAI`) to automatically add valid YAML frontmatter and structure.
-   - Removes all `.qoder` prefixes from visible UI labels (`formatSkillSourceForDisplay`).
-   - Completely removes legacy `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, and `betaAgentLearning` from Settings and `buildSystemPrompt`.
-2. **Active Skill & `AGENTS.md` Bottom-Right Badge (`types/index.ts`, `providers/ChatProvider.tsx`, `components/ChatBubble.tsx`)**:
-   - Adds `loadedSkills?: string[]` to `ChatMessage`.
-   - On every chat turn, `matchActiveSkillsForTurn(skills, userMessage)` resolves all background (`always`) + keyword-matched (`keywords`) skills and `AGENTS.md` files, injects them into the system prompt, and stores their display names on the assistant message so `ChatBubble` renders `Used: <Skill / AGENTS.md names>` in small muted text at the bottom-right.
-3. **Forced Extended Thinking + Reasoning Orb → Single Streaming Box (`components/ThinkingBlock.tsx`, `app/(tabs)/chat/index.tsx`, `utils/ai-service.ts`)**:
-   - Updates `buildSystemPrompt` to enforce mandatory `<think>...</think>` reasoning before every response/tool call.
-   - Updates `ThinkingBlock.tsx`: when `isLive` is true and no thinking text has streamed yet (or during initial connection), renders only the **Animated Reasoning Orb**; once thinking text streams in, renders the single expandable streaming text box.
-4. **Interactive Drag-and-Drop + Left/Right-Click Synapse Graph (`components/SynapseGraphView.tsx`, `app/(tabs)/tools/index.tsx`)**:
-   - Replaces the `Memos` sub-tab in `ToolsScreen` with `Graph` (`SynapseGraphView`), and moves `Dashboard` to the first sub-tab slot (`['dashboard', 'tools', 'plans', 'graph', 'search', 'chat']`).
-   - Adds pointer/touch drag-and-drop (`nodePositionOverrides`), Left-Click node selection, and Right-Click (`onContextMenu` on Web / long-press on Android) floating context menu at cursor coordinates.
-   - Upgrades the `Search` sub-tab in `ToolsScreen` to show the **Codebase File/Directory Structure** and matching **Synapse Graph Nodes** (Functions, Files, Skills, Memories) with 1-click navigation.
-5. **Project Deletion Fix, `<View>` Text Node Sanitization & English Tutorial Modal (`providers/ProjectProvider.tsx`, `app/(tabs)/(home)/index.tsx`, `components/TutorialModal.tsx`)**:
-   - Fixes `deleteProject` in `ProjectProvider.tsx` to clear both `userSandboxKey` and `userCurrentProjKey` in `AsyncStorage` and `IndexedDB`, and adds a visible **Trash / Delete Project** button in `ProjectsScreen`.
-   - Audits and removes all raw text / `.` nodes inside `<View>` components to eliminate `Unexpected text node: . A text node cannot be a child of a <View>`.
-   - Adds `components/TutorialModal.tsx` providing a structured, interactive **English Tutorial & System Guide** accessible from the Tools and Projects headers.
+### Interactive Component & Documentation Mapping
+1. **Bilingual Master Concept Whitepaper (EN & DE)**:
+   - Comprehensive executive and architectural reference covering:
+     1. *Executive Vision & Mission*: Why Dev0 exists and the problem it solves in modern AI software engineering.
+     2. *Target Audience & Use-Case Matrix*: Concrete workflows for Indie Builders, Senior Architects, Privacy/Local-LLM Users, and Teams/Educators.
+     3. *The 6 Technological Pillars of Dev0*:
+        - **Pillar 1**: Strict Mode Isolation (Normal Chat Mode with `.zip` & Plan Cards vs. Full Agent Mode).
+        - **Pillar 2**: Forced Extended Thinking (`<think>...</think>`) with Animated Reasoning Orb & Single-Box Streaming.
+        - **Pillar 3**: Extra YAML Learning Engine, `.zip` Skill Pack Importer, Corrupted YAML `!` Detection & 1-Click AI Repair, plus Bottom-Right `Loaded:` Attribution.
+        - **Pillar 4**: Interactive 2D Synapse Memory & Codebase Graph (Drag-and-Drop, Left/Right-Click Menus, 2-Hop Ego-Subgraph Localization).
+        - **Pillar 5**: Scoped Multi-Agent Swarm, Floating Question Relay, Live Read-Only Stream, Hidden `.agents/<slug>/` Workspaces & Cron Automation.
+        - **Pillar 6**: Server-Side Key Vault (`/api/pool`), Anti-Jailbreak Guard, 40% Alert / 50% Emergency Auto-Cutoff (*Not-Aus*), Zero-PII 3-Tier RBAC, and Dual Git Restore Points.
+     4. *Strategic Impact & Partner Ecosystem*: Why supporting and adopting Dev0 accelerates open, safe, and local-first AI software engineering.
+2. **Complete Overhaul & Bilingual Translation of All Repository & Module Documentation**:
+   - Update root and module documentation plus all `/docs/` files so every guide is current (v1.8/v1.9), accurate, free of legacy `SOUL.md`/`MEMORY.md`/`.qcoder` artifacts, and available in both **English** and **German**.
+3. **In-App Bilingual Master Concept Showcase Modal**:
+   - Interactive modal component with instant **English / Deutsch** toggle, structured pillar tabs, capability comparison tables, and direct launch buttons to open the Synapse Graph, YAML Skill Studio, or Free AI Key Pool directly from the concept view.
